@@ -65,6 +65,18 @@ enum SelectionShape {
     Circle,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreviewTool {
+    Select,
+    Hand,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BatchKind {
+    Convert,
+    C2pa(C2paBatchMode),
+}
+
 #[derive(Clone)]
 struct CanvasSnapshot {
     image_path: Option<PathBuf>,
@@ -151,6 +163,8 @@ pub struct PixelStudioApp {
     watermark_font_size: f32,
     zoom: f32,
     fit_to_window: bool,
+    preview_pan: Vec2,
+    preview_tool: PreviewTool,
     output_format: SupportedFormat,
     quality: u8,
     resize_width: u32,
@@ -192,6 +206,8 @@ pub struct PixelStudioApp {
     c2pa_batch_output_dir: Option<PathBuf>,
     batch_receiver: Option<Receiver<BatchMessage>>,
     batch_summary: Option<BatchSummary>,
+    active_batch_kind: Option<BatchKind>,
+    c2pa_batch_result: Option<(C2paBatchMode, BatchSummary)>,
     batch_completed: usize,
     batch_total: usize,
     status: String,
@@ -231,6 +247,8 @@ impl PixelStudioApp {
             watermark_font_size: 48.0,
             zoom: 1.0,
             fit_to_window: true,
+            preview_pan: Vec2::ZERO,
+            preview_tool: PreviewTool::Select,
             output_format: SupportedFormat::Jpeg,
             quality: 92,
             resize_width: 1,
@@ -272,6 +290,8 @@ impl PixelStudioApp {
             c2pa_batch_output_dir: None,
             batch_receiver: None,
             batch_summary: None,
+            active_batch_kind: None,
+            c2pa_batch_result: None,
             batch_completed: 0,
             batch_total: 0,
             status: "請開啟圖片或資料夾。".to_owned(),
@@ -419,12 +439,21 @@ impl PixelStudioApp {
 
             ui.separator();
 
+            let select_label = self.tr(TextKey::SelectTool);
+            let pan_label = self.tr(TextKey::PanTool);
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label);
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label);
+
+            ui.separator();
+
             if ui.button(self.tr(TextKey::Fit)).clicked() {
                 self.fit_to_window = true;
+                self.preview_pan = Vec2::ZERO;
             }
             if ui.button("100%").clicked() {
                 self.fit_to_window = false;
                 self.zoom = 1.0;
+                self.preview_pan = Vec2::ZERO;
             }
             if ui.button(self.tr(TextKey::ZoomOut)).clicked() {
                 self.fit_to_window = false;
@@ -595,6 +624,54 @@ impl PixelStudioApp {
                 .clicked()
             {
                 self.start_c2pa_batch(C2paBatchMode::Add);
+            }
+
+            if matches!(self.active_batch_kind, Some(BatchKind::C2pa(_)))
+                && self.batch_receiver.is_some()
+            {
+                let progress = if self.batch_total == 0 {
+                    0.0
+                } else {
+                    self.batch_completed as f32 / self.batch_total as f32
+                };
+                ui.add(
+                    egui::ProgressBar::new(progress)
+                        .animate(true)
+                        .text(format!("{} / {}", self.batch_completed, self.batch_total)),
+                );
+                ui.label(self.tr(TextKey::BatchRunning));
+            }
+
+            if let Some((mode, summary)) = &self.c2pa_batch_result {
+                let heading = match mode {
+                    C2paBatchMode::Remove => self.tr(TextKey::BatchC2paRemoveDone),
+                    C2paBatchMode::Add => self.tr(TextKey::BatchC2paAddDone),
+                };
+                let completion = match self.language {
+                    Language::ZhTw => format!(
+                        "{heading}：共 {}，成功 {}，失敗 {}",
+                        summary.total, summary.succeeded, summary.failed
+                    ),
+                    Language::En => format!(
+                        "{heading}: {} total, {} succeeded, {} failed",
+                        summary.total, summary.succeeded, summary.failed
+                    ),
+                };
+                ui.colored_label(egui::Color32::from_rgb(40, 160, 90), completion);
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        for result in summary.results.iter().take(8) {
+                            let label = match (&result.output, &result.error) {
+                                (Some(output), None) => format!("OK {}", output.display()),
+                                (_, Some(error)) => {
+                                    format!("Failed {}: {error}", result.input.display())
+                                }
+                                _ => format!("Skipped {}", result.input.display()),
+                            };
+                            ui.label(label);
+                        }
+                    });
             }
         });
 
@@ -1599,20 +1676,33 @@ impl PixelStudioApp {
             };
             let display_size = self.texture_size * scale;
             let texture_id = texture.id();
-            let (viewport_rect, _) = ui.allocate_exact_size(available, Sense::hover());
-            let image_rect = Rect::from_center_size(viewport_rect.center(), display_size);
-            let response = ui.interact(
-                image_rect,
-                ui.id().with("canvas_image"),
-                Sense::click_and_drag(),
-            );
+            let (viewport_rect, viewport_response) =
+                ui.allocate_exact_size(available, Sense::hover());
+            let image_center = viewport_rect.center() + self.preview_pan;
+            let image_rect = Rect::from_center_size(image_center, display_size);
+            let response = if self.preview_tool == PreviewTool::Hand {
+                let pan_response =
+                    ui.interact(viewport_rect, ui.id().with("canvas_pan"), Sense::drag());
+                if pan_response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if pan_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
+                pan_response
+            } else {
+                ui.interact(
+                    image_rect,
+                    ui.id().with("canvas_image"),
+                    Sense::click_and_drag(),
+                )
+            };
             ui.painter().image(
                 texture_id,
                 image_rect,
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
-            self.handle_preview_zoom(ui.ctx(), &response, scale);
+            self.handle_preview_zoom(ui.ctx(), &viewport_response, scale);
             self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
             self.paint_selection(ui, image_rect, scale);
             self.paint_selected_layer(ui, image_rect, scale);
@@ -1656,6 +1746,15 @@ impl PixelStudioApp {
         image_rect: Rect,
         scale: f32,
     ) {
+        if self.preview_tool == PreviewTool::Hand {
+            if response.dragged() {
+                self.fit_to_window = false;
+                self.preview_pan += response.drag_delta();
+                ctx.request_repaint();
+            }
+            return;
+        }
+
         if response.drag_started()
             && let Some(pointer) = response.interact_pointer_pos()
         {
@@ -1842,6 +1941,8 @@ impl PixelStudioApp {
                 self.drag_snapshot = None;
                 self.selection_rect = None;
                 self.selection_drag_start = None;
+                self.preview_pan = Vec2::ZERO;
+                self.fit_to_window = true;
                 self.image_info = inspect_image(&path).ok();
                 self.load_c2pa_state(&path);
                 self.image_path = Some(path.clone());
@@ -2529,6 +2630,7 @@ impl PixelStudioApp {
         let (sender, receiver) = mpsc::channel();
         self.batch_receiver = Some(receiver);
         self.batch_summary = None;
+        self.active_batch_kind = Some(BatchKind::Convert);
         self.batch_completed = 0;
         self.batch_total = 0;
         self.status = match self.language {
@@ -2571,6 +2673,8 @@ impl PixelStudioApp {
         let (sender, receiver) = mpsc::channel();
         self.batch_receiver = Some(receiver);
         self.batch_summary = None;
+        self.c2pa_batch_result = None;
+        self.active_batch_kind = Some(BatchKind::C2pa(mode));
         self.batch_completed = 0;
         self.batch_total = 0;
         self.status = match self.language {
@@ -2632,6 +2736,7 @@ impl PixelStudioApp {
                             ),
                         };
                         self.batch_summary = Some(summary);
+                        self.active_batch_kind = None;
                         clear_receiver = true;
                         break;
                     }
@@ -2660,7 +2765,9 @@ impl PixelStudioApp {
                                 ),
                             },
                         };
+                        self.c2pa_batch_result = Some((mode, summary.clone()));
                         self.batch_summary = Some(summary);
+                        self.active_batch_kind = None;
                         clear_receiver = true;
                         break;
                     }
@@ -2673,6 +2780,7 @@ impl PixelStudioApp {
                             Language::ZhTw => "批次背景工作非預期停止。".to_owned(),
                             Language::En => "Batch worker stopped unexpectedly.".to_owned(),
                         };
+                        self.active_batch_kind = None;
                         clear_receiver = true;
                         break;
                     }

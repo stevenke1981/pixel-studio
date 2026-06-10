@@ -173,6 +173,10 @@ pub enum TextKey {
     Posterize,
     ApplyPosterize,
     Filters,
+    PanTool,
+    SelectTool,
+    BatchC2paRemoveDone,
+    BatchC2paAddDone,
 }
 
 impl TextKey {
@@ -330,6 +334,10 @@ impl TextKey {
             Self::Posterize => "色階",
             Self::ApplyPosterize => "套用色階",
             Self::Filters => "進階濾鏡",
+            Self::PanTool => "手掌",
+            Self::SelectTool => "選取",
+            Self::BatchC2paRemoveDone => "C2PA 批次移除完成",
+            Self::BatchC2paAddDone => "C2PA 批次加入完成",
         }
     }
 
@@ -487,6 +495,10 @@ impl TextKey {
             Self::Posterize => "Posterize",
             Self::ApplyPosterize => "Apply Posterize",
             Self::Filters => "Advanced Filters",
+            Self::PanTool => "Hand",
+            Self::SelectTool => "Select",
+            Self::BatchC2paRemoveDone => "C2PA batch removal complete",
+            Self::BatchC2paAddDone => "C2PA batch add complete",
         }
     }
 }
