@@ -1,0 +1,18 @@
+[package]
+name = "studio-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arboard.workspace = true
+base64.workspace = true
+chrono.workspace = true
+eframe.workspace = true
+egui.workspace = true
+image.workspace = true
+studio-core = { path = "../studio-core" }
+rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
