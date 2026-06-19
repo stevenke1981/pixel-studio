@@ -72,6 +72,19 @@ enum PreviewTool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum DrawTool {
+    None,
+    Brush,
+    Line,
+}
+
+impl DrawTool {
+    fn is_active(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum BatchKind {
     Convert,
     C2pa(C2paBatchMode),
@@ -165,6 +178,13 @@ pub struct PixelStudioApp {
     fit_to_window: bool,
     preview_pan: Vec2,
     preview_tool: PreviewTool,
+    draw_tool: DrawTool,
+    draw_color: Color32,
+    draw_size: f32,
+    draw_opacity: f32,
+    drawing_active: bool,
+    drawing_start: Option<Pos2>,
+    drawing_last: Option<Pos2>,
     output_format: SupportedFormat,
     quality: u8,
     resize_width: u32,
@@ -249,6 +269,13 @@ impl PixelStudioApp {
             fit_to_window: true,
             preview_pan: Vec2::ZERO,
             preview_tool: PreviewTool::Select,
+            draw_tool: DrawTool::None,
+            draw_color: Color32::BLACK,
+            draw_size: 8.0,
+            draw_opacity: 1.0,
+            drawing_active: false,
+            drawing_start: None,
+            drawing_last: None,
             output_format: SupportedFormat::Jpeg,
             quality: 92,
             resize_width: 1,
@@ -841,6 +868,8 @@ impl PixelStudioApp {
             }
         });
 
+        self.draw_tools_panel(ui);
+
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(has_image, egui::Button::new(self.tr(TextKey::RotateLeft)))
@@ -1141,6 +1170,40 @@ impl PixelStudioApp {
         {
             self.reset_edits(ctx);
         }
+    }
+
+    fn draw_tools_panel(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.label(self.tr(TextKey::Drawing));
+
+        let draw_off_label = self.tr(TextKey::DrawOff);
+        let brush_tool_label = self.tr(TextKey::BrushTool);
+        let line_tool_label = self.tr(TextKey::LineTool);
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.draw_tool, DrawTool::None, draw_off_label);
+            if ui
+                .selectable_value(&mut self.draw_tool, DrawTool::Brush, brush_tool_label)
+                .clicked()
+            {
+                self.preview_tool = PreviewTool::Select;
+            }
+            if ui
+                .selectable_value(&mut self.draw_tool, DrawTool::Line, line_tool_label)
+                .clicked()
+            {
+                self.preview_tool = PreviewTool::Select;
+            }
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(self.tr(TextKey::BrushColor));
+            ui.color_edit_button_srgba(&mut self.draw_color);
+        });
+
+        let brush_size_label = self.tr(TextKey::BrushSize);
+        ui.add(egui::Slider::new(&mut self.draw_size, 1.0..=128.0).text(brush_size_label));
+        let brush_opacity_label = self.tr(TextKey::BrushOpacity);
+        ui.add(egui::Slider::new(&mut self.draw_opacity, 0.05..=1.0).text(brush_opacity_label));
     }
 
     fn panorama_panel(&mut self, ui: &mut egui::Ui) {
@@ -1704,6 +1767,7 @@ impl PixelStudioApp {
             );
             self.handle_preview_zoom(ui.ctx(), &viewport_response, scale);
             self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
+            self.paint_drawing_preview(ui, image_rect, scale);
             self.paint_selection(ui, image_rect, scale);
             self.paint_selected_layer(ui, image_rect, scale);
         } else {
@@ -1752,6 +1816,14 @@ impl PixelStudioApp {
                 self.preview_pan += response.drag_delta();
                 ctx.request_repaint();
             }
+            return;
+        }
+
+        if self.draw_tool.is_active() {
+            if response.hovered() {
+                ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+            self.handle_drawing_interaction(ctx, response, image_rect, scale);
             return;
         }
 
@@ -1814,6 +1886,157 @@ impl PixelStudioApp {
             let image_pos = screen_to_image(pointer, image_rect, scale);
             self.selected_layer = self.hit_test_layer(image_pos);
         }
+    }
+
+    fn handle_drawing_interaction(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        image_rect: Rect,
+        scale: f32,
+    ) {
+        if self.working_image.is_none() {
+            return;
+        }
+
+        if response.drag_started()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let image_pos = clamp_image_pos(
+                screen_to_image(pointer, image_rect, scale),
+                self.texture_size,
+            );
+            self.begin_drawing_stroke(ctx, image_pos);
+        }
+
+        if response.dragged()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let image_pos = clamp_image_pos(
+                screen_to_image(pointer, image_rect, scale),
+                self.texture_size,
+            );
+            self.continue_drawing_stroke(ctx, image_pos);
+        }
+
+        if response.drag_stopped() {
+            let image_pos = response.interact_pointer_pos().map(|pointer| {
+                clamp_image_pos(
+                    screen_to_image(pointer, image_rect, scale),
+                    self.texture_size,
+                )
+            });
+            self.finish_drawing_stroke(ctx, image_pos);
+        }
+
+        if response.clicked()
+            && !self.drawing_active
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let image_pos = clamp_image_pos(
+                screen_to_image(pointer, image_rect, scale),
+                self.texture_size,
+            );
+            self.begin_drawing_stroke(ctx, image_pos);
+            self.finish_drawing_stroke(ctx, Some(image_pos));
+        }
+    }
+
+    fn begin_drawing_stroke(&mut self, ctx: &egui::Context, image_pos: Pos2) {
+        if self.drawing_active || self.working_image.is_none() {
+            return;
+        }
+
+        self.push_image_history();
+        self.selected_layer = None;
+        self.selection_drag_start = None;
+        self.drawing_active = true;
+        self.drawing_start = Some(image_pos);
+        self.drawing_last = Some(image_pos);
+
+        if self.draw_tool == DrawTool::Brush {
+            self.draw_current_segment(ctx, image_pos, image_pos);
+        } else {
+            ctx.request_repaint();
+        }
+    }
+
+    fn continue_drawing_stroke(&mut self, ctx: &egui::Context, image_pos: Pos2) {
+        if !self.drawing_active {
+            return;
+        }
+
+        match self.draw_tool {
+            DrawTool::Brush => {
+                if let Some(previous) = self.drawing_last {
+                    self.draw_current_segment(ctx, previous, image_pos);
+                }
+                self.drawing_last = Some(image_pos);
+            }
+            DrawTool::Line => {
+                self.drawing_last = Some(image_pos);
+                ctx.request_repaint();
+            }
+            DrawTool::None => {}
+        }
+    }
+
+    fn finish_drawing_stroke(&mut self, ctx: &egui::Context, image_pos: Option<Pos2>) {
+        if !self.drawing_active {
+            return;
+        }
+
+        let end = image_pos.or(self.drawing_last);
+        if self.draw_tool == DrawTool::Line
+            && let (Some(start), Some(end)) = (self.drawing_start, end)
+        {
+            self.draw_current_segment(ctx, start, end);
+        }
+
+        self.drawing_active = false;
+        self.drawing_start = None;
+        self.drawing_last = None;
+        self.status = match self.language {
+            Language::ZhTw => "已完成繪畫筆畫。".to_owned(),
+            Language::En => "Drawing stroke applied.".to_owned(),
+        };
+        ctx.request_repaint();
+    }
+
+    fn draw_current_segment(&mut self, ctx: &egui::Context, start: Pos2, end: Pos2) {
+        if let Some(image) = self.working_image.as_mut() {
+            draw_stroke_segment(
+                image,
+                start,
+                end,
+                self.draw_color,
+                self.draw_size,
+                self.draw_opacity,
+            );
+            self.update_texture(ctx);
+        }
+    }
+
+    fn paint_drawing_preview(&self, ui: &mut egui::Ui, image_rect: Rect, scale: f32) {
+        if self.draw_tool != DrawTool::Line || !self.drawing_active {
+            return;
+        }
+        let (Some(start), Some(end)) = (self.drawing_start, self.drawing_last) else {
+            return;
+        };
+
+        let start = image_rect.min + start.to_vec2() * scale;
+        let end = image_rect.min + end.to_vec2() * scale;
+        let color = Color32::from_rgba_unmultiplied(
+            self.draw_color.r(),
+            self.draw_color.g(),
+            self.draw_color.b(),
+            ((self.draw_color.a() as f32) * self.draw_opacity.clamp(0.0, 1.0)) as u8,
+        );
+        ui.painter().line_segment(
+            [start, end],
+            Stroke::new((self.draw_size * scale).max(1.0), color),
+        );
     }
 
     fn paint_selected_layer(&self, ui: &mut egui::Ui, image_rect: Rect, scale: f32) {
@@ -1941,6 +2164,7 @@ impl PixelStudioApp {
                 self.drag_snapshot = None;
                 self.selection_rect = None;
                 self.selection_drag_start = None;
+                self.reset_drawing_state();
                 self.preview_pan = Vec2::ZERO;
                 self.fit_to_window = true;
                 self.image_info = inspect_image(&path).ok();
@@ -1996,6 +2220,7 @@ impl PixelStudioApp {
         self.drag_snapshot = None;
         self.selection_rect = None;
         self.selection_drag_start = None;
+        self.reset_drawing_state();
         self.folder_files.clear();
         self.selected_index = None;
         self.reset_c2pa_state(None);
@@ -2025,6 +2250,7 @@ impl PixelStudioApp {
         self.selection_shape = snapshot.selection_shape;
         self.selection_rect = snapshot.selection_rect;
         self.selection_drag_start = None;
+        self.reset_drawing_state();
         self.folder_files = snapshot.folder_files;
         self.selected_index = snapshot.selected_index;
         self.drag_snapshot = None;
@@ -2576,6 +2802,12 @@ impl PixelStudioApp {
                 Language::En => "Edits reset.".to_owned(),
             };
         }
+    }
+
+    fn reset_drawing_state(&mut self) {
+        self.drawing_active = false;
+        self.drawing_start = None;
+        self.drawing_last = None;
     }
 
     fn sync_resize_aspect(&mut self, width_changed: bool, height_changed: bool) {
@@ -3397,6 +3629,7 @@ impl PixelStudioApp {
         self.drag_snapshot = None;
         self.selection_rect = None;
         self.selection_drag_start = None;
+        self.reset_drawing_state();
         self.sync_edit_dimensions();
         self.update_texture(ctx);
         Ok(())
@@ -3620,6 +3853,91 @@ fn clamp_image_pos(pos: Pos2, image_size: Vec2) -> Pos2 {
     )
 }
 
+fn draw_stroke_segment(
+    image: &mut DynamicImage,
+    start: Pos2,
+    end: Pos2,
+    color: Color32,
+    brush_size: f32,
+    opacity: f32,
+) {
+    let mut rgba = image.to_rgba8();
+    let radius = (brush_size / 2.0).max(0.5);
+    let delta = end - start;
+    let length = delta.length();
+
+    if length <= f32::EPSILON {
+        draw_brush_stamp(&mut rgba, start, radius, color, opacity);
+        *image = DynamicImage::ImageRgba8(rgba);
+        return;
+    }
+
+    let steps = length.ceil().max(1.0) as u32;
+
+    for step in 0..=steps {
+        let t = step as f32 / steps as f32;
+        let center = start + delta * t;
+        draw_brush_stamp(&mut rgba, center, radius, color, opacity);
+    }
+
+    *image = DynamicImage::ImageRgba8(rgba);
+}
+
+fn draw_brush_stamp(
+    image: &mut image::RgbaImage,
+    center: Pos2,
+    radius: f32,
+    color: Color32,
+    opacity: f32,
+) {
+    let width = image.width() as i32;
+    let height = image.height() as i32;
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let min_x = ((center.x - radius - 1.0).floor() as i32).clamp(0, width - 1);
+    let max_x = ((center.x + radius + 1.0).ceil() as i32).clamp(0, width - 1);
+    let min_y = ((center.y - radius - 1.0).floor() as i32).clamp(0, height - 1);
+    let max_y = ((center.y + radius + 1.0).ceil() as i32).clamp(0, height - 1);
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let pixel_center = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
+            let distance = (pixel_center - center).length();
+            let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+
+            let pixel = image.get_pixel_mut(x as u32, y as u32);
+            blend_brush_pixel(pixel, color, opacity * coverage);
+        }
+    }
+}
+
+fn blend_brush_pixel(pixel: &mut image::Rgba<u8>, color: Color32, opacity: f32) {
+    let source_alpha = (color.a() as f32 / 255.0) * opacity.clamp(0.0, 1.0);
+    if source_alpha <= 0.0 {
+        return;
+    }
+
+    let dest_alpha = pixel[3] as f32 / 255.0;
+    let output_alpha = source_alpha + dest_alpha * (1.0 - source_alpha);
+    if output_alpha <= f32::EPSILON {
+        return;
+    }
+
+    let source_rgb = [color.r() as f32, color.g() as f32, color.b() as f32];
+    for channel in 0..3 {
+        let dest = pixel[channel] as f32;
+        let mixed = (source_rgb[channel] * source_alpha + dest * dest_alpha * (1.0 - source_alpha))
+            / output_alpha;
+        pixel[channel] = mixed.round().clamp(0.0, 255.0) as u8;
+    }
+    pixel[3] = (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
 fn is_supported_drop_path(path: &Path) -> bool {
     path.is_dir() || SupportedFormat::from_path(path).is_some()
 }
@@ -3702,4 +4020,52 @@ fn load_font_choices() -> Vec<FontChoice> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod drawing_tests {
+    use super::*;
+
+    #[test]
+    fn draw_stroke_segment_blends_a_brush_dot() {
+        let mut image =
+            DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(5, 5, image::Rgba([255; 4])));
+
+        draw_stroke_segment(
+            &mut image,
+            Pos2::new(2.0, 2.0),
+            Pos2::new(2.0, 2.0),
+            Color32::BLACK,
+            4.0,
+            0.5,
+        );
+
+        let rgba = image.to_rgba8();
+        let center = rgba.get_pixel(2, 2);
+        assert!(center[0] < 255);
+        assert!(center[0] > 100);
+        assert_eq!(center[3], 255);
+    }
+
+    #[test]
+    fn draw_stroke_segment_interpolates_a_continuous_line() {
+        let mut image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            8,
+            image::Rgba([0, 0, 0, 0]),
+        ));
+
+        draw_stroke_segment(
+            &mut image,
+            Pos2::new(1.0, 1.0),
+            Pos2::new(6.0, 1.0),
+            Color32::from_rgb(255, 0, 0),
+            2.0,
+            1.0,
+        );
+
+        let rgba = image.to_rgba8();
+        let touched = (1..=6).filter(|x| rgba.get_pixel(*x, 1)[3] > 0).count();
+        assert!(touched >= 5);
+    }
 }
