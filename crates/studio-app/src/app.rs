@@ -468,8 +468,32 @@ impl PixelStudioApp {
 
             let select_label = self.tr(TextKey::SelectTool);
             let pan_label = self.tr(TextKey::PanTool);
-            ui.selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label);
-            ui.selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label);
+            if ui
+                .selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label)
+                .clicked()
+            {
+                self.draw_tool = DrawTool::None;
+            }
+            if ui
+                .selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label)
+                .clicked()
+            {
+                self.draw_tool = DrawTool::None;
+            }
+            let brush_tool_label = self.tr(TextKey::BrushTool);
+            let line_tool_label = self.tr(TextKey::LineTool);
+            if ui
+                .selectable_value(&mut self.draw_tool, DrawTool::Brush, brush_tool_label)
+                .clicked()
+            {
+                self.preview_tool = PreviewTool::Select;
+            }
+            if ui
+                .selectable_value(&mut self.draw_tool, DrawTool::Line, line_tool_label)
+                .clicked()
+            {
+                self.preview_tool = PreviewTool::Select;
+            }
 
             ui.separator();
 
@@ -774,6 +798,8 @@ impl PixelStudioApp {
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
             let ctx = ui.ctx().clone();
+            self.draw_tools_panel(ui);
+            ui.add_space(20.0);
             self.convert_panel(ui);
             ui.add_space(20.0);
             self.edit_panel(ui, &ctx);
@@ -867,8 +893,6 @@ impl PixelStudioApp {
                 self.selection_drag_start = None;
             }
         });
-
-        self.draw_tools_panel(ui);
 
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -1173,8 +1197,8 @@ impl PixelStudioApp {
     }
 
     fn draw_tools_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading(self.tr(TextKey::Drawing));
         ui.separator();
-        ui.label(self.tr(TextKey::Drawing));
 
         let draw_off_label = self.tr(TextKey::DrawOff);
         let brush_tool_label = self.tr(TextKey::BrushTool);
