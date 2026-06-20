@@ -42,7 +42,7 @@ eframe::App::ui
 3. [x] Add right tabs with real compose-layer adapters and adjustment controls.
 4. [x] Move canvas allocation/texture painting into `CanvasView` and preserve interactions.
 5. [x] Recompose the app layout and keep all legacy functions reachable.
-6. [ ] Add all zh-TW/English labels, tests, visual smoke verification, and Git delivery.
+6. [x] Add all zh-TW/English labels, tests, visual smoke verification, and Git delivery.
 
 ### Risks
 | Risk | Mitigation |
@@ -59,7 +59,7 @@ eframe::App::ui
 - [x] Existing image, project, layers, conversion, batch, GIF, panorama, and C2PA workflows remain reachable.
 - [x] `cargo fmt --check`, clippy, and workspace tests pass.
 - [x] GUI launches successfully and manual visual checks are recorded.
-- [ ] Git commit and push complete.
+- [x] Git commit and push complete.
 
 ### Assumptions
 - `todos.md` and the explicit instruction to start implementation constitute blueprint approval.
