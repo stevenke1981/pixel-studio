@@ -8,7 +8,7 @@ use base64::{Engine as _, engine::general_purpose};
 use chrono::Local;
 use eframe::egui;
 use egui::{
-    Color32, ColorImage, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
+    Color32, ColorImage, Pos2, Rect, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
 };
 use image::DynamicImage;
 use studio_core::transform::SelectionMask;
@@ -23,6 +23,13 @@ use studio_core::{
 };
 
 use crate::i18n::{Language, TextKey};
+use crate::ui::canvas_view::{self, CanvasInput};
+use crate::ui::state::{AdjustUiValues, ToolId, UiState};
+use crate::ui::theme::{UiTokens, apply_visuals};
+use crate::ui::{
+    CommandAvailability, HistoryView, LayerKindUi, LayerView, UiAction, contextual_toolbar,
+    right_panel, status_bar, tool_rail, top_menu_bar,
+};
 
 enum BatchMessage {
     Progress {
@@ -46,7 +53,6 @@ enum C2paBatchMode {
 struct FontChoice {
     name: String,
     path: PathBuf,
-    preview_family: String,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +152,7 @@ enum ProjectLayer {
 
 pub struct PixelStudioApp {
     language: Language,
+    ui_state: UiState,
     pending_open: Option<PathBuf>,
     image_path: Option<PathBuf>,
     image_info: Option<ImageInfo>,
@@ -237,6 +244,7 @@ impl PixelStudioApp {
     pub fn new(initial_path: Option<PathBuf>) -> Self {
         Self {
             language: Language::ZhTw,
+            ui_state: UiState::default(),
             pending_open: initial_path,
             image_path: None,
             image_info: None,
@@ -334,36 +342,365 @@ impl Default for PixelStudioApp {
 
 impl eframe::App for PixelStudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_batch(ui.ctx());
-        self.open_pending_path(ui.ctx());
-        self.open_dropped_files(ui.ctx());
-        self.handle_keyboard_shortcuts(ui.ctx());
-
         let ctx = ui.ctx().clone();
-        egui::Panel::top("toolbar").show_inside(ui, |ui| self.toolbar(ui, &ctx));
-        egui::Panel::left("metadata")
-            .resizable(true)
-            .default_size(360.0)
-            .min_size(280.0)
-            .show_inside(ui, |ui| self.metadata_panel(ui, &ctx));
-        egui::Panel::right("actions")
-            .resizable(true)
-            .default_size(380.0)
-            .min_size(320.0)
-            .show_inside(ui, |ui| self.actions_panel(ui));
-        egui::Panel::bottom("status").show_inside(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!("{}:", self.tr(TextKey::Status)));
-                ui.label(&self.status);
+        let tokens = UiTokens::from_ctx(&ctx);
+        apply_visuals(&ctx, &tokens);
+        self.poll_batch(&ctx);
+        self.open_pending_path(&ctx);
+        self.open_dropped_files(&ctx);
+        self.handle_keyboard_shortcuts(&ctx);
+
+        let availability = self.ui_command_availability();
+        let language = self.language;
+        let mut actions = Vec::new();
+
+        egui::Panel::top("top_menu_bar")
+            .exact_size(40.0)
+            .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
+            .show_inside(ui, |ui| {
+                top_menu_bar::show_top_menu_bar(ui, &tokens, language, availability, &mut actions);
             });
-        });
-        egui::CentralPanel::default_margins().show_inside(ui, |ui| self.preview_panel(ui));
+        egui::Panel::top("contextual_toolbar")
+            .exact_size(34.0)
+            .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
+            .show_inside(ui, |ui| {
+                contextual_toolbar::show_contextual_toolbar(
+                    ui,
+                    &tokens,
+                    language,
+                    &mut self.ui_state,
+                    availability,
+                    &mut actions,
+                );
+            });
+        egui::Panel::bottom("status_bar")
+            .exact_size(26.0)
+            .frame(panel_frame(&tokens, tokens.bg_secondary, PanelEdge::Top))
+            .show_inside(ui, |ui| {
+                status_bar::show_status_bar(
+                    ui,
+                    &tokens,
+                    language,
+                    self.working_image
+                        .as_ref()
+                        .map(|image| (image.width(), image.height())),
+                    &mut self.ui_state,
+                    &mut actions,
+                );
+            });
+        egui::Panel::left("tool_rail")
+            .exact_size(50.0)
+            .resizable(false)
+            .frame(panel_frame(&tokens, tokens.bg_secondary, PanelEdge::Right))
+            .show_inside(ui, |ui| {
+                tool_rail::show_tool_rail(
+                    &ctx,
+                    ui,
+                    &tokens,
+                    language,
+                    &mut self.ui_state,
+                    &mut actions,
+                );
+            });
+
+        let layer_views = self.layer_views();
+        let history = HistoryView {
+            image_undo_count: self.image_undo_stack.len(),
+            layer_undo_count: self.undo_stack.len(),
+        };
+        egui::Panel::right("right_panel")
+            .exact_size(260.0)
+            .resizable(false)
+            .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Left))
+            .show_inside(ui, |ui| {
+                right_panel::show_right_panel(
+                    ui,
+                    &mut self.ui_state,
+                    right_panel::RightPanelInput {
+                        tokens: &tokens,
+                        language,
+                        availability,
+                        layers: &layer_views,
+                        history,
+                    },
+                    &mut actions,
+                );
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(tokens.bg_tertiary))
+            .show_inside(ui, |ui| self.preview_panel(ui, &tokens));
+
+        self.dispatch_ui_actions(&ctx, actions);
+        self.sync_ui_to_editor_tool();
+        self.show_legacy_tools_window(&ctx);
     }
+}
+
+#[derive(Clone, Copy)]
+enum PanelEdge {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+fn panel_frame(tokens: &UiTokens, fill: Color32, edge: PanelEdge) -> egui::Frame {
+    let margin = match edge {
+        PanelEdge::Top => egui::Margin::symmetric(10, 3),
+        PanelEdge::Bottom => egui::Margin::symmetric(10, 3),
+        PanelEdge::Left | PanelEdge::Right => egui::Margin::symmetric(6, 8),
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .inner_margin(margin)
+        .stroke(Stroke::new(1.0, tokens.border_tertiary))
 }
 
 impl PixelStudioApp {
     fn tr(&self, key: TextKey) -> &'static str {
         self.language.t(key)
+    }
+
+    fn ui_command_availability(&self) -> CommandAvailability {
+        CommandAvailability {
+            has_image: self.working_image.is_some(),
+            can_undo: self.can_undo(),
+            can_redo: self.can_redo(),
+            can_undo_image: self.can_undo_image(),
+            can_redo_image: self.can_redo_image(),
+            has_selection: self.selection_rect.is_some(),
+            has_selected_layer: self.selected_layer.is_some(),
+            can_restore_canvas: self.cleared_canvas.is_some(),
+        }
+    }
+
+    fn layer_views(&self) -> Vec<LayerView> {
+        self.compose_layers
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                let (kind, opacity) = match layer {
+                    ComposeLayer::Text(layer) => (LayerKindUi::Text, layer.opacity),
+                    ComposeLayer::Image(layer) => (LayerKindUi::Image, layer.opacity),
+                };
+                LayerView {
+                    index,
+                    name: layer.name().to_owned(),
+                    visible: layer.is_visible(),
+                    selected: self.selected_layer == Some(index),
+                    opacity_percent: (opacity.clamp(0.0, 1.0) * 100.0).round() as u32,
+                    kind,
+                }
+            })
+            .collect()
+    }
+
+    fn dispatch_ui_actions(&mut self, ctx: &egui::Context, actions: Vec<UiAction>) {
+        for action in actions {
+            match action {
+                UiAction::OpenImage => {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        self.open_path(ctx, path);
+                    }
+                }
+                UiAction::OpenFolder => {
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        self.open_folder(ctx, path);
+                    }
+                }
+                UiAction::PasteImage => self.paste_clipboard_image(ctx),
+                UiAction::OpenProject => self.open_project(ctx),
+                UiAction::SaveProject => self.save_project(),
+                UiAction::SaveAs => self.save_as_new_file(),
+                UiAction::ExportComposite => self.export_composite(),
+                UiAction::Reload => {
+                    if let Some(path) = self.image_path.clone() {
+                        self.open_image(ctx, path);
+                    }
+                }
+                UiAction::ClearCanvas => self.clear_canvas(ctx),
+                UiAction::RestoreCanvas => self.restore_canvas(ctx),
+                UiAction::Undo => self.undo(ctx),
+                UiAction::Redo => self.redo(ctx),
+                UiAction::ImageUndo => self.undo_image_edit(ctx),
+                UiAction::ImageRedo => self.redo_image_edit(ctx),
+                UiAction::RotateLeft => {
+                    self.map_working_image(ctx, studio_core::transform::rotate_left)
+                }
+                UiAction::RotateRight => {
+                    self.map_working_image(ctx, studio_core::transform::rotate_right)
+                }
+                UiAction::Rotate180 => {
+                    self.map_working_image(ctx, studio_core::filters::rotate_180)
+                }
+                UiAction::FlipHorizontal => {
+                    self.map_working_image(ctx, studio_core::transform::flip_horizontal)
+                }
+                UiAction::FlipVertical => {
+                    self.map_working_image(ctx, studio_core::transform::flip_vertical)
+                }
+                UiAction::Grayscale => {
+                    self.map_scoped_working_image(ctx, studio_core::transform::grayscale)
+                }
+                UiAction::Invert => {
+                    self.map_scoped_working_image(ctx, studio_core::transform::invert)
+                }
+                UiAction::AutoContrast => {
+                    self.map_scoped_working_image(ctx, studio_core::filters::auto_contrast)
+                }
+                UiAction::ResetEdits => self.reset_edits(ctx),
+                UiAction::AddTextLayer => self.add_text_layer(ctx),
+                UiAction::AddImageLayer => self.add_image_layer_from_file(ctx),
+                UiAction::DuplicateLayer => {
+                    if self.selected_layer.is_some() {
+                        self.push_history();
+                        self.duplicate_selected_layer();
+                        self.update_texture(ctx);
+                    }
+                }
+                UiAction::DeleteLayer => {
+                    if self.selected_layer.is_some() {
+                        self.push_history();
+                        self.delete_selected_layer();
+                        self.update_texture(ctx);
+                    }
+                }
+                UiAction::ApplyCrop => {
+                    self.sync_crop_fields_from_selection();
+                    self.apply_crop(ctx);
+                }
+                UiAction::ClearSelection => {
+                    self.selection_rect = None;
+                    self.selection_drag_start = None;
+                }
+                UiAction::ApplyAdjustments(values) => self.apply_ui_adjustments(ctx, values),
+                UiAction::SelectTool(tool) => self.ui_state.active_tool = tool,
+                UiAction::SelectLayer(index) => self.selected_layer = Some(index),
+                UiAction::ToggleLayerVisibility(index, visible) => {
+                    self.set_layer_visibility(ctx, index, visible)
+                }
+                UiAction::SetLayerOpacity(index, opacity) => {
+                    self.set_layer_opacity(ctx, index, opacity)
+                }
+                UiAction::SetLanguage(language) => self.language = language,
+                UiAction::FitToWindow => {
+                    self.fit_to_window = true;
+                    self.preview_pan = Vec2::ZERO;
+                }
+                UiAction::ActualSize => {
+                    self.fit_to_window = false;
+                    self.zoom = 1.0;
+                    self.ui_state.zoom_percent = 100;
+                    self.preview_pan = Vec2::ZERO;
+                }
+                UiAction::SetZoom(percent) => {
+                    self.fit_to_window = false;
+                    self.zoom = percent as f32 / 100.0;
+                    self.ui_state.zoom_percent = percent.clamp(10, 400);
+                }
+                UiAction::ToggleLegacyTools => {
+                    self.ui_state.legacy_tools_open = !self.ui_state.legacy_tools_open;
+                }
+            }
+        }
+    }
+
+    fn sync_ui_to_editor_tool(&mut self) {
+        self.draw_size = self.ui_state.brush_ui.size_px.clamp(1, 200) as f32;
+        self.draw_opacity = self.ui_state.brush_ui.opacity.min(100) as f32 / 100.0;
+        self.draw_color = self.ui_state.brush_ui.color;
+
+        match self.ui_state.active_tool {
+            ToolId::Brush => {
+                self.preview_tool = PreviewTool::Select;
+                self.draw_tool = DrawTool::Brush;
+            }
+            ToolId::Line => {
+                self.preview_tool = PreviewTool::Select;
+                self.draw_tool = DrawTool::Line;
+            }
+            ToolId::Zoom => {
+                self.preview_tool = PreviewTool::Hand;
+                self.draw_tool = DrawTool::None;
+            }
+            _ => {
+                self.preview_tool = PreviewTool::Select;
+                self.draw_tool = DrawTool::None;
+            }
+        }
+    }
+
+    fn show_legacy_tools_window(&mut self, ctx: &egui::Context) {
+        if !self.ui_state.legacy_tools_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new(self.tr(TextKey::LegacyTools))
+            .open(&mut open)
+            .default_size([960.0, 720.0])
+            .min_size([720.0, 520.0])
+            .show(ctx, |ui| {
+                self.toolbar(ui, ctx);
+                ui.separator();
+                ui.columns(2, |columns| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("legacy_metadata")
+                        .show(&mut columns[0], |ui| self.metadata_panel(ui, ctx));
+                    egui::ScrollArea::vertical()
+                        .id_salt("legacy_actions")
+                        .show(&mut columns[1], |ui| self.actions_panel(ui));
+                });
+            });
+        self.ui_state.legacy_tools_open = open;
+    }
+
+    fn sync_crop_fields_from_selection(&mut self) {
+        let Some(rect) = self.selection_rect else {
+            return;
+        };
+        self.crop_x = rect.min.x.max(0.0).round() as u32;
+        self.crop_y = rect.min.y.max(0.0).round() as u32;
+        self.crop_width = rect.width().max(1.0).round() as u32;
+        self.crop_height = rect.height().max(1.0).round() as u32;
+    }
+
+    fn apply_ui_adjustments(&mut self, ctx: &egui::Context, values: AdjustUiValues) {
+        let brightness = (values.brightness - 50) * 2;
+        let contrast = ((values.contrast - 50) * 2) as f32;
+        let saturation = ((values.saturation - 50) * 2) as f32;
+        let temperature = ((values.temperature - 50) * 2) as f32;
+        if brightness == 0 && contrast == 0.0 && saturation == 0.0 && temperature == 0.0 {
+            return;
+        }
+        self.map_scoped_working_image(ctx, |image| {
+            let image = studio_core::transform::adjust_brightness(image, brightness);
+            let image = studio_core::transform::adjust_contrast(&image, contrast);
+            let image = studio_core::transform::adjust_saturation(&image, saturation);
+            studio_core::filters::adjust_temperature(&image, temperature)
+        });
+    }
+
+    fn set_layer_visibility(&mut self, ctx: &egui::Context, index: usize, visible: bool) {
+        if self.compose_layers.get(index).is_none() {
+            return;
+        }
+        self.push_history();
+        self.compose_layers[index].set_visible(visible);
+        self.update_texture(ctx);
+    }
+
+    fn set_layer_opacity(&mut self, ctx: &egui::Context, index: usize, opacity: u32) {
+        if self.compose_layers.get(index).is_none() {
+            return;
+        }
+        self.push_history();
+        let opacity = opacity.min(100) as f32 / 100.0;
+        match &mut self.compose_layers[index] {
+            ComposeLayer::Text(layer) => layer.opacity = opacity,
+            ComposeLayer::Image(layer) => layer.opacity = opacity,
+        }
+        self.update_texture(ctx);
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -504,15 +841,18 @@ impl PixelStudioApp {
             if ui.button("100%").clicked() {
                 self.fit_to_window = false;
                 self.zoom = 1.0;
+                self.ui_state.zoom_percent = 100;
                 self.preview_pan = Vec2::ZERO;
             }
             if ui.button(self.tr(TextKey::ZoomOut)).clicked() {
                 self.fit_to_window = false;
-                self.zoom = (self.zoom / 1.25).clamp(0.05, 8.0);
+                self.zoom = (self.zoom / 1.25).clamp(0.1, 4.0);
+                self.ui_state.zoom_percent = (self.zoom * 100.0).round() as u32;
             }
             if ui.button(self.tr(TextKey::ZoomIn)).clicked() {
                 self.fit_to_window = false;
-                self.zoom = (self.zoom * 1.25).clamp(0.05, 8.0);
+                self.zoom = (self.zoom * 1.25).clamp(0.1, 4.0);
+                self.ui_state.zoom_percent = (self.zoom * 100.0).round() as u32;
             }
         });
     }
@@ -1573,10 +1913,7 @@ impl PixelStudioApp {
                         for choice in &font_choices {
                             let selected = layer.font_path.as_ref() == Some(&choice.path);
                             let preview = egui::RichText::new(format!("Aa 字型 - {}", choice.name))
-                                .font(egui::FontId::new(
-                                    18.0,
-                                    egui::FontFamily::Name(choice.preview_family.clone().into()),
-                                ));
+                                .font(egui::FontId::proportional(18.0));
                             if ui.selectable_label(selected, preview).clicked() {
                                 layer.font_path = Some(choice.path.clone());
                                 changed = true;
@@ -1751,56 +2088,44 @@ impl PixelStudioApp {
         }
     }
 
-    fn preview_panel(&mut self, ui: &mut egui::Ui) {
-        if let Some(texture) = &self.texture {
-            let available = ui.available_size().max(Vec2::splat(1.0));
-            let scale = if self.fit_to_window {
-                (available.x / self.texture_size.x)
-                    .min(available.y / self.texture_size.y)
-                    .clamp(0.01, 1.0)
-            } else {
-                self.zoom
-            };
-            let display_size = self.texture_size * scale;
-            let texture_id = texture.id();
-            let (viewport_rect, viewport_response) =
-                ui.allocate_exact_size(available, Sense::hover());
-            let image_center = viewport_rect.center() + self.preview_pan;
-            let image_rect = Rect::from_center_size(image_center, display_size);
-            let response = if self.preview_tool == PreviewTool::Hand {
-                let pan_response =
-                    ui.interact(viewport_rect, ui.id().with("canvas_pan"), Sense::drag());
-                if pan_response.dragged() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                } else if pan_response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                }
-                pan_response
-            } else {
-                ui.interact(
-                    image_rect,
-                    ui.id().with("canvas_image"),
-                    Sense::click_and_drag(),
-                )
-            };
-            ui.painter().image(
-                texture_id,
-                image_rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
-            );
-            self.handle_preview_zoom(ui.ctx(), &viewport_response, scale);
-            self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
-            self.paint_drawing_preview(ui, image_rect, scale);
-            self.paint_selection(ui, image_rect, scale);
-            self.paint_selected_layer(ui, image_rect, scale);
-        } else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(120.0);
-                ui.heading("Pixel Studio");
-                ui.label(self.tr(TextKey::BrowseHint));
-            });
+    fn preview_panel(&mut self, ui: &mut egui::Ui, tokens: &UiTokens) {
+        let canvas = canvas_view::show_canvas_view(
+            ui,
+            tokens,
+            CanvasInput {
+                texture: self.texture.as_ref(),
+                texture_size: self.texture_size,
+                fit_to_window: self.fit_to_window,
+                zoom_percent: self.ui_state.zoom_percent,
+                pan: self.preview_pan,
+                pan_mode: self.preview_tool == PreviewTool::Hand,
+                empty_hint: self.tr(TextKey::BrowseHint),
+            },
+        );
+        let Some(canvas) = canvas else {
+            return;
+        };
+
+        if self.fit_to_window {
+            self.ui_state.zoom_percent = ((canvas.scale * 100.0).round() as u32).clamp(10, 400);
         }
+        if self.preview_tool == PreviewTool::Hand {
+            if canvas.image_response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            } else if canvas.image_response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            }
+        }
+        self.handle_preview_zoom(ui.ctx(), &canvas.viewport_response, canvas.scale);
+        self.handle_canvas_interaction(
+            ui.ctx(),
+            &canvas.image_response,
+            canvas.image_rect,
+            canvas.scale,
+        );
+        self.paint_drawing_preview(ui, canvas.image_rect, canvas.scale);
+        self.paint_selection(ui, canvas.image_rect, canvas.scale, tokens.border_info);
+        self.paint_selected_layer(ui, canvas.image_rect, canvas.scale, tokens.border_info);
     }
 
     fn handle_preview_zoom(
@@ -1823,7 +2148,8 @@ impl PixelStudioApp {
             self.zoom = current_scale;
             self.fit_to_window = false;
         }
-        self.zoom = (self.zoom * factor).clamp(0.05, 8.0);
+        self.zoom = (self.zoom * factor).clamp(0.1, 4.0);
+        self.ui_state.zoom_percent = ((self.zoom * 100.0).round() as u32).clamp(10, 400);
         ctx.request_repaint();
     }
 
@@ -2063,7 +2389,13 @@ impl PixelStudioApp {
         );
     }
 
-    fn paint_selected_layer(&self, ui: &mut egui::Ui, image_rect: Rect, scale: f32) {
+    fn paint_selected_layer(
+        &self,
+        ui: &mut egui::Ui,
+        image_rect: Rect,
+        scale: f32,
+        color: Color32,
+    ) {
         let Some(index) = self.selected_layer else {
             return;
         };
@@ -2076,24 +2408,23 @@ impl PixelStudioApp {
         ui.painter().rect_stroke(
             Rect::from_min_max(min, max),
             0.0,
-            Stroke::new(2.0, Color32::from_rgb(80, 180, 255)),
+            Stroke::new(1.0, color),
             StrokeKind::Outside,
         );
     }
 
-    fn paint_selection(&self, ui: &mut egui::Ui, image_rect: Rect, scale: f32) {
+    fn paint_selection(&self, ui: &mut egui::Ui, image_rect: Rect, scale: f32, color: Color32) {
         let Some(bounds) = self.selection_rect else {
             return;
         };
         let min = image_rect.min + bounds.min.to_vec2() * scale;
         let max = image_rect.min + bounds.max.to_vec2() * scale;
         let rect = Rect::from_min_max(min, max);
-        let stroke = Stroke::new(2.0, Color32::from_rgb(255, 210, 70));
+        let stroke = Stroke::new(1.0, color);
 
         match self.selection_shape {
             SelectionShape::Rectangle => {
-                ui.painter()
-                    .rect_stroke(rect, 0.0, stroke, StrokeKind::Outside);
+                canvas_view::paint_dashed_rect(ui, rect, color);
             }
             SelectionShape::Circle => {
                 ui.painter().circle_stroke(
@@ -4036,12 +4367,7 @@ fn load_font_choices() -> Vec<FontChoice> {
         .into_iter()
         .map(|path| {
             let name = crate::fonts::display_font_name(&path);
-            let preview_family = crate::fonts::preview_family_name(&path);
-            FontChoice {
-                name,
-                path,
-                preview_family,
-            }
+            FontChoice { name, path }
         })
         .collect()
 }

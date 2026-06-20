@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 pub fn configure_fonts(ctx: &egui::Context) {
@@ -17,21 +15,6 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 .or_default()
                 .insert(0, "windows_cjk".to_owned());
         }
-    }
-
-    for path in list_system_font_paths() {
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        let family_name = preview_family_name(&path);
-        fonts.font_data.insert(
-            family_name.clone(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-        fonts.families.insert(
-            egui::FontFamily::Name(family_name.clone().into()),
-            vec![family_name],
-        );
     }
 
     ctx.set_fonts(fonts);
@@ -78,10 +61,4 @@ pub fn display_font_name(path: &Path) -> String {
         .or_else(|| path.file_name().and_then(|value| value.to_str()))
         .unwrap_or("Font")
         .to_owned()
-}
-
-pub fn preview_family_name(path: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("studio_app_font_preview_{:x}", hasher.finish())
 }

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PixelCraft — 圖片影像編輯軟體 UI 原型</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
+<style>
+  /* ===== 設計 Token：淺色模式 ===== */
+  :root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f3;
+    --bg-tertiary: #ececea;
+    --bg-info: #E6F1FB;
+    --text-primary: #1a1a1a;
+    --text-secondary: #6b6b66;
+    --text-tertiary: #9a9893;
+    --text-info: #0C447C;
+    --border-tertiary: rgba(0,0,0,.08);
+    --border-secondary: rgba(0,0,0,.15);
+    --border-info: #378ADD;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+  /* ===== 設計 Token：深色模式（跟隨系統設定） ===== */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-primary: #1c1c1a;
+      --bg-secondary: #262624;
+      --bg-tertiary: #2f2f2c;
+      --bg-info: #042C53;
+      --text-primary: #f1efe8;
+      --text-secondary: #b4b2a9;
+      --text-tertiary: #888780;
+      --text-info: #85B7EB;
+      --border-tertiary: rgba(255,255,255,.1);
+      --border-secondary: rgba(255,255,255,.18);
+      --border-info: #378ADD;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg-tertiary);
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    color: var(--text-primary);
+    display: flex;
+    justify-content: center;
+  }
+  .app-window {
+    width: 100%;
+    max-width: 960px;
+    border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--bg-primary);
+    font-size: 13px;
+    box-shadow: none;
+  }
+  button, select, input { font-family: inherit; color: inherit; }
+  button {
+    background: transparent;
+    border: 0.5px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  button:hover { background: var(--bg-secondary); }
+  .tool-btn { border: none !important; width: 34px; height: 34px; border-radius: var(--radius-md); display:flex; align-items:center; justify-content:center; background: transparent; color: var(--text-secondary); }
+  .tool-btn:hover { background: var(--bg-secondary); }
+  .tool-btn[data-active="1"] { background: var(--bg-info); color: var(--text-info); }
+  .tab-btn { flex:1; padding:9px 0; font-size:12px; background:none; border:none; border-radius:0; border-bottom:2px solid transparent; color: var(--text-secondary); }
+  .tab-btn[data-active="1"] { border-bottom-color: var(--border-info); color: var(--text-primary); }
+  input[type="range"] { accent-color: var(--border-info); }
+</style>
+</head>
+<body>
+
+<!-- ============ App 視窗主容器 ============ -->
+<div class="app-window">
+
+  <!-- 1. 頂部選單列 TopMenuBar -->
+  <div style="display:flex; align-items:center; gap:14px; height:40px; padding:0 14px; border-bottom:0.5px solid var(--border-tertiary); white-space:nowrap; overflow:hidden;">
+    <span style="font-weight:500; font-size:14px; display:flex; align-items:center; gap:6px; flex-shrink:0;">
+      <i class="ti ti-photo-edit" style="font-size:18px;"></i>PixelCraft
+    </span>
+    <div style="display:flex; gap:14px; color:var(--text-secondary); font-size:12px;">
+      <span>檔案</span><span>編輯</span><span>影像</span><span>圖層</span><span>濾鏡</span><span>檢視</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex; align-items:center; gap:10px; flex-shrink:0; color:var(--text-secondary);">
+      <i class="ti ti-arrow-back-up" style="font-size:17px; cursor:pointer;" title="復原"></i>
+      <i class="ti ti-arrow-forward-up" style="font-size:17px; cursor:pointer;" title="重做"></i>
+      <button style="font-size:12px; padding:5px 12px;">匯出</button>
+    </div>
+  </div>
+
+  <!-- 2. 情境工具列 ContextualToolbar（依目前工具動態顯示參數，此處為筆刷工具範例） -->
+  <div style="display:flex; align-items:center; gap:14px; height:34px; padding:0 14px; border-bottom:0.5px solid var(--border-tertiary); color:var(--text-secondary); font-size:11px;">
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span>大小</span>
+      <input type="range" min="1" max="200" value="60" step="1" id="brushSize" style="width:54px;">
+      <span id="brushSizeOut" style="min-width:30px; color:var(--text-primary);">60px</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span>硬度</span>
+      <input type="range" min="0" max="100" value="80" step="1" id="hardness" style="width:54px;">
+      <span id="hardnessOut" style="min-width:30px; color:var(--text-primary);">80%</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span>不透明度</span>
+      <input type="range" min="0" max="100" value="100" step="1" id="flowOp" style="width:54px;">
+      <span id="flowOpOut" style="min-width:30px; color:var(--text-primary);">100%</span>
+    </div>
+    <div style="flex:1"></div>
+    <select style="font-size:11px; padding:4px 8px; border:0.5px solid var(--border-secondary); border-radius:var(--radius-md); background:var(--bg-primary);">
+      <option>正常</option>
+      <option>色彩增值</option>
+      <option>濾色</option>
+    </select>
+  </div>
+
+  <!-- 3. 主工作區 Workspace -->
+  <div style="display:flex; height:460px;">
+
+    <!-- 3a. 工具軸 ToolRail -->
+    <div id="toolRail" style="width:50px; border-right:0.5px solid var(--border-tertiary); background:var(--bg-secondary); display:flex; flex-direction:column; align-items:center; padding:10px 0; gap:3px;">
+      <button class="tool-btn" data-active="1" data-tool="move" aria-label="移動" title="移動 (V)"><i class="ti ti-pointer" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="lasso" aria-label="套索" title="套索 (L)"><i class="ti ti-lasso" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="crop" aria-label="裁切" title="裁切 (C)"><i class="ti ti-crop" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="brush" aria-label="筆刷" title="筆刷 (B)"><i class="ti ti-brush" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="eraser" aria-label="橡皮擦" title="橡皮擦 (E)"><i class="ti ti-eraser" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="stamp" aria-label="仿製印章" title="仿製印章 (S)"><i class="ti ti-stamp" style="font-size:18px;"></i></button>
+      <div style="width:24px; height:0.5px; background:var(--border-tertiary); margin:4px 0;"></div>
+      <button class="tool-btn" data-tool="text" aria-label="文字" title="文字 (T)"><i class="ti ti-typography" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="shape" aria-label="圖形" title="圖形 (U)"><i class="ti ti-square" style="font-size:18px;"></i></button>
+      <button class="tool-btn" data-tool="eyedropper" aria-label="滴管" title="滴管 (I)"><i class="ti ti-color-picker" style="font-size:18px;"></i></button>
+      <div style="flex:1"></div>
+      <button class="tool-btn" data-tool="zoom" aria-label="縮放" title="縮放 (Z)"><i class="ti ti-zoom-in" style="font-size:18px;"></i></button>
+    </div>
+
+    <!-- 3b. 畫布 Canvas -->
+    <div style="flex:1; min-width:0; position:relative; background:var(--bg-tertiary); display:flex; align-items:center; justify-content:center; padding:16px;">
+      <!-- 範例影像：以扁平色塊組成的風景示意圖，正式版應為實際影像 -->
+      <svg viewBox="0 0 320 220" style="width:100%; max-width:420px; border:0.5px solid var(--border-secondary); border-radius:var(--radius-md); background:#E6F1FB;">
+        <rect x="0" y="150" width="320" height="70" fill="#97C459"/>
+        <polygon points="40,150 100,70 160,150" fill="#888780"/>
+        <polygon points="120,150 190,50 260,150" fill="#5F5E5A"/>
+        <circle cx="260" cy="40" r="22" fill="#FAC775"/>
+        <circle cx="80" cy="130" r="20" fill="#27500A"/>
+        <rect x="65" y="130" width="6" height="30" fill="#27500A"/>
+      </svg>
+      <!-- 選取框示意 -->
+      <div style="position:absolute; left:40px; top:32px; right:40px; bottom:32px; border:1px dashed var(--border-info); border-radius:2px; pointer-events:none;"></div>
+      <!-- 縮放百分比浮動標籤 -->
+      <div style="position:absolute; right:24px; bottom:24px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); padding:3px 10px; font-size:11px; color:var(--text-secondary);">100%</div>
+    </div>
+
+    <!-- 3c. 屬性面板 RightPanel -->
+    <div style="width:260px; border-left:0.5px solid var(--border-tertiary); display:flex; flex-direction:column;">
+
+      <!-- 分頁列 -->
+      <div id="tabRow" style="display:flex; border-bottom:0.5px solid var(--border-tertiary);">
+        <button class="tab-btn" data-active="1" data-tab="layers">圖層</button>
+        <button class="tab-btn" data-tab="adjust">調整</button>
+        <button class="tab-btn" data-tab="history">紀錄</button>
+      </div>
+
+      <!-- 圖層分頁 -->
+      <div id="panel-layers" style="padding:10px; overflow-y:auto;">
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 4px; border-radius:var(--radius-md); background:var(--bg-secondary);">
+          <i class="ti ti-eye" style="font-size:15px; color:var(--text-secondary);"></i>
+          <div style="width:26px; height:26px; border-radius:4px; background:#F5C4B3; border:0.5px solid var(--border-tertiary); flex-shrink:0;"></div>
+          <span style="font-size:12px; flex:1;">文字圖層</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 4px; margin-top:4px;">
+          <i class="ti ti-eye" style="font-size:15px; color:var(--text-secondary);"></i>
+          <div style="width:26px; height:26px; border-radius:4px; background:#CECBF6; border:0.5px solid var(--border-tertiary); flex-shrink:0;"></div>
+          <span style="font-size:12px; flex:1;">調色圖層</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 4px; margin-top:4px;">
+          <i class="ti ti-eye" style="font-size:15px; color:var(--text-secondary);"></i>
+          <div style="width:26px; height:26px; border-radius:4px; background:#9FE1CB; border:0.5px solid var(--border-tertiary); flex-shrink:0;"></div>
+          <span style="font-size:12px; flex:1;">背景</span>
+          <i class="ti ti-lock" style="font-size:14px; color:var(--text-tertiary);"></i>
+        </div>
+        <div style="margin-top:14px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;">
+            <span>不透明度</span><span id="layerOpOut">100%</span>
+          </div>
+          <input type="range" min="0" max="100" value="100" step="1" id="layerOp" style="width:100%;">
+        </div>
+      </div>
+
+      <!-- 調整分頁 -->
+      <div id="panel-adjust" style="padding:10px; display:none;">
+        <div style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;"><span>亮度</span><span id="briOut">50</span></div>
+          <input type="range" min="0" max="100" value="50" step="1" id="bri" style="width:100%;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;"><span>對比</span><span id="conOut">50</span></div>
+          <input type="range" min="0" max="100" value="50" step="1" id="con" style="width:100%;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;"><span>飽和度</span><span id="satOut">50</span></div>
+          <input type="range" min="0" max="100" value="50" step="1" id="sat" style="width:100%;">
+        </div>
+        <div>
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;"><span>色溫</span><span id="tmpOut">50</span></div>
+          <input type="range" min="0" max="100" value="50" step="1" id="tmp" style="width:100%;">
+        </div>
+      </div>
+
+      <!-- 紀錄分頁 -->
+      <div id="panel-history" style="padding:10px; display:none; font-size:12px; color:var(--text-secondary);">
+        <p style="margin:0 0 8px;">開啟檔案</p>
+        <p style="margin:0 0 8px;">套用裁切</p>
+        <p style="margin:0 0 8px;">新增文字圖層</p>
+        <p style="margin:0; color:var(--text-info); font-weight:500;">調整亮度（目前）</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 4. 狀態列 StatusBar -->
+  <div style="display:flex; align-items:center; justify-content:space-between; height:26px; padding:0 14px; border-top:0.5px solid var(--border-tertiary); background:var(--bg-secondary); font-size:11px; color:var(--text-secondary);">
+    <span>1920 × 1080 px・RGB・8bit</span>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <i class="ti ti-zoom-out" style="font-size:13px;"></i>
+      <input type="range" min="10" max="400" value="100" step="10" id="zoom" style="width:70px;">
+      <i class="ti ti-zoom-in" style="font-size:13px;"></i>
+      <span id="zoomOut" style="min-width:34px;">100%</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // 將 range slider 的值即時綁定到對應的文字顯示，並四捨五入避免浮點數誤差
+  function bindSlider(inputId, outputId, suffix) {
+    var input = document.getElementById(inputId);
+    var output = document.getElementById(outputId);
+    if (!input || !output) return;
+    input.addEventListener('input', function () {
+      output.textContent = Math.round(Number(input.value)) + (suffix || '');
+    });
+  }
+  bindSlider('brushSize', 'brushSizeOut', 'px');
+  bindSlider('hardness', 'hardnessOut', '%');
+  bindSlider('flowOp', 'flowOpOut', '%');
+  bindSlider('layerOp', 'layerOpOut', '%');
+  bindSlider('bri', 'briOut', '');
+  bindSlider('con', 'conOut', '');
+  bindSlider('sat', 'satOut', '');
+  bindSlider('tmp', 'tmpOut', '');
+  bindSlider('zoom', 'zoomOut', '%');
+
+  // 工具軸：點擊切換選取態（data-active 屬性）
+  document.querySelectorAll('.tool-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tool-btn').forEach(function (b) { b.removeAttribute('data-active'); });
+      btn.setAttribute('data-active', '1');
+    });
+  });
+
+  // 右側面板：分頁切換邏輯，單一時間僅顯示一個 panel
+  document.querySelectorAll('.tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tab-btn').forEach(function (b) { b.removeAttribute('data-active'); });
+      btn.setAttribute('data-active', '1');
+      ['layers', 'adjust', 'history'].forEach(function (id) {
+        var el = document.getElementById('panel-' + id);
+        if (el) el.style.display = (id === btn.dataset.tab) ? 'block' : 'none';
+      });
+    });
+  });
+</script>
+
+</body>
+</html>
