@@ -18,3 +18,8 @@
 **Trigger:** `CopyFromScreen` and `PrintWindow` could not capture the GPU-rendered egui surface even though the window was alive.
 **Rule:** For native egui visual QA, request `ViewportCommand::Screenshot` and validate the returned `Event::Screenshot` image instead of relying on desktop capture APIs.
 **Source:** editor UI redesign visual QA
+---
+## Lesson #5 - 2026-06-21
+**Trigger:** The old drawing panel edited engine fields directly, but the redesigned UI synchronizes those fields from `UiState` at the end of every frame.
+**Rule:** When migrating controls into the categorized left panel, edit `UiState` for synchronized tools instead of reusing controls that write the derived engine fields.
+**Source:** legacy tools to left categories migration

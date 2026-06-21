@@ -86,6 +86,47 @@ pub enum RightPanelTab {
     History,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeftToolCategory {
+    File,
+    Browse,
+    Drawing,
+    Edit,
+    Layers,
+    Export,
+    Gif,
+    Batch,
+    C2pa,
+}
+
+impl LeftToolCategory {
+    pub const ALL: [Self; 9] = [
+        Self::File,
+        Self::Browse,
+        Self::Drawing,
+        Self::Edit,
+        Self::Layers,
+        Self::Export,
+        Self::Gif,
+        Self::Batch,
+        Self::C2pa,
+    ];
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::File => "F",
+            Self::Browse => "O",
+            Self::Drawing => "B",
+            Self::Edit => "E",
+            Self::Layers => "L",
+            Self::Export => "X",
+            Self::Gif => "G",
+            Self::Batch => "Q",
+            Self::C2pa => "P",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BrushUiSettings {
     pub size_px: u32,
@@ -136,11 +177,12 @@ impl Default for AdjustUiValues {
 #[derive(Debug, Clone)]
 pub struct UiState {
     pub active_tool: ToolId,
+    pub left_category: LeftToolCategory,
+    pub left_tools_open: bool,
     pub right_panel_tab: RightPanelTab,
     pub brush_ui: BrushUiSettings,
     pub adjust_ui: AdjustUiValues,
     pub zoom_percent: u32,
-    pub legacy_tools_open: bool,
     pub layer_opacity_edit: Option<(usize, u32)>,
 }
 
@@ -148,11 +190,12 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             active_tool: ToolId::Move,
+            left_category: LeftToolCategory::Drawing,
+            left_tools_open: true,
             right_panel_tab: RightPanelTab::Layers,
             brush_ui: BrushUiSettings::default(),
             adjust_ui: AdjustUiValues::default(),
             zoom_percent: 100,
-            legacy_tools_open: false,
             layer_opacity_edit: None,
         }
     }
@@ -160,12 +203,14 @@ impl Default for UiState {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlendModeUi, RightPanelTab, ToolId, UiState};
+    use super::{BlendModeUi, LeftToolCategory, RightPanelTab, ToolId, UiState};
 
     #[test]
     fn ui_defaults_match_design_spec() {
         let state = UiState::default();
         assert_eq!(state.active_tool, ToolId::Move);
+        assert_eq!(state.left_category, LeftToolCategory::Drawing);
+        assert!(state.left_tools_open);
         assert_eq!(state.right_panel_tab, RightPanelTab::Layers);
         assert_eq!(state.brush_ui.size_px, 60);
         assert_eq!(state.brush_ui.hardness, 80);

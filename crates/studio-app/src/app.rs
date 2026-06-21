@@ -24,11 +24,11 @@ use studio_core::{
 
 use crate::i18n::{Language, TextKey};
 use crate::ui::canvas_view::{self, CanvasInput};
-use crate::ui::state::{AdjustUiValues, ToolId, UiState};
+use crate::ui::state::{AdjustUiValues, LeftToolCategory, ToolId, UiState};
 use crate::ui::theme::{UiTokens, apply_visuals};
 use crate::ui::{
     CommandAvailability, HistoryView, LayerKindUi, LayerView, UiAction, contextual_toolbar,
-    right_panel, status_bar, tool_rail, top_menu_bar,
+    left_tools, right_panel, status_bar, top_menu_bar,
 };
 
 enum BatchMessage {
@@ -393,7 +393,7 @@ impl eframe::App for PixelStudioApp {
             .resizable(false)
             .frame(panel_frame(&tokens, tokens.bg_secondary, PanelEdge::Right))
             .show_inside(ui, |ui| {
-                tool_rail::show_tool_rail(
+                left_tools::show_category_rail(
                     &ctx,
                     ui,
                     &tokens,
@@ -402,6 +402,17 @@ impl eframe::App for PixelStudioApp {
                     &mut actions,
                 );
             });
+
+        if self.ui_state.left_tools_open {
+            let category = self.ui_state.left_category;
+            egui::Panel::left("left_tools_panel")
+                .exact_size(300.0)
+                .resizable(false)
+                .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Right))
+                .show_inside(ui, |ui| {
+                    self.show_left_category_panel(ui, &ctx, &tokens, category, &mut actions);
+                });
+        }
 
         let layer_views = self.layer_views();
         let history = HistoryView {
@@ -433,7 +444,6 @@ impl eframe::App for PixelStudioApp {
 
         self.dispatch_ui_actions(&ctx, actions);
         self.sync_ui_to_editor_tool();
-        self.show_legacy_tools_window(&ctx);
     }
 }
 
@@ -599,8 +609,8 @@ impl PixelStudioApp {
                     self.zoom = percent as f32 / 100.0;
                     self.ui_state.zoom_percent = percent.clamp(10, 400);
                 }
-                UiAction::ToggleLegacyTools => {
-                    self.ui_state.legacy_tools_open = !self.ui_state.legacy_tools_open;
+                UiAction::ToggleLeftTools => {
+                    self.ui_state.left_tools_open = !self.ui_state.left_tools_open;
                 }
             }
         }
@@ -631,28 +641,56 @@ impl PixelStudioApp {
         }
     }
 
-    fn show_legacy_tools_window(&mut self, ctx: &egui::Context) {
-        if !self.ui_state.legacy_tools_open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new(self.tr(TextKey::LegacyTools))
-            .open(&mut open)
-            .default_size([960.0, 720.0])
-            .min_size([720.0, 520.0])
-            .show(ctx, |ui| {
-                self.toolbar(ui, ctx);
-                ui.separator();
-                ui.columns(2, |columns| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("legacy_metadata")
-                        .show(&mut columns[0], |ui| self.metadata_panel(ui, ctx));
-                    egui::ScrollArea::vertical()
-                        .id_salt("legacy_actions")
-                        .show(&mut columns[1], |ui| self.actions_panel(ui));
-                });
+    fn show_left_category_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        tokens: &UiTokens,
+        category: LeftToolCategory,
+        actions: &mut Vec<UiAction>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.heading(left_tools::category_label(self.language, category));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("×")
+                    .on_hover_text(self.tr(TextKey::ClosePanel))
+                    .clicked()
+                {
+                    self.ui_state.left_tools_open = false;
+                }
             });
-        self.ui_state.legacy_tools_open = open;
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical()
+            .id_salt("left_category_content")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match category {
+                LeftToolCategory::File => self.file_tools_panel(ui, ctx),
+                LeftToolCategory::Browse => self.metadata_panel(ui, ctx),
+                LeftToolCategory::Drawing => {
+                    left_tools::show_tool_picker(
+                        ui,
+                        tokens,
+                        self.language,
+                        &mut self.ui_state,
+                        actions,
+                    );
+                    ui.add_space(8.0);
+                    ui.label(self.tr(TextKey::DrawingSettingsHint));
+                }
+                LeftToolCategory::Edit => self.edit_panel(ui, ctx),
+                LeftToolCategory::Layers => self.compose_panel(ui, ctx),
+                LeftToolCategory::Export => {
+                    self.convert_panel(ui);
+                    ui.add_space(18.0);
+                    self.panorama_panel(ui);
+                }
+                LeftToolCategory::Gif => self.gif_panel(ui, ctx),
+                LeftToolCategory::Batch => self.batch_panel(ui),
+                LeftToolCategory::C2pa => self.c2pa_panel(ui),
+            });
     }
 
     fn sync_crop_fields_from_selection(&mut self) {
@@ -703,7 +741,7 @@ impl PixelStudioApp {
         self.update_texture(ctx);
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn file_tools_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
             if ui.button(self.tr(TextKey::OpenImage)).clicked()
                 && let Some(path) = rfd::FileDialog::new().pick_file()
@@ -714,7 +752,15 @@ impl PixelStudioApp {
             if ui.button(self.tr(TextKey::PasteImage)).clicked() {
                 self.paste_clipboard_image(ctx);
             }
+            if ui.button(self.tr(TextKey::OpenFolder)).clicked()
+                && let Some(path) = rfd::FileDialog::new().pick_folder()
+            {
+                self.open_folder(ctx, path);
+            }
+        });
 
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
                     self.working_image.is_some(),
@@ -734,28 +780,19 @@ impl PixelStudioApp {
             {
                 self.restore_canvas(ctx);
             }
-
-            if ui.button(self.tr(TextKey::OpenFolder)).clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_folder()
+            if ui.button(self.tr(TextKey::Reload)).clicked()
+                && let Some(path) = self.image_path.clone()
             {
-                self.open_folder(ctx, path);
+                self.open_image(ctx, path);
             }
+        });
 
+        ui.add_space(12.0);
+        ui.label(self.tr(TextKey::Project));
+        ui.horizontal_wrapped(|ui| {
             if ui.button(self.tr(TextKey::OpenProject)).clicked() {
                 self.open_project(ctx);
             }
-
-            if ui
-                .add_enabled(
-                    self.working_image.is_some(),
-                    egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
-                )
-                .clicked()
-            {
-                self.save_as_new_file();
-            }
-
-            ui.label(self.tr(TextKey::Project));
             if ui
                 .add_enabled(
                     self.working_image.is_some(),
@@ -765,7 +802,19 @@ impl PixelStudioApp {
             {
                 self.save_project();
             }
+            if ui
+                .add_enabled(
+                    self.working_image.is_some(),
+                    egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
+                )
+                .clicked()
+            {
+                self.save_as_new_file();
+            }
+        });
 
+        ui.add_space(12.0);
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
                     self.previous_index().is_some(),
@@ -779,82 +828,24 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.next_index().is_some(),
-                    egui::Button::new("下一張 / Next"),
+                    egui::Button::new(self.tr(TextKey::Next)),
                 )
                 .clicked()
             {
                 self.open_folder_index(ctx, self.next_index().unwrap_or(0));
             }
-
-            if ui.button(self.tr(TextKey::Reload)).clicked()
-                && let Some(path) = self.image_path.clone()
-            {
-                self.open_image(ctx, path);
-            }
-
-            ui.separator();
-
-            egui::ComboBox::from_label(self.tr(TextKey::Language))
-                .selected_text(self.language.name())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.language, Language::ZhTw, Language::ZhTw.name());
-                    ui.selectable_value(&mut self.language, Language::En, Language::En.name());
-                });
-
-            ui.separator();
-
-            let select_label = self.tr(TextKey::SelectTool);
-            let pan_label = self.tr(TextKey::PanTool);
-            if ui
-                .selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label)
-                .clicked()
-            {
-                self.draw_tool = DrawTool::None;
-            }
-            if ui
-                .selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label)
-                .clicked()
-            {
-                self.draw_tool = DrawTool::None;
-            }
-            let brush_tool_label = self.tr(TextKey::BrushTool);
-            let line_tool_label = self.tr(TextKey::LineTool);
-            if ui
-                .selectable_value(&mut self.draw_tool, DrawTool::Brush, brush_tool_label)
-                .clicked()
-            {
-                self.preview_tool = PreviewTool::Select;
-            }
-            if ui
-                .selectable_value(&mut self.draw_tool, DrawTool::Line, line_tool_label)
-                .clicked()
-            {
-                self.preview_tool = PreviewTool::Select;
-            }
-
-            ui.separator();
-
-            if ui.button(self.tr(TextKey::Fit)).clicked() {
-                self.fit_to_window = true;
-                self.preview_pan = Vec2::ZERO;
-            }
-            if ui.button("100%").clicked() {
-                self.fit_to_window = false;
-                self.zoom = 1.0;
-                self.ui_state.zoom_percent = 100;
-                self.preview_pan = Vec2::ZERO;
-            }
-            if ui.button(self.tr(TextKey::ZoomOut)).clicked() {
-                self.fit_to_window = false;
-                self.zoom = (self.zoom / 1.25).clamp(0.1, 4.0);
-                self.ui_state.zoom_percent = (self.zoom * 100.0).round() as u32;
-            }
-            if ui.button(self.tr(TextKey::ZoomIn)).clicked() {
-                self.fit_to_window = false;
-                self.zoom = (self.zoom * 1.25).clamp(0.1, 4.0);
-                self.ui_state.zoom_percent = (self.zoom * 100.0).round() as u32;
-            }
         });
+
+        ui.add_space(12.0);
+        egui::ComboBox::from_label(self.tr(TextKey::Language))
+            .selected_text(self.language.name())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.language, Language::ZhTw, Language::ZhTw.name());
+                ui.selectable_value(&mut self.language, Language::En, Language::En.name());
+            });
+
+        ui.add_space(12.0);
+        ui.label(format!("{}: {}", self.tr(TextKey::Status), self.status));
     }
 
     fn metadata_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -904,9 +895,6 @@ impl PixelStudioApp {
                 }
             }
         }
-
-        ui.add_space(16.0);
-        self.c2pa_panel(ui);
 
         ui.add_space(16.0);
         ui.heading(self.tr(TextKey::Folder));
@@ -1131,27 +1119,6 @@ impl PixelStudioApp {
                 ui.text_edit_multiline(&mut self.c2pa_draft.action);
                 ui.end_row();
             });
-    }
-
-    fn actions_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading(self.tr(TextKey::Actions));
-        ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let ctx = ui.ctx().clone();
-            self.draw_tools_panel(ui);
-            ui.add_space(20.0);
-            self.convert_panel(ui);
-            ui.add_space(20.0);
-            self.edit_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.compose_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.panorama_panel(ui);
-            ui.add_space(20.0);
-            self.gif_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.batch_panel(ui);
-        });
     }
 
     fn convert_panel(&mut self, ui: &mut egui::Ui) {
@@ -1534,40 +1501,6 @@ impl PixelStudioApp {
         {
             self.reset_edits(ctx);
         }
-    }
-
-    fn draw_tools_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading(self.tr(TextKey::Drawing));
-        ui.separator();
-
-        let draw_off_label = self.tr(TextKey::DrawOff);
-        let brush_tool_label = self.tr(TextKey::BrushTool);
-        let line_tool_label = self.tr(TextKey::LineTool);
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.draw_tool, DrawTool::None, draw_off_label);
-            if ui
-                .selectable_value(&mut self.draw_tool, DrawTool::Brush, brush_tool_label)
-                .clicked()
-            {
-                self.preview_tool = PreviewTool::Select;
-            }
-            if ui
-                .selectable_value(&mut self.draw_tool, DrawTool::Line, line_tool_label)
-                .clicked()
-            {
-                self.preview_tool = PreviewTool::Select;
-            }
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            ui.label(self.tr(TextKey::BrushColor));
-            ui.color_edit_button_srgba(&mut self.draw_color);
-        });
-
-        let brush_size_label = self.tr(TextKey::BrushSize);
-        ui.add(egui::Slider::new(&mut self.draw_size, 1.0..=128.0).text(brush_size_label));
-        let brush_opacity_label = self.tr(TextKey::BrushOpacity);
-        ui.add(egui::Slider::new(&mut self.draw_opacity, 0.05..=1.0).text(brush_opacity_label));
     }
 
     fn panorama_panel(&mut self, ui: &mut egui::Ui) {

@@ -197,9 +197,9 @@ pub fn show_top_menu_bar(
             ui.separator();
             menu_action(
                 ui,
-                language.t(TextKey::LegacyTools),
+                language.t(TextKey::LeftTools),
                 true,
-                UiAction::ToggleLegacyTools,
+                UiAction::ToggleLeftTools,
                 actions,
             );
             ui.separator();

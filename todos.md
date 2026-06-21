@@ -16,6 +16,14 @@
 
 Follow-up work: implement raster behavior for Eraser/Stamp/Eyedropper/Shape, named history entries, live non-destructive adjustment previews, and a second manual screenshot pass under a dark Windows theme.
 
+### Left tool migration — 2026-06-21
+
+- [x] Migrated every legacy workflow into nine left categories: File, Browse, Drawing, Edit, Layers, Export, GIF, Batch, and C2PA.
+- [x] Replaced the floating legacy tools window with a persistent 50px category rail and optional 300px drawer.
+- [x] Kept Brush and Line visible in the default Drawing category with named tool buttons and shortcuts.
+- [x] Removed duplicated C2PA controls from Browse and kept C2PA single/batch workflows in one category.
+- [x] Built and smoke-tested the Windows Release binaries in `dist/`.
+
 ---
 
 ## 0. Read first

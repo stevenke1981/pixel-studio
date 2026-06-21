@@ -1,10 +1,10 @@
 pub mod canvas_view;
 pub mod contextual_toolbar;
+pub mod left_tools;
 pub mod right_panel;
 pub mod state;
 pub mod status_bar;
 pub mod theme;
-pub mod tool_rail;
 pub mod top_menu_bar;
 
 use crate::i18n::Language;
@@ -50,7 +50,7 @@ pub enum UiAction {
     FitToWindow,
     ActualSize,
     SetZoom(u32),
-    ToggleLegacyTools,
+    ToggleLeftTools,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
