@@ -39,7 +39,7 @@ Status bar
 3. [x] Extract file controls and remove C2PA duplication from Browse.
 4. [x] Remove the legacy window/action aggregator and update View toggle/i18n.
 5. [x] Run formatting, clippy, tests, screenshot QA, and release build.
-6. [ ] Record lessons, commit, push, and verify remote SHA.
+6. [x] Record lessons, commit, push, and verify remote SHA.
 
 ### Risks
 | Risk | Mitigation |
@@ -56,7 +56,7 @@ Status bar
 - [x] `cargo fmt --check`, strict clippy, and workspace tests pass.
 - [x] Native screenshot QA shows no overlap at the default viewport.
 - [x] Release workspace build succeeds and release binaries are identified.
-- [ ] Git commit and push complete.
+- [x] Git commit and push complete.
 
 ### Assumptions
 - “左側工具列 分類別” means a compact category rail plus adjacent categorized drawer, not placing every control into 50px.
