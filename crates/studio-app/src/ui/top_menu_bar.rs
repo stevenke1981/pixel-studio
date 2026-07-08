@@ -1,6 +1,7 @@
 use egui::{Align, Button, Layout, RichText, Ui, Vec2};
 
 use crate::i18n::{Language, TextKey};
+use crate::ui::state::ToolId;
 use crate::ui::theme::UiTokens;
 use crate::ui::{CommandAvailability, UiAction};
 
@@ -9,6 +10,7 @@ pub fn show_top_menu_bar(
     tokens: &UiTokens,
     language: Language,
     availability: CommandAvailability,
+    active_tool: ToolId,
     actions: &mut Vec<UiAction>,
 ) {
     ui.horizontal_centered(|ui| {
@@ -218,43 +220,98 @@ pub fn show_top_menu_bar(
             Vec2::new(ui.available_width().max(0.0), 24.0),
             Layout::right_to_left(Align::Center),
             |ui| {
-                if ui
-                    .add_enabled(
-                        availability.has_image,
-                        Button::new(language.t(TextKey::Export)),
-                    )
-                    .clicked()
-                {
-                    actions.push(UiAction::ExportComposite);
-                }
-                if ui
-                    .add_enabled(
-                        availability.can_redo || availability.can_redo_image,
-                        Button::new("→"),
-                    )
-                    .on_hover_text(language.t(TextKey::Redo))
-                    .clicked()
-                {
-                    actions.push(if availability.can_redo {
-                        UiAction::Redo
-                    } else {
-                        UiAction::ImageRedo
-                    });
-                }
-                if ui
-                    .add_enabled(
-                        availability.can_undo || availability.can_undo_image,
-                        Button::new("←"),
-                    )
-                    .on_hover_text(language.t(TextKey::Undo))
-                    .clicked()
-                {
-                    actions.push(if availability.can_undo {
-                        UiAction::Undo
-                    } else {
-                        UiAction::ImageUndo
-                    });
-                }
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "↥",
+                    language.t(TextKey::Export),
+                    availability.has_image,
+                    UiAction::ExportComposite,
+                    actions,
+                );
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "1:1",
+                    "100%",
+                    availability.has_image,
+                    UiAction::ActualSize,
+                    actions,
+                );
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "□",
+                    language.t(TextKey::Fit),
+                    availability.has_image,
+                    UiAction::FitToWindow,
+                    actions,
+                );
+                ui.separator();
+                toolbar_tool_button(
+                    ui,
+                    tokens,
+                    active_tool,
+                    ToolId::Line,
+                    language.t(TextKey::LineTool),
+                    actions,
+                );
+                toolbar_tool_button(
+                    ui,
+                    tokens,
+                    active_tool,
+                    ToolId::Brush,
+                    language.t(TextKey::BrushTool),
+                    actions,
+                );
+                toolbar_tool_button(
+                    ui,
+                    tokens,
+                    active_tool,
+                    ToolId::Crop,
+                    language.t(TextKey::Crop),
+                    actions,
+                );
+                ui.separator();
+                toolbar_redo_button(ui, tokens, language, availability, actions);
+                toolbar_undo_button(ui, tokens, language, availability, actions);
+                ui.separator();
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "S+",
+                    language.t(TextKey::SaveAsNewFile),
+                    availability.has_image,
+                    UiAction::SaveAs,
+                    actions,
+                );
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "S",
+                    language.t(TextKey::SaveProject),
+                    availability.has_image,
+                    UiAction::SaveProject,
+                    actions,
+                );
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "⧉",
+                    language.t(TextKey::PasteImage),
+                    true,
+                    UiAction::PasteImage,
+                    actions,
+                );
+                toolbar_action_button(
+                    ui,
+                    tokens,
+                    "O",
+                    language.t(TextKey::OpenImage),
+                    true,
+                    UiAction::OpenImage,
+                    actions,
+                );
             },
         );
     });
@@ -271,4 +328,114 @@ fn menu_action(
         actions.push(action);
         ui.close();
     }
+}
+
+fn toolbar_action_button(
+    ui: &mut Ui,
+    tokens: &UiTokens,
+    icon: &str,
+    tooltip: &str,
+    enabled: bool,
+    action: UiAction,
+    actions: &mut Vec<UiAction>,
+) {
+    let width = match icon.chars().count() {
+        0 | 1 => 28.0,
+        2 => 34.0,
+        _ => 40.0,
+    };
+    let text = RichText::new(icon).size(12.0).color(tokens.text_secondary);
+    let button = Button::new(text)
+        .min_size(Vec2::new(width, 24.0))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::new(1.0, tokens.border_tertiary));
+    if ui
+        .add_enabled(enabled, button)
+        .on_hover_text(tooltip)
+        .clicked()
+    {
+        actions.push(action);
+    }
+}
+
+fn toolbar_tool_button(
+    ui: &mut Ui,
+    tokens: &UiTokens,
+    active_tool: ToolId,
+    tool: ToolId,
+    tooltip: &str,
+    actions: &mut Vec<UiAction>,
+) {
+    let selected = active_tool == tool;
+    let text = RichText::new(tool.icon()).size(12.0).color(if selected {
+        tokens.text_info
+    } else {
+        tokens.text_secondary
+    });
+    let button = Button::new(text)
+        .min_size(Vec2::new(28.0, 24.0))
+        .fill(if selected {
+            tokens.bg_info
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(
+            1.0,
+            if selected {
+                tokens.border_info
+            } else {
+                tokens.border_tertiary
+            },
+        ));
+    if ui.add(button).on_hover_text(tooltip).clicked() {
+        actions.push(UiAction::SelectTool(tool));
+    }
+}
+
+fn toolbar_undo_button(
+    ui: &mut Ui,
+    tokens: &UiTokens,
+    language: Language,
+    availability: CommandAvailability,
+    actions: &mut Vec<UiAction>,
+) {
+    let enabled = availability.can_undo || availability.can_undo_image;
+    let action = if availability.can_undo {
+        UiAction::Undo
+    } else {
+        UiAction::ImageUndo
+    };
+    toolbar_action_button(
+        ui,
+        tokens,
+        "←",
+        language.t(TextKey::Undo),
+        enabled,
+        action,
+        actions,
+    );
+}
+
+fn toolbar_redo_button(
+    ui: &mut Ui,
+    tokens: &UiTokens,
+    language: Language,
+    availability: CommandAvailability,
+    actions: &mut Vec<UiAction>,
+) {
+    let enabled = availability.can_redo || availability.can_redo_image;
+    let action = if availability.can_redo {
+        UiAction::Redo
+    } else {
+        UiAction::ImageRedo
+    };
+    toolbar_action_button(
+        ui,
+        tokens,
+        "→",
+        language.t(TextKey::Redo),
+        enabled,
+        action,
+        actions,
+    );
 }

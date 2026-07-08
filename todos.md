@@ -24,6 +24,13 @@ Follow-up work: implement raster behavior for Eraser/Stamp/Eyedropper/Shape, nam
 - [x] Removed duplicated C2PA controls from Browse and kept C2PA single/batch workflows in one category.
 - [x] Built and smoke-tested the Windows Release binaries in `dist/`.
 
+### Common toolbar — 2026-07-08
+
+- [x] Generated a Codex built-in GUI reference image at `docs/assets/pixel-studio-toolbar-reference.png`.
+- [x] Added top-toolbar shortcuts for open, paste, save, save as, undo, redo, crop, brush, line, fit, 100%, and export.
+- [x] Styled active tool shortcuts with the existing blue selected state while keeping menus and left categories available.
+- [x] Re-run formatting, clippy, tests, release build, and GUI smoke test after the toolbar change.
+
 ---
 
 ## 0. Read first

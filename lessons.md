@@ -23,3 +23,8 @@
 **Trigger:** The old drawing panel edited engine fields directly, but the redesigned UI synchronizes those fields from `UiState` at the end of every frame.
 **Rule:** When migrating controls into the categorized left panel, edit `UiState` for synchronized tools instead of reusing controls that write the derived engine fields.
 **Source:** legacy tools to left categories migration
+---
+## Lesson #6 - 2026-07-08
+**Trigger:** Common actions were reachable through menus and the left drawer, but still not visible enough as first-level controls.
+**Rule:** When a workflow is described as common or frequent, expose it in the top toolbar with a compact button and tooltip while keeping the full categorized panel for deeper tools.
+**Source:** common toolbar migration

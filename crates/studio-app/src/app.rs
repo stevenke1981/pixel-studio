@@ -358,7 +358,14 @@ impl eframe::App for PixelStudioApp {
             .exact_size(40.0)
             .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
             .show_inside(ui, |ui| {
-                top_menu_bar::show_top_menu_bar(ui, &tokens, language, availability, &mut actions);
+                top_menu_bar::show_top_menu_bar(
+                    ui,
+                    &tokens,
+                    language,
+                    availability,
+                    self.ui_state.active_tool,
+                    &mut actions,
+                );
             });
         egui::Panel::top("contextual_toolbar")
             .exact_size(34.0)
