@@ -1,5 +1,172 @@
 use image::{DynamicImage, GenericImageView};
 
+use crate::util::clamp_channel;
+
+/// A trait for geometric and pixel transformations.
+///
+/// Like `Filter`, this trait allows transformations to be composed,
+/// tested in isolation, and swapped at runtime (DIP / OCP).
+pub trait Transform {
+    /// Human-readable transform name.
+    fn name(&self) -> &'static str;
+    /// Apply this transform to an image.
+    fn apply(&self, image: &DynamicImage) -> DynamicImage;
+}
+
+/// A composable pipeline of transformations applied in sequence.
+pub struct TransformPipeline {
+    transforms: Vec<Box<dyn Transform>>,
+}
+
+impl TransformPipeline {
+    pub fn new() -> Self {
+        Self { transforms: Vec::new() }
+    }
+
+    pub fn push(&mut self, transform: Box<dyn Transform>) {
+        self.transforms.push(transform);
+    }
+
+    pub fn pop(&mut self) -> Option<Box<dyn Transform>> {
+        self.transforms.pop()
+    }
+
+    pub fn apply_all(&self, image: &DynamicImage) -> DynamicImage {
+        let mut result = image.clone();
+        for t in &self.transforms {
+            result = t.apply(&result);
+        }
+        result
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.transforms.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.transforms.len()
+    }
+}
+
+impl Default for TransformPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Individual transform structs implementing the Transform trait ──
+
+#[derive(Debug, Clone, Copy)]
+pub struct RotateLeft;
+
+impl Transform for RotateLeft {
+    fn name(&self) -> &'static str { "Rotate Left" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { rotate_left(image) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RotateRight;
+
+impl Transform for RotateRight {
+    fn name(&self) -> &'static str { "Rotate Right" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { rotate_right(image) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FlipHorizontal;
+
+impl Transform for FlipHorizontal {
+    fn name(&self) -> &'static str { "Flip Horizontal" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { flip_horizontal(image) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FlipVertical;
+
+impl Transform for FlipVertical {
+    fn name(&self) -> &'static str { "Flip Vertical" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { flip_vertical(image) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BrightnessAdjust {
+    pub value: i32,
+}
+
+impl Transform for BrightnessAdjust {
+    fn name(&self) -> &'static str { "Brightness" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_brightness(image, self.value) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContrastAdjust {
+    pub value: f32,
+}
+
+impl Transform for ContrastAdjust {
+    fn name(&self) -> &'static str { "Contrast" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_contrast(image, self.value) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SaturationAdjust {
+    pub value: f32,
+}
+
+impl Transform for SaturationAdjust {
+    fn name(&self) -> &'static str { "Saturation" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_saturation(image, self.value) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExposureAdjust {
+    pub stops: f32,
+}
+
+impl Transform for ExposureAdjust {
+    fn name(&self) -> &'static str { "Exposure" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_exposure(image, self.stops) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Blur {
+    pub sigma: f32,
+}
+
+impl Transform for Blur {
+    fn name(&self) -> &'static str { "Blur" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { blur(image, self.sigma) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Sharpen {
+    pub sigma: f32,
+    pub threshold: i32,
+}
+
+impl Transform for Sharpen {
+    fn name(&self) -> &'static str { "Sharpen" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { sharpen(image, self.sigma, self.threshold) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Grayscale;
+
+impl Transform for Grayscale {
+    fn name(&self) -> &'static str { "Grayscale" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { grayscale(image) }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Invert;
+
+impl Transform for Invert {
+    fn name(&self) -> &'static str { "Invert" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage { invert(image) }
+}
+
+// ── Free functions (kept for backward compatibility) ──
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionMask {
     Rectangle {
@@ -149,15 +316,11 @@ fn mask_contains(mask: SelectionMask, x: u32, y: u32) -> bool {
     }
 }
 
-fn clamp_channel(value: f32) -> u8 {
-    value.round().clamp(0.0, 255.0) as u8
-}
-
 #[cfg(test)]
 mod tests {
     use image::{DynamicImage, Rgba, RgbaImage};
 
-    use super::{SelectionMask, adjust_exposure, adjust_saturation, apply_selection_mask, invert};
+    use super::*;
 
     #[test]
     fn saturation_zero_preserves_alpha() {
@@ -219,5 +382,37 @@ mod tests {
 
         assert_eq!(result.get_pixel(2, 2).0, [255, 0, 0, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
+    }
+
+    // ── Transform trait tests ──
+
+    #[test]
+    fn transform_pipeline_empty_is_noop() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
+        let pipeline = TransformPipeline::new();
+        let result = pipeline.apply_all(&image);
+        assert_eq!(result.as_bytes(), image.as_bytes());
+    }
+
+    #[test]
+    fn transform_pipeline_applies_in_order() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(3, 3, Rgba([100, 100, 100, 255])));
+        let mut pipeline = TransformPipeline::new();
+        pipeline.push(Box::new(RotateLeft));
+        pipeline.push(Box::new(FlipHorizontal));
+        let result = pipeline.apply_all(&image);
+        assert_eq!(result.dimensions(), (3, 3));
+    }
+
+    #[test]
+    fn transform_pipeline_over_grayscale() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([100, 50, 200, 255])));
+        let mut pipeline = TransformPipeline::new();
+        pipeline.push(Box::new(Grayscale));
+        let result = pipeline.apply_all(&image);
+        let pixel = result.to_rgba8().get_pixel(0, 0).0;
+        // grayscale: all channels equal
+        assert_eq!(pixel[0], pixel[1]);
+        assert_eq!(pixel[1], pixel[2]);
     }
 }

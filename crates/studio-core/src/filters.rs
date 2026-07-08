@@ -1,5 +1,166 @@
 use image::DynamicImage;
 
+use crate::util::{clamp_channel, lerp_channel, rgb_to_hsl, hsl_to_rgb};
+
+/// A trait for pixel-level image filters.
+///
+/// Implementing this trait allows a filter to be used in a `FilterPipeline`
+/// and applied generically across the system (OCP / DIP).
+pub trait Filter {
+    /// Human-readable filter name.
+    fn name(&self) -> &'static str;
+    /// Apply this filter to an image.
+    fn apply(&self, image: &DynamicImage) -> DynamicImage;
+}
+
+/// A composable pipeline of filters applied in sequence.
+///
+/// Instead of calling filters as individual free functions,
+/// compose them into a pipeline for batch or incremental editing.
+pub struct FilterPipeline {
+    filters: Vec<Box<dyn Filter>>,
+}
+
+impl FilterPipeline {
+    pub fn new() -> Self {
+        Self { filters: Vec::new() }
+    }
+
+    pub fn push(&mut self, filter: Box<dyn Filter>) {
+        self.filters.push(filter);
+    }
+
+    pub fn pop(&mut self) -> Option<Box<dyn Filter>> {
+        self.filters.pop()
+    }
+
+    pub fn apply_all(&self, image: &DynamicImage) -> DynamicImage {
+        let mut result = image.clone();
+        for f in &self.filters {
+            result = f.apply(&result);
+        }
+        result
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.filters.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.filters.len()
+    }
+}
+
+impl Default for FilterPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Individual filter structs implementing the Filter trait ──
+
+/// Rotate image 180 degrees.
+#[derive(Debug, Clone, Copy)]
+pub struct Rotate180;
+
+impl Filter for Rotate180 {
+    fn name(&self) -> &'static str { "Rotate 180" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        rotate_180(image)
+    }
+}
+
+/// Shift hue by degrees (-180..180).
+#[derive(Debug, Clone, Copy)]
+pub struct HueAdjust {
+    pub degrees: f32,
+}
+
+impl Filter for HueAdjust {
+    fn name(&self) -> &'static str { "Hue" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_hue(image, self.degrees)
+    }
+}
+
+/// Apply sepia tone.
+#[derive(Debug, Clone, Copy)]
+pub struct Sepia {
+    pub strength: f32,
+}
+
+impl Filter for Sepia {
+    fn name(&self) -> &'static str { "Sepia" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        sepia(image, self.strength)
+    }
+}
+
+/// Vignette darkens edges.
+#[derive(Debug, Clone, Copy)]
+pub struct Vignette {
+    pub strength: f32,
+}
+
+impl Filter for Vignette {
+    fn name(&self) -> &'static str { "Vignette" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        vignette(image, self.strength)
+    }
+}
+
+/// Color temperature adjustment.
+#[derive(Debug, Clone, Copy)]
+pub struct TemperatureAdjust {
+    pub amount: f32,
+}
+
+impl Filter for TemperatureAdjust {
+    fn name(&self) -> &'static str { "Temperature" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_temperature(image, self.amount)
+    }
+}
+
+/// Green/magenta tint adjustment.
+#[derive(Debug, Clone, Copy)]
+pub struct TintAdjust {
+    pub amount: f32,
+}
+
+impl Filter for TintAdjust {
+    fn name(&self) -> &'static str { "Tint" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_tint(image, self.amount)
+    }
+}
+
+/// Auto contrast (histogram stretch).
+#[derive(Debug, Clone, Copy)]
+pub struct AutoContrast;
+
+impl Filter for AutoContrast {
+    fn name(&self) -> &'static str { "Auto Contrast" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        auto_contrast(image)
+    }
+}
+
+/// Posterize to `levels` per channel.
+#[derive(Debug, Clone, Copy)]
+pub struct Posterize {
+    pub levels: u8,
+}
+
+impl Filter for Posterize {
+    fn name(&self) -> &'static str { "Posterize" }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        posterize(image, self.levels)
+    }
+}
+
+// ── Free functions (kept for backward compatibility) ──
+
 /// Rotate image 180 degrees.
 pub fn rotate_180(image: &DynamicImage) -> DynamicImage {
     image.rotate180()
@@ -168,94 +329,11 @@ pub fn posterize(image: &DynamicImage, levels: u8) -> DynamicImage {
     DynamicImage::ImageRgba8(rgba)
 }
 
-fn lerp_channel(from: f32, to: f32, t: f32) -> u8 {
-    clamp_channel(from + (to - from) * t)
-}
-
-fn clamp_channel(value: f32) -> u8 {
-    value.round().clamp(0.0, 255.0) as u8
-}
-
-fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
-    let r = f32::from(r) / 255.0;
-    let g = f32::from(g) / 255.0;
-    let b = f32::from(b) / 255.0;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-
-    if (max - min).abs() < f32::EPSILON {
-        return (0.0, 0.0, l);
-    }
-
-    let d = max - min;
-    let s = if l > 0.5 {
-        d / (2.0 - max - min)
-    } else {
-        d / (max + min)
-    };
-
-    let h = if (max - r).abs() < f32::EPSILON {
-        let mut hue = (g - b) / d;
-        if g < b {
-            hue += 6.0;
-        }
-        hue
-    } else if (max - g).abs() < f32::EPSILON {
-        (b - r) / d + 2.0
-    } else {
-        (r - g) / d + 4.0
-    } / 6.0;
-
-    (h.rem_euclid(1.0), s, l)
-}
-
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
-    if s.abs() < f32::EPSILON {
-        let v = clamp_channel(l * 255.0);
-        return (v, v, v);
-    }
-
-    let q = if l < 0.5 {
-        l * (1.0 + s)
-    } else {
-        l + s - l * s
-    };
-    let p = 2.0 * l - q;
-
-    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
-    let g = hue_to_rgb(p, q, h);
-    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
-    (
-        clamp_channel(r * 255.0),
-        clamp_channel(g * 255.0),
-        clamp_channel(b * 255.0),
-    )
-}
-
-fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
-    if t < 0.0 {
-        t += 1.0;
-    }
-    if t > 1.0 {
-        t -= 1.0;
-    }
-    if t < 1.0 / 6.0 {
-        p + (q - p) * 6.0 * t
-    } else if t < 1.0 / 2.0 {
-        q
-    } else if t < 2.0 / 3.0 {
-        p + (q - p) * (2.0 / 3.0 - t) * 6.0
-    } else {
-        p
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use image::{DynamicImage, Rgba, RgbaImage};
+    use image::{DynamicImage, GenericImageView, Rgba, RgbaImage};
 
-    use super::{adjust_hue, auto_contrast, posterize, rotate_180, sepia};
+    use super::*;
 
     #[test]
     fn rotate_180_flips_pixels() {
@@ -296,5 +374,43 @@ mod tests {
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([127, 127, 127, 255])));
         let result = posterize(&image, 2).to_rgba8();
         assert!(result.get_pixel(0, 0)[0] == 0 || result.get_pixel(0, 0)[0] == 255);
+    }
+
+    // ── Filter trait tests ──
+
+    #[test]
+    fn filter_pipeline_empty_is_noop() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
+        let pipeline = FilterPipeline::new();
+        let result = pipeline.apply_all(&image);
+        assert_eq!(result.as_bytes(), image.as_bytes());
+    }
+
+    #[test]
+    fn filter_pipeline_applies_in_order() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([200, 100, 50, 255])));
+        let mut pipeline = FilterPipeline::new();
+        pipeline.push(Box::new(Rotate180));
+        pipeline.push(Box::new(Sepia { strength: 0.5 }));
+        let result = pipeline.apply_all(&image);
+        // Should not panic and produce a valid image
+        assert_eq!(result.dimensions(), image.dimensions());
+    }
+
+    #[test]
+    fn filter_name_is_not_empty() {
+        let filters: Vec<Box<dyn Filter>> = vec![
+            Box::new(Rotate180),
+            Box::new(HueAdjust { degrees: 0.0 }),
+            Box::new(Sepia { strength: 0.5 }),
+            Box::new(Vignette { strength: 0.3 }),
+            Box::new(TemperatureAdjust { amount: 10.0 }),
+            Box::new(TintAdjust { amount: 5.0 }),
+            Box::new(AutoContrast),
+            Box::new(Posterize { levels: 4 }),
+        ];
+        for f in &filters {
+            assert!(!f.name().is_empty(), "Filter name should not be empty");
+        }
     }
 }

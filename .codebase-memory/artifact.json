@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "commit": "f5a1d49fdf634b9142ffb99b6b882fcce276b027",
+  "indexed_at": "1783506781",
+  "project": "cbm+pixel-studio",
+  "nodes": 517,
+  "edges": 1218,
+  "original_size": 1486848,
+  "compressed_size": 293163,
+  "compression_level": 3
+}

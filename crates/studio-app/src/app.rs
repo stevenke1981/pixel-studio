@@ -529,110 +529,224 @@ impl PixelStudioApp {
     fn dispatch_ui_actions(&mut self, ctx: &egui::Context, actions: Vec<UiAction>) {
         for action in actions {
             match action {
-                UiAction::OpenImage => {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        self.open_path(ctx, path);
-                    }
+                // ── File operations ──
+                a @ (UiAction::OpenImage
+                | UiAction::OpenFolder
+                | UiAction::PasteImage
+                | UiAction::OpenProject
+                | UiAction::SaveProject
+                | UiAction::SaveAs
+                | UiAction::ExportComposite
+                | UiAction::Reload) => self.dispatch_file_action(ctx, a),
+
+                // ── Canvas operations ──
+                a @ (UiAction::ClearCanvas | UiAction::RestoreCanvas) => {
+                    self.dispatch_canvas_action(ctx, a)
                 }
-                UiAction::OpenFolder => {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        self.open_folder(ctx, path);
-                    }
+
+                // ── Undo / Redo ──
+                a @ (UiAction::Undo | UiAction::Redo | UiAction::ImageUndo | UiAction::ImageRedo) => {
+                    self.dispatch_undo_action(ctx, a)
                 }
-                UiAction::PasteImage => self.paste_clipboard_image(ctx),
-                UiAction::OpenProject => self.open_project(ctx),
-                UiAction::SaveProject => self.save_project(),
-                UiAction::SaveAs => self.save_as_new_file(),
-                UiAction::ExportComposite => self.export_composite(),
-                UiAction::Reload => {
-                    if let Some(path) = self.image_path.clone() {
-                        self.open_image(ctx, path);
-                    }
+
+                // ── Image transforms & filters ──
+                a @ (UiAction::RotateLeft
+                | UiAction::RotateRight
+                | UiAction::Rotate180
+                | UiAction::FlipHorizontal
+                | UiAction::FlipVertical
+                | UiAction::Grayscale
+                | UiAction::Invert
+                | UiAction::AutoContrast
+                | UiAction::ResetEdits) => self.dispatch_image_action(ctx, a),
+
+                // ── Layer operations ──
+                a @ (UiAction::AddTextLayer
+                | UiAction::AddImageLayer
+                | UiAction::DuplicateLayer
+                | UiAction::DeleteLayer) => self.dispatch_layer_action(ctx, a),
+
+                // ── Selection / Crop ──
+                a @ (UiAction::ApplyCrop | UiAction::ClearSelection) => {
+                    self.dispatch_selection_action(ctx, a)
                 }
-                UiAction::ClearCanvas => self.clear_canvas(ctx),
-                UiAction::RestoreCanvas => self.restore_canvas(ctx),
-                UiAction::Undo => self.undo(ctx),
-                UiAction::Redo => self.redo(ctx),
-                UiAction::ImageUndo => self.undo_image_edit(ctx),
-                UiAction::ImageRedo => self.redo_image_edit(ctx),
-                UiAction::RotateLeft => {
-                    self.map_working_image(ctx, studio_core::transform::rotate_left)
+
+                // ── Adjustments (with data payload) ──
+                UiAction::ApplyAdjustments(values) => {
+                    self.dispatch_adjustment_action(ctx, values)
                 }
-                UiAction::RotateRight => {
-                    self.map_working_image(ctx, studio_core::transform::rotate_right)
-                }
-                UiAction::Rotate180 => {
-                    self.map_working_image(ctx, studio_core::filters::rotate_180)
-                }
-                UiAction::FlipHorizontal => {
-                    self.map_working_image(ctx, studio_core::transform::flip_horizontal)
-                }
-                UiAction::FlipVertical => {
-                    self.map_working_image(ctx, studio_core::transform::flip_vertical)
-                }
-                UiAction::Grayscale => {
-                    self.map_scoped_working_image(ctx, studio_core::transform::grayscale)
-                }
-                UiAction::Invert => {
-                    self.map_scoped_working_image(ctx, studio_core::transform::invert)
-                }
-                UiAction::AutoContrast => {
-                    self.map_scoped_working_image(ctx, studio_core::filters::auto_contrast)
-                }
-                UiAction::ResetEdits => self.reset_edits(ctx),
-                UiAction::AddTextLayer => self.add_text_layer(ctx),
-                UiAction::AddImageLayer => self.add_image_layer_from_file(ctx),
-                UiAction::DuplicateLayer => {
-                    if self.selected_layer.is_some() {
-                        self.push_history();
-                        self.duplicate_selected_layer();
-                        self.update_texture(ctx);
-                    }
-                }
-                UiAction::DeleteLayer => {
-                    if self.selected_layer.is_some() {
-                        self.push_history();
-                        self.delete_selected_layer();
-                        self.update_texture(ctx);
-                    }
-                }
-                UiAction::ApplyCrop => {
-                    self.sync_crop_fields_from_selection();
-                    self.apply_crop(ctx);
-                }
-                UiAction::ClearSelection => {
-                    self.selection_rect = None;
-                    self.selection_drag_start = None;
-                }
-                UiAction::ApplyAdjustments(values) => self.apply_ui_adjustments(ctx, values),
-                UiAction::SelectTool(tool) => self.ui_state.active_tool = tool,
-                UiAction::SelectLayer(index) => self.selected_layer = Some(index),
-                UiAction::ToggleLayerVisibility(index, visible) => {
-                    self.set_layer_visibility(ctx, index, visible)
-                }
-                UiAction::SetLayerOpacity(index, opacity) => {
-                    self.set_layer_opacity(ctx, index, opacity)
-                }
-                UiAction::SetLanguage(language) => self.language = language,
-                UiAction::FitToWindow => {
-                    self.fit_to_window = true;
-                    self.preview_pan = Vec2::ZERO;
-                }
-                UiAction::ActualSize => {
-                    self.fit_to_window = false;
-                    self.zoom = 1.0;
-                    self.ui_state.zoom_percent = 100;
-                    self.preview_pan = Vec2::ZERO;
-                }
-                UiAction::SetZoom(percent) => {
-                    self.fit_to_window = false;
-                    self.zoom = percent as f32 / 100.0;
-                    self.ui_state.zoom_percent = percent.clamp(10, 400);
-                }
-                UiAction::ToggleLeftTools => {
-                    self.ui_state.left_tools_open = !self.ui_state.left_tools_open;
+
+                // ── UI state changes ──
+                a @ (UiAction::SelectTool(_)
+                | UiAction::SelectLayer(_)
+                | UiAction::ToggleLayerVisibility(..)
+                | UiAction::SetLayerOpacity(..)
+                | UiAction::SetLanguage(_)
+                | UiAction::FitToWindow
+                | UiAction::ActualSize
+                | UiAction::SetZoom(_)
+                | UiAction::ToggleLeftTools) => self.dispatch_ui_state_action(ctx, a),
+            }
+        }
+    }
+
+    /// Handle file I/O actions (Open, Save, Export, Reload, Paste).
+    fn dispatch_file_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::OpenImage => {
+                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                    self.open_path(ctx, path);
                 }
             }
+            UiAction::OpenFolder => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    self.open_folder(ctx, path);
+                }
+            }
+            UiAction::PasteImage => self.paste_clipboard_image(ctx),
+            UiAction::OpenProject => self.open_project(ctx),
+            UiAction::SaveProject => self.save_project(),
+            UiAction::SaveAs => self.save_as_new_file(),
+            UiAction::ExportComposite => self.export_composite(),
+            UiAction::Reload => {
+                if let Some(path) = self.image_path.clone() {
+                    self.open_image(ctx, path);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle canvas clear / restore.
+    fn dispatch_canvas_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::ClearCanvas => self.clear_canvas(ctx),
+            UiAction::RestoreCanvas => self.restore_canvas(ctx),
+            _ => {}
+        }
+    }
+
+    /// Handle undo / redo (both image and layer stacks).
+    fn dispatch_undo_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::Undo => self.undo(ctx),
+            UiAction::Redo => self.redo(ctx),
+            UiAction::ImageUndo => self.undo_image_edit(ctx),
+            UiAction::ImageRedo => self.redo_image_edit(ctx),
+            _ => {}
+        }
+    }
+
+    /// Handle image transforms and filter actions.
+    fn dispatch_image_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::RotateLeft => {
+                self.map_working_image(ctx, studio_core::transform::rotate_left)
+            }
+            UiAction::RotateRight => {
+                self.map_working_image(ctx, studio_core::transform::rotate_right)
+            }
+            UiAction::Rotate180 => {
+                self.map_working_image(ctx, studio_core::filters::rotate_180)
+            }
+            UiAction::FlipHorizontal => {
+                self.map_working_image(ctx, studio_core::transform::flip_horizontal)
+            }
+            UiAction::FlipVertical => {
+                self.map_working_image(ctx, studio_core::transform::flip_vertical)
+            }
+            UiAction::Grayscale => {
+                self.map_scoped_working_image(ctx, studio_core::transform::grayscale)
+            }
+            UiAction::Invert => {
+                self.map_scoped_working_image(ctx, studio_core::transform::invert)
+            }
+            UiAction::AutoContrast => {
+                self.map_scoped_working_image(ctx, studio_core::filters::auto_contrast)
+            }
+            UiAction::ResetEdits => self.reset_edits(ctx),
+            _ => {}
+        }
+    }
+
+    /// Handle layer operations (add, duplicate, delete).
+    fn dispatch_layer_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::AddTextLayer => self.add_text_layer(ctx),
+            UiAction::AddImageLayer => self.add_image_layer_from_file(ctx),
+            UiAction::DuplicateLayer => {
+                if self.selected_layer.is_some() {
+                    self.push_history();
+                    self.duplicate_selected_layer();
+                    self.update_texture(ctx);
+                }
+            }
+            UiAction::DeleteLayer => {
+                if self.selected_layer.is_some() {
+                    self.push_history();
+                    self.delete_selected_layer();
+                    self.update_texture(ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle selection and crop actions.
+    fn dispatch_selection_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::ApplyCrop => {
+                self.sync_crop_fields_from_selection();
+                self.apply_crop(ctx);
+            }
+            UiAction::ClearSelection => {
+                self.selection_rect = None;
+                self.selection_drag_start = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle adjustment values (brightness, contrast, etc.).
+    fn dispatch_adjustment_action(
+        &mut self,
+        ctx: &egui::Context,
+        values: crate::ui::state::AdjustUiValues,
+    ) {
+        self.apply_ui_adjustments(ctx, values);
+    }
+
+    /// Handle UI state changes (tool selection, zoom, language, etc.).
+    fn dispatch_ui_state_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::SelectTool(tool) => self.ui_state.active_tool = tool,
+            UiAction::SelectLayer(index) => self.selected_layer = Some(index),
+            UiAction::ToggleLayerVisibility(index, visible) => {
+                self.set_layer_visibility(ctx, index, visible)
+            }
+            UiAction::SetLayerOpacity(index, opacity) => {
+                self.set_layer_opacity(ctx, index, opacity)
+            }
+            UiAction::SetLanguage(language) => self.language = language,
+            UiAction::FitToWindow => {
+                self.fit_to_window = true;
+                self.preview_pan = Vec2::ZERO;
+            }
+            UiAction::ActualSize => {
+                self.fit_to_window = false;
+                self.zoom = 1.0;
+                self.ui_state.zoom_percent = 100;
+                self.preview_pan = Vec2::ZERO;
+            }
+            UiAction::SetZoom(percent) => {
+                self.fit_to_window = false;
+                self.zoom = percent as f32 / 100.0;
+                self.ui_state.zoom_percent = percent.clamp(10, 400);
+            }
+            UiAction::ToggleLeftTools => {
+                self.ui_state.left_tools_open = !self.ui_state.left_tools_open;
+            }
+            _ => {}
         }
     }
 

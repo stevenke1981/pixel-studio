@@ -11,6 +11,7 @@ pub mod image_io;
 pub mod panorama360;
 pub mod resize;
 pub mod transform;
+pub mod util;
 
 pub use batch::{
     BatchOptions, BatchResult, BatchSummary, C2paAddOptions, C2paRemovalOptions,
@@ -30,6 +31,8 @@ pub use convert::{
 };
 pub use error::{PhotoError, Result};
 pub use filters::{
+    Filter, FilterPipeline, // trait + pipeline
+    HueAdjust, Rotate180, Sepia, Vignette, TemperatureAdjust, TintAdjust, AutoContrast, Posterize, // filter structs
     adjust_hue, adjust_temperature, adjust_tint, auto_contrast, posterize, rotate_180, sepia,
     vignette,
 };
@@ -40,3 +43,15 @@ pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
 };
+pub use resize::{resize_exact, resize_to_fit};
+pub use transform::{
+    Transform, TransformPipeline, // trait + pipeline
+    RotateLeft, RotateRight, FlipHorizontal, FlipVertical,
+    BrightnessAdjust, ContrastAdjust, SaturationAdjust, ExposureAdjust,
+    Blur, Sharpen, Grayscale, Invert, // transform structs
+    SelectionMask,
+    adjust_brightness, adjust_contrast, adjust_exposure, adjust_saturation,
+    apply_selection_mask, blur, flip_horizontal, flip_vertical, grayscale, invert,
+    rotate_left, rotate_right, sharpen,
+};
+pub use util::{clamp_channel, lerp_channel, rgb_to_hsl, hsl_to_rgb};
