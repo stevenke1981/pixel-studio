@@ -3,6 +3,7 @@ use egui::{Button, RichText, Ui, Vec2};
 use crate::i18n::{Language, TextKey};
 use crate::ui::state::ToolId;
 use crate::ui::theme::UiTokens;
+use crate::ui::tool_icons::{ToolIcon, ToolIconTextures};
 use crate::ui::{CommandAvailability, UiAction};
 
 pub struct TopChrome<'a> {
@@ -50,13 +51,19 @@ impl<'a> TopChrome<'a> {
         });
     }
 
-    pub fn show_common_toolbar(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+    pub fn show_common_toolbar(
+        &self,
+        ui: &mut Ui,
+        icons: &mut ToolIconTextures,
+        actions: &mut Vec<UiAction>,
+    ) {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "▱",
+                    ToolIcon::Open,
                     self.language.t(TextKey::Open),
                     self.language.t(TextKey::OpenImage),
                     true,
@@ -66,8 +73,9 @@ impl<'a> TopChrome<'a> {
             );
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "⧉",
+                    ToolIcon::Paste,
                     self.language.t(TextKey::Paste),
                     self.language.t(TextKey::PasteImage),
                     true,
@@ -78,8 +86,9 @@ impl<'a> TopChrome<'a> {
             group_separator(ui, self.tokens);
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "S",
+                    ToolIcon::Save,
                     self.language.t(TextKey::Save),
                     self.language.t(TextKey::SaveProject),
                     self.availability.has_image,
@@ -89,8 +98,9 @@ impl<'a> TopChrome<'a> {
             );
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "S+",
+                    ToolIcon::SaveAs,
                     self.language.t(TextKey::SaveAsNewFile),
                     self.language.t(TextKey::SaveAsNewFile),
                     self.availability.has_image,
@@ -101,8 +111,9 @@ impl<'a> TopChrome<'a> {
             group_separator(ui, self.tokens);
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "←",
+                    ToolIcon::Undo,
                     self.language.t(TextKey::Undo),
                     self.language.t(TextKey::Undo),
                     self.can_undo(),
@@ -112,8 +123,9 @@ impl<'a> TopChrome<'a> {
             );
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "→",
+                    ToolIcon::Redo,
                     self.language.t(TextKey::Redo),
                     self.language.t(TextKey::Redo),
                     self.can_redo(),
@@ -122,15 +134,23 @@ impl<'a> TopChrome<'a> {
                 actions,
             );
             group_separator(ui, self.tokens);
-            self.tool_cell(ui, ToolId::Crop, self.language.t(TextKey::Crop), actions);
             self.tool_cell(
                 ui,
+                icons,
+                ToolId::Crop,
+                self.language.t(TextKey::Crop),
+                actions,
+            );
+            self.tool_cell(
+                ui,
+                icons,
                 ToolId::Brush,
                 self.language.t(TextKey::BrushTool),
                 actions,
             );
             self.tool_cell(
                 ui,
+                icons,
                 ToolId::Line,
                 self.language.t(TextKey::LineTool),
                 actions,
@@ -138,8 +158,9 @@ impl<'a> TopChrome<'a> {
             group_separator(ui, self.tokens);
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "□",
+                    ToolIcon::Fit,
                     self.language.t(TextKey::Fit),
                     self.language.t(TextKey::Fit),
                     self.availability.has_image,
@@ -149,8 +170,9 @@ impl<'a> TopChrome<'a> {
             );
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "1:1",
+                    ToolIcon::ActualSize,
                     "100%",
                     "100%",
                     self.availability.has_image,
@@ -161,8 +183,9 @@ impl<'a> TopChrome<'a> {
             group_separator(ui, self.tokens);
             self.action_cell(
                 ui,
+                icons,
                 ToolbarAction::new(
-                    "↥",
+                    ToolIcon::Export,
                     self.language.t(TextKey::Export),
                     self.language.t(TextKey::Export),
                     self.availability.has_image,
@@ -397,17 +420,22 @@ impl<'a> TopChrome<'a> {
         }
     }
 
-    fn action_cell(&self, ui: &mut Ui, item: ToolbarAction<'_>, actions: &mut Vec<UiAction>) {
+    fn action_cell(
+        &self,
+        ui: &mut Ui,
+        icons: &mut ToolIconTextures,
+        item: ToolbarAction<'_>,
+        actions: &mut Vec<UiAction>,
+    ) {
         let text_color = if item.enabled {
             self.tokens.text_primary
         } else {
             self.tokens.text_tertiary
         };
-        let button = Button::new(
-            RichText::new(format!("{}\n{}", item.icon, item.label))
-                .size(12.0)
-                .color(text_color),
-        )
+        let button = Button::new((
+            icons.image(ui.ctx(), item.icon, 20.0),
+            RichText::new(item.label).size(12.0).color(text_color),
+        ))
         .min_size(Vec2::new(72.0, 58.0))
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE);
@@ -420,30 +448,38 @@ impl<'a> TopChrome<'a> {
         }
     }
 
-    fn tool_cell(&self, ui: &mut Ui, tool: ToolId, label: &str, actions: &mut Vec<UiAction>) {
+    fn tool_cell(
+        &self,
+        ui: &mut Ui,
+        icons: &mut ToolIconTextures,
+        tool: ToolId,
+        label: &str,
+        actions: &mut Vec<UiAction>,
+    ) {
         let selected = self.active_tool == tool;
-        let text = RichText::new(format!("{}\n{}", tool.icon(), label))
-            .size(12.0)
-            .color(if selected {
-                self.tokens.text_info
-            } else {
-                self.tokens.text_primary
-            });
-        let button = Button::new(text)
-            .min_size(Vec2::new(72.0, 58.0))
-            .fill(if selected {
-                self.tokens.bg_info
+        let text_color = if selected {
+            self.tokens.text_info
+        } else {
+            self.tokens.text_primary
+        };
+        let button = Button::new((
+            icons.image(ui.ctx(), ToolIcon::from(tool), 20.0),
+            RichText::new(label).size(12.0).color(text_color),
+        ))
+        .min_size(Vec2::new(72.0, 58.0))
+        .fill(if selected {
+            self.tokens.bg_info
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(
+            1.0,
+            if selected {
+                self.tokens.border_info
             } else {
                 egui::Color32::TRANSPARENT
-            })
-            .stroke(egui::Stroke::new(
-                1.0,
-                if selected {
-                    self.tokens.border_info
-                } else {
-                    egui::Color32::TRANSPARENT
-                },
-            ));
+            },
+        ));
         if ui.add(button).on_hover_text(label).clicked() {
             actions.push(UiAction::SelectTool(tool));
         }
@@ -488,17 +524,19 @@ pub fn show_menu_bar(
 pub fn show_common_toolbar(
     ui: &mut Ui,
     tokens: &UiTokens,
+    icons: &mut ToolIconTextures,
     language: Language,
     availability: CommandAvailability,
     active_tool: ToolId,
     actions: &mut Vec<UiAction>,
 ) {
-    TopChrome::new(tokens, language, availability, active_tool).show_common_toolbar(ui, actions);
+    TopChrome::new(tokens, language, availability, active_tool)
+        .show_common_toolbar(ui, icons, actions);
 }
 
 #[derive(Clone, Copy)]
 struct ToolbarAction<'a> {
-    icon: &'a str,
+    icon: ToolIcon,
     label: &'a str,
     tooltip: &'a str,
     enabled: bool,
@@ -507,7 +545,7 @@ struct ToolbarAction<'a> {
 
 impl<'a> ToolbarAction<'a> {
     fn new(
-        icon: &'a str,
+        icon: ToolIcon,
         label: &'a str,
         tooltip: &'a str,
         enabled: bool,

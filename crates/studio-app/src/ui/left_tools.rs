@@ -4,11 +4,13 @@ use crate::i18n::{Language, TextKey};
 use crate::ui::UiAction;
 use crate::ui::state::{LeftToolCategory, ToolId, UiState};
 use crate::ui::theme::UiTokens;
+use crate::ui::tool_icons::{ToolIcon, ToolIconTextures};
 
 pub fn show_category_rail(
     ctx: &Context,
     ui: &mut Ui,
     tokens: &UiTokens,
+    icons: &mut ToolIconTextures,
     language: Language,
     state: &mut UiState,
     actions: &mut Vec<UiAction>,
@@ -19,25 +21,24 @@ pub fn show_category_rail(
         ui.spacing_mut().item_spacing.y = 6.0;
         for category in LeftToolCategory::ALL {
             let selected = state.left_category == category && state.left_tools_open;
-            let text = RichText::new(format!(
-                "{}\n{}",
-                category.icon(),
-                category_short_label(language, category)
-            ))
-            .size(15.0)
-            .color(if selected {
+            let text_color = if selected {
                 tokens.text_info
             } else {
                 tokens.text_secondary
-            });
-            let button = Button::new(text)
-                .min_size(Vec2::new(76.0, 58.0))
-                .fill(if selected {
-                    tokens.bg_info
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .stroke(egui::Stroke::NONE);
+            };
+            let button = Button::new((
+                icons.image(ctx, ToolIcon::from(category), 18.0),
+                RichText::new(category_short_label(language, category))
+                    .size(13.0)
+                    .color(text_color),
+            ))
+            .min_size(Vec2::new(76.0, 58.0))
+            .fill(if selected {
+                tokens.bg_info
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(egui::Stroke::NONE);
             if ui
                 .add(button)
                 .on_hover_text(category_label(language, category))
@@ -53,6 +54,7 @@ pub fn show_category_rail(
 pub fn show_tool_picker(
     ui: &mut Ui,
     tokens: &UiTokens,
+    icons: &mut ToolIconTextures,
     language: Language,
     state: &mut UiState,
     actions: &mut Vec<UiAction>,
@@ -63,12 +65,17 @@ pub fn show_tool_picker(
         .show(ui, |ui| {
             for (index, tool) in ToolId::RAIL_TOOLS.into_iter().enumerate() {
                 let selected = state.active_tool == tool;
-                let label = format!("{}  {}", tool.icon(), tool_label(language, tool));
-                let button = Button::new(RichText::new(label).size(12.0).color(if selected {
+                let text_color = if selected {
                     tokens.text_info
                 } else {
                     tokens.text_secondary
-                }))
+                };
+                let button = Button::new((
+                    icons.image(ui.ctx(), ToolIcon::from(tool), 18.0),
+                    RichText::new(tool_label(language, tool))
+                        .size(12.0)
+                        .color(text_color),
+                ))
                 .min_size(Vec2::new(126.0, 32.0))
                 .fill(if selected {
                     tokens.bg_info

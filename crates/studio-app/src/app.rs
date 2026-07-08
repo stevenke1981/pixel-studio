@@ -26,6 +26,7 @@ use crate::i18n::{Language, TextKey};
 use crate::ui::canvas_view::{self, CanvasInput};
 use crate::ui::state::{AdjustUiValues, LeftToolCategory, ToolId, UiState};
 use crate::ui::theme::{UiTokens, apply_visuals};
+use crate::ui::tool_icons::ToolIconTextures;
 use crate::ui::{
     CommandAvailability, HistoryView, LayerKindUi, LayerView, UiAction, contextual_toolbar,
     left_tools, right_panel, status_bar, top_menu_bar,
@@ -168,6 +169,7 @@ pub struct PixelStudioApp {
     working_image: Option<DynamicImage>,
     texture: Option<TextureHandle>,
     texture_size: Vec2,
+    tool_icons: ToolIconTextures,
     cleared_canvas: Option<CanvasSnapshot>,
     compose_layers: Vec<ComposeLayer>,
     selected_layer: Option<usize>,
@@ -260,6 +262,7 @@ impl PixelStudioApp {
             working_image: None,
             texture: None,
             texture_size: Vec2::ZERO,
+            tool_icons: ToolIconTextures::default(),
             cleared_canvas: None,
             compose_layers: Vec::new(),
             selected_layer: None,
@@ -423,6 +426,7 @@ impl eframe::App for PixelStudioApp {
                 top_menu_bar::show_common_toolbar(
                     ui,
                     &tokens,
+                    &mut self.tool_icons,
                     language,
                     availability,
                     self.ui_state.active_tool,
@@ -466,6 +470,7 @@ impl eframe::App for PixelStudioApp {
                     &ctx,
                     ui,
                     &tokens,
+                    &mut self.tool_icons,
                     language,
                     &mut self.ui_state,
                     &mut actions,
@@ -851,6 +856,7 @@ impl PixelStudioApp {
                     left_tools::show_tool_picker(
                         ui,
                         tokens,
+                        &mut self.tool_icons,
                         self.language,
                         &mut self.ui_state,
                         actions,

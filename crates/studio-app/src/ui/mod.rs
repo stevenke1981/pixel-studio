@@ -5,6 +5,7 @@ pub mod right_panel;
 pub mod state;
 pub mod status_bar;
 pub mod theme;
+pub mod tool_icons;
 pub mod top_menu_bar;
 
 use crate::i18n::Language;

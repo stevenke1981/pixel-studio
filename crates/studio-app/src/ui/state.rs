@@ -30,22 +30,6 @@ impl ToolId {
         Self::Zoom,
     ];
 
-    pub fn icon(self) -> &'static str {
-        match self {
-            Self::Move => "↖",
-            Self::Lasso => "〰",
-            Self::Crop => "C",
-            Self::Brush => "B",
-            Self::Line => "/",
-            Self::Eraser => "▱",
-            Self::Stamp => "▣",
-            Self::Text => "T",
-            Self::Shape => "□",
-            Self::Eyedropper => "◉",
-            Self::Zoom => "Z",
-        }
-    }
-
     pub fn shortcut(self) -> egui::Key {
         match self {
             Self::Move => egui::Key::V,
@@ -111,20 +95,6 @@ impl LeftToolCategory {
         Self::Batch,
         Self::C2pa,
     ];
-
-    pub fn icon(self) -> &'static str {
-        match self {
-            Self::File => "F",
-            Self::Browse => "O",
-            Self::Drawing => "B",
-            Self::Edit => "E",
-            Self::Layers => "L",
-            Self::Export => "X",
-            Self::Gif => "G",
-            Self::Batch => "Q",
-            Self::C2pa => "P",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
