@@ -3,6 +3,7 @@ use egui::Color32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolId {
     Move,
+    Hand,
     Lasso,
     Crop,
     Brush,
@@ -16,8 +17,9 @@ pub enum ToolId {
 }
 
 impl ToolId {
-    pub const RAIL_TOOLS: [Self; 11] = [
+    pub const RAIL_TOOLS: [Self; 12] = [
         Self::Move,
+        Self::Hand,
         Self::Lasso,
         Self::Crop,
         Self::Brush,
@@ -33,6 +35,7 @@ impl ToolId {
     pub fn shortcut(self) -> egui::Key {
         match self {
             Self::Move => egui::Key::V,
+            Self::Hand => egui::Key::H,
             Self::Lasso => egui::Key::L,
             Self::Crop => egui::Key::C,
             Self::Brush => egui::Key::B,
@@ -50,6 +53,7 @@ impl ToolId {
         match self {
             Self::Line => "N",
             Self::Move => "V",
+            Self::Hand => "H",
             Self::Lasso => "L",
             Self::Crop => "C",
             Self::Brush => "B",

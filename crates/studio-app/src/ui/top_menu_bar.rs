@@ -137,6 +137,21 @@ impl<'a> TopChrome<'a> {
             self.tool_cell(
                 ui,
                 icons,
+                ToolId::Move,
+                self.language.t(TextKey::Move),
+                actions,
+            );
+            self.tool_cell(
+                ui,
+                icons,
+                ToolId::Hand,
+                self.language.t(TextKey::Hand),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.tool_cell(
+                ui,
+                icons,
                 ToolId::Crop,
                 self.language.t(TextKey::Crop),
                 actions,

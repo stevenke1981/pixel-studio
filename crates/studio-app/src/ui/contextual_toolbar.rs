@@ -31,6 +31,7 @@ impl<'a> ContextualToolbar<'a> {
             ToolId::Text => self.show_text_controls(ui, actions),
             ToolId::Zoom => self.show_zoom_controls(ui, actions),
             ToolId::Move => self.hint(ui, TextKey::MoveToolHint),
+            ToolId::Hand => self.hint(ui, TextKey::HandToolHint),
             ToolId::Lasso => self.hint(ui, TextKey::LassoToolHint),
             ToolId::Shape => self.hint(ui, TextKey::ShapeToolHint),
             ToolId::Eyedropper => self.hint(ui, TextKey::EyedropperToolHint),

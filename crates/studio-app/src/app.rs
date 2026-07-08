@@ -813,7 +813,7 @@ impl PixelStudioApp {
                 self.preview_tool = PreviewTool::Select;
                 self.draw_tool = DrawTool::Line;
             }
-            ToolId::Zoom => {
+            ToolId::Hand => {
                 self.preview_tool = PreviewTool::Hand;
                 self.draw_tool = DrawTool::None;
             }

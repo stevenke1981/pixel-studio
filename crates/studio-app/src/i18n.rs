@@ -184,6 +184,7 @@ pub enum TextKey {
     Export,
     View,
     Move,
+    Hand,
     Lasso,
     Crop,
     Eraser,
@@ -212,6 +213,7 @@ pub enum TextKey {
     ImageEdits,
     LayerEdits,
     MoveToolHint,
+    HandToolHint,
     LassoToolHint,
     TextToolHint,
     ShapeToolHint,
@@ -386,6 +388,7 @@ impl TextKey {
             Self::Export => "匯出",
             Self::View => "檢視",
             Self::Move => "移動",
+            Self::Hand => "手掌",
             Self::Lasso => "套索",
             Self::Crop => "裁切",
             Self::Eraser => "橡皮擦",
@@ -414,12 +417,13 @@ impl TextKey {
             Self::ImageEdits => "影像編輯",
             Self::LayerEdits => "圖層編輯",
             Self::MoveToolHint => "拖曳畫布上的圖層，方向鍵可微調位置。",
+            Self::HandToolHint => "拖曳預覽區可平移畫布；切回移動工具可選取或拖曳圖層。",
             Self::LassoToolHint => "在畫布拖曳以建立局部選取範圍。",
             Self::TextToolHint => "新增文字後，可在圖層面板選取並拖曳。",
             Self::ShapeToolHint => "圖形工具目前提供模式選取；進階設定在完整工具面板。",
             Self::StampToolHint => "仿製印章目前提供模式選取；像素取樣將於後續版本加入。",
             Self::EyedropperToolHint => "滴管目前提供模式選取；色彩取樣將於後續版本加入。",
-            Self::ZoomToolHint => "拖曳可平移畫布，滾輪可縮放。",
+            Self::ZoomToolHint => "滾輪可縮放；使用手掌工具可拖曳平移畫布。",
         }
     }
 
@@ -588,6 +592,7 @@ impl TextKey {
             Self::Export => "Export",
             Self::View => "View",
             Self::Move => "Move",
+            Self::Hand => "Hand",
             Self::Lasso => "Lasso",
             Self::Crop => "Crop",
             Self::Eraser => "Eraser",
@@ -618,6 +623,9 @@ impl TextKey {
             Self::ImageEdits => "Image edits",
             Self::LayerEdits => "Layer edits",
             Self::MoveToolHint => "Drag canvas layers; use arrow keys for precise movement.",
+            Self::HandToolHint => {
+                "Drag the preview to pan the canvas; switch back to Move to select or drag layers."
+            }
             Self::LassoToolHint => "Drag on the canvas to create a local selection.",
             Self::TextToolHint => "Add text, then select and drag it from the Layers panel.",
             Self::ShapeToolHint => {
@@ -629,7 +637,9 @@ impl TextKey {
             Self::EyedropperToolHint => {
                 "Eyedropper mode is selectable; color sampling will follow in a later version."
             }
-            Self::ZoomToolHint => "Drag to pan the canvas and use the wheel to zoom.",
+            Self::ZoomToolHint => {
+                "Use the wheel to zoom; use the Hand tool to drag-pan the canvas."
+            }
         }
     }
 }

@@ -24,6 +24,7 @@ pub enum ToolIcon {
     Batch,
     C2pa,
     Move,
+    Hand,
     Lasso,
     Crop,
     Brush,
@@ -57,6 +58,7 @@ impl ToolIcon {
             Self::Batch => "batch",
             Self::C2pa => "c2pa",
             Self::Move => "move",
+            Self::Hand => "hand",
             Self::Lasso => "lasso",
             Self::Crop => "crop",
             Self::Brush => "brush",
@@ -90,6 +92,7 @@ impl ToolIcon {
             Self::Batch => include_bytes!("../../../../assets/icon/tools/batch.png"),
             Self::C2pa => include_bytes!("../../../../assets/icon/tools/c2pa.png"),
             Self::Move => include_bytes!("../../../../assets/icon/tools/move.png"),
+            Self::Hand => include_bytes!("../../../../assets/icon/tools/hand.png"),
             Self::Lasso => include_bytes!("../../../../assets/icon/tools/lasso.png"),
             Self::Crop => include_bytes!("../../../../assets/icon/tools/crop.png"),
             Self::Brush => include_bytes!("../../../../assets/icon/tools/brush.png"),
@@ -136,6 +139,7 @@ impl From<ToolId> for ToolIcon {
     fn from(tool: ToolId) -> Self {
         match tool {
             ToolId::Move => Self::Move,
+            ToolId::Hand => Self::Hand,
             ToolId::Lasso => Self::Lasso,
             ToolId::Crop => Self::Crop,
             ToolId::Brush => Self::Brush,

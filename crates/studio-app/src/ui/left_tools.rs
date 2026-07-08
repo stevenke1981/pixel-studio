@@ -157,6 +157,7 @@ fn select_tool(state: &mut UiState, tool: ToolId, actions: &mut Vec<UiAction>) {
 fn tool_label(language: Language, tool: ToolId) -> &'static str {
     language.t(match tool {
         ToolId::Move => TextKey::Move,
+        ToolId::Hand => TextKey::Hand,
         ToolId::Lasso => TextKey::Lasso,
         ToolId::Crop => TextKey::Crop,
         ToolId::Brush => TextKey::BrushTool,
