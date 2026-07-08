@@ -33,3 +33,13 @@
 **Trigger:** The generated GUI reference had separate menu, action, and contextual rows, while the app initially squeezed frequent actions into the menu bar.
 **Rule:** When matching a visual reference, preserve the reference's row hierarchy first, then tune button styling; do not compress distinct rows into one control strip.
 **Source:** reference UI and OOP refactor
+---
+## Lesson #8 - 2026-07-08
+**Trigger:** App icon work needed both runtime window icon wiring and a Windows executable resource icon.
+**Rule:** For Windows Rust egui apps, embed a PNG with `ViewportBuilder::with_icon` for runtime windows and add a crate-local `build.rs` with `winresource` for the `.exe` icon.
+**Source:** app icons and Snapshottable refactor
+---
+## Lesson #9 - 2026-07-08
+**Trigger:** `CanvasSnapshot` capture and restore were directly called as app helper methods from clear/restore flows.
+**Rule:** Put snapshot capture/restore behind a small trait and add a round-trip test before changing clear/restore behavior.
+**Source:** CanvasSnapshot to Snapshottable trait

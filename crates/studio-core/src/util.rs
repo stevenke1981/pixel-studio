@@ -107,11 +107,21 @@ mod tests {
 
     #[test]
     fn rgb_hsl_roundtrip() {
-        let cases = [(255u8, 0u8, 0u8), (0, 255, 0), (0, 0, 255), (128, 128, 128), (200, 100, 50)];
+        let cases = [
+            (255u8, 0u8, 0u8),
+            (0, 255, 0),
+            (0, 0, 255),
+            (128, 128, 128),
+            (200, 100, 50),
+        ];
         for (r, g, b) in cases {
             let (h, s, l) = rgb_to_hsl(r, g, b);
             let (rr, gg, bb) = hsl_to_rgb(h, s, l);
-            assert_eq!((rr, gg, bb), (r, g, b), "roundtrip failed for ({r},{g},{b}) -> hsl({h:.4},{s:.4},{l:.4})");
+            assert_eq!(
+                (rr, gg, bb),
+                (r, g, b),
+                "roundtrip failed for ({r},{g},{b}) -> hsl({h:.4},{s:.4},{l:.4})"
+            );
         }
     }
 }

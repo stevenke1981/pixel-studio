@@ -115,6 +115,11 @@ struct CanvasSnapshot {
     selected_index: Option<usize>,
 }
 
+trait Snapshottable {
+    fn capture_snapshot(&self) -> CanvasSnapshot;
+    fn restore_snapshot(&mut self, snapshot: CanvasSnapshot);
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ProjectFile {
     version: u32,
@@ -340,6 +345,50 @@ impl Default for PixelStudioApp {
     }
 }
 
+impl Snapshottable for PixelStudioApp {
+    fn capture_snapshot(&self) -> CanvasSnapshot {
+        CanvasSnapshot {
+            image_path: self.image_path.clone(),
+            image_info: self.image_info.clone(),
+            c2pa_info: self.c2pa_info.clone(),
+            c2pa_draft: self.c2pa_draft.clone(),
+            c2pa_write_on_save: self.c2pa_write_on_save,
+            original_image: self.original_image.clone(),
+            working_image: self.working_image.clone(),
+            compose_layers: self.compose_layers.clone(),
+            selected_layer: self.selected_layer,
+            image_undo_stack: self.image_undo_stack.clone(),
+            image_redo_stack: self.image_redo_stack.clone(),
+            selection_shape: self.selection_shape,
+            selection_rect: self.selection_rect,
+            folder_files: self.folder_files.clone(),
+            selected_index: self.selected_index,
+        }
+    }
+
+    fn restore_snapshot(&mut self, snapshot: CanvasSnapshot) {
+        self.image_path = snapshot.image_path;
+        self.image_info = snapshot.image_info;
+        self.c2pa_info = snapshot.c2pa_info;
+        self.c2pa_draft = snapshot.c2pa_draft;
+        self.c2pa_write_on_save = snapshot.c2pa_write_on_save;
+        self.original_image = snapshot.original_image;
+        self.working_image = snapshot.working_image;
+        self.compose_layers = snapshot.compose_layers;
+        self.selected_layer = snapshot.selected_layer;
+        self.image_undo_stack = snapshot.image_undo_stack;
+        self.image_redo_stack = snapshot.image_redo_stack;
+        self.selection_shape = snapshot.selection_shape;
+        self.selection_rect = snapshot.selection_rect;
+        self.selection_drag_start = None;
+        self.reset_drawing_state();
+        self.folder_files = snapshot.folder_files;
+        self.selected_index = snapshot.selected_index;
+        self.drag_snapshot = None;
+        self.sync_edit_dimensions();
+    }
+}
+
 impl eframe::App for PixelStudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -545,9 +594,10 @@ impl PixelStudioApp {
                 }
 
                 // ── Undo / Redo ──
-                a @ (UiAction::Undo | UiAction::Redo | UiAction::ImageUndo | UiAction::ImageRedo) => {
-                    self.dispatch_undo_action(ctx, a)
-                }
+                a @ (UiAction::Undo
+                | UiAction::Redo
+                | UiAction::ImageUndo
+                | UiAction::ImageRedo) => self.dispatch_undo_action(ctx, a),
 
                 // ── Image transforms & filters ──
                 a @ (UiAction::RotateLeft
@@ -572,9 +622,7 @@ impl PixelStudioApp {
                 }
 
                 // ── Adjustments (with data payload) ──
-                UiAction::ApplyAdjustments(values) => {
-                    self.dispatch_adjustment_action(ctx, values)
-                }
+                UiAction::ApplyAdjustments(values) => self.dispatch_adjustment_action(ctx, values),
 
                 // ── UI state changes ──
                 a @ (UiAction::SelectTool(_)
@@ -646,9 +694,7 @@ impl PixelStudioApp {
             UiAction::RotateRight => {
                 self.map_working_image(ctx, studio_core::transform::rotate_right)
             }
-            UiAction::Rotate180 => {
-                self.map_working_image(ctx, studio_core::filters::rotate_180)
-            }
+            UiAction::Rotate180 => self.map_working_image(ctx, studio_core::filters::rotate_180),
             UiAction::FlipHorizontal => {
                 self.map_working_image(ctx, studio_core::transform::flip_horizontal)
             }
@@ -658,9 +704,7 @@ impl PixelStudioApp {
             UiAction::Grayscale => {
                 self.map_scoped_working_image(ctx, studio_core::transform::grayscale)
             }
-            UiAction::Invert => {
-                self.map_scoped_working_image(ctx, studio_core::transform::invert)
-            }
+            UiAction::Invert => self.map_scoped_working_image(ctx, studio_core::transform::invert),
             UiAction::AutoContrast => {
                 self.map_scoped_working_image(ctx, studio_core::filters::auto_contrast)
             }
@@ -2628,7 +2672,7 @@ impl PixelStudioApp {
             return;
         }
 
-        self.cleared_canvas = Some(self.capture_canvas_snapshot());
+        self.cleared_canvas = Some(self.capture_snapshot());
         self.image_path = None;
         self.image_info = None;
         self.original_image = None;
@@ -2658,50 +2702,12 @@ impl PixelStudioApp {
             return;
         };
 
-        self.image_path = snapshot.image_path;
-        self.image_info = snapshot.image_info;
-        self.c2pa_info = snapshot.c2pa_info;
-        self.c2pa_draft = snapshot.c2pa_draft;
-        self.c2pa_write_on_save = snapshot.c2pa_write_on_save;
-        self.original_image = snapshot.original_image;
-        self.working_image = snapshot.working_image;
-        self.compose_layers = snapshot.compose_layers;
-        self.selected_layer = snapshot.selected_layer;
-        self.image_undo_stack = snapshot.image_undo_stack;
-        self.image_redo_stack = snapshot.image_redo_stack;
-        self.selection_shape = snapshot.selection_shape;
-        self.selection_rect = snapshot.selection_rect;
-        self.selection_drag_start = None;
-        self.reset_drawing_state();
-        self.folder_files = snapshot.folder_files;
-        self.selected_index = snapshot.selected_index;
-        self.drag_snapshot = None;
-        self.sync_edit_dimensions();
+        self.restore_snapshot(snapshot);
         self.update_texture(ctx);
         self.status = match self.language {
             Language::ZhTw => "已恢復清除前畫面。".to_owned(),
             Language::En => "Canvas restored.".to_owned(),
         };
-    }
-
-    fn capture_canvas_snapshot(&self) -> CanvasSnapshot {
-        CanvasSnapshot {
-            image_path: self.image_path.clone(),
-            image_info: self.image_info.clone(),
-            c2pa_info: self.c2pa_info.clone(),
-            c2pa_draft: self.c2pa_draft.clone(),
-            c2pa_write_on_save: self.c2pa_write_on_save,
-            original_image: self.original_image.clone(),
-            working_image: self.working_image.clone(),
-            compose_layers: self.compose_layers.clone(),
-            selected_layer: self.selected_layer,
-            image_undo_stack: self.image_undo_stack.clone(),
-            image_redo_stack: self.image_redo_stack.clone(),
-            selection_shape: self.selection_shape,
-            selection_rect: self.selection_rect,
-            folder_files: self.folder_files.clone(),
-            selected_index: self.selected_index,
-        }
     }
 
     fn load_c2pa_state(&mut self, path: &PathBuf) {
@@ -4484,5 +4490,31 @@ mod drawing_tests {
         let rgba = image.to_rgba8();
         let touched = (1..=6).filter(|x| rgba.get_pixel(*x, 1)[3] > 0).count();
         assert!(touched >= 5);
+    }
+
+    #[test]
+    fn snapshottable_restores_canvas_state() {
+        let mut app = PixelStudioApp::new(None);
+        app.working_image = Some(DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([12, 34, 56, 255]),
+        )));
+        app.folder_files = vec![PathBuf::from("sample.png")];
+        app.selected_index = Some(0);
+        app.selection_rect = Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(4.0)));
+
+        let snapshot = app.capture_snapshot();
+        app.working_image = None;
+        app.folder_files.clear();
+        app.selected_index = None;
+        app.selection_rect = None;
+
+        app.restore_snapshot(snapshot);
+
+        assert!(app.working_image.is_some());
+        assert_eq!(app.folder_files, vec![PathBuf::from("sample.png")]);
+        assert_eq!(app.selected_index, Some(0));
+        assert!(app.selection_rect.is_some());
     }
 }

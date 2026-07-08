@@ -20,7 +20,9 @@ pub struct TransformPipeline {
 
 impl TransformPipeline {
     pub fn new() -> Self {
-        Self { transforms: Vec::new() }
+        Self {
+            transforms: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, transform: Box<dyn Transform>) {
@@ -60,32 +62,48 @@ impl Default for TransformPipeline {
 pub struct RotateLeft;
 
 impl Transform for RotateLeft {
-    fn name(&self) -> &'static str { "Rotate Left" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { rotate_left(image) }
+    fn name(&self) -> &'static str {
+        "Rotate Left"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        rotate_left(image)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct RotateRight;
 
 impl Transform for RotateRight {
-    fn name(&self) -> &'static str { "Rotate Right" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { rotate_right(image) }
+    fn name(&self) -> &'static str {
+        "Rotate Right"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        rotate_right(image)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct FlipHorizontal;
 
 impl Transform for FlipHorizontal {
-    fn name(&self) -> &'static str { "Flip Horizontal" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { flip_horizontal(image) }
+    fn name(&self) -> &'static str {
+        "Flip Horizontal"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        flip_horizontal(image)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct FlipVertical;
 
 impl Transform for FlipVertical {
-    fn name(&self) -> &'static str { "Flip Vertical" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { flip_vertical(image) }
+    fn name(&self) -> &'static str {
+        "Flip Vertical"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        flip_vertical(image)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,8 +112,12 @@ pub struct BrightnessAdjust {
 }
 
 impl Transform for BrightnessAdjust {
-    fn name(&self) -> &'static str { "Brightness" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_brightness(image, self.value) }
+    fn name(&self) -> &'static str {
+        "Brightness"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_brightness(image, self.value)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,8 +126,12 @@ pub struct ContrastAdjust {
 }
 
 impl Transform for ContrastAdjust {
-    fn name(&self) -> &'static str { "Contrast" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_contrast(image, self.value) }
+    fn name(&self) -> &'static str {
+        "Contrast"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_contrast(image, self.value)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -114,8 +140,12 @@ pub struct SaturationAdjust {
 }
 
 impl Transform for SaturationAdjust {
-    fn name(&self) -> &'static str { "Saturation" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_saturation(image, self.value) }
+    fn name(&self) -> &'static str {
+        "Saturation"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_saturation(image, self.value)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,8 +154,12 @@ pub struct ExposureAdjust {
 }
 
 impl Transform for ExposureAdjust {
-    fn name(&self) -> &'static str { "Exposure" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { adjust_exposure(image, self.stops) }
+    fn name(&self) -> &'static str {
+        "Exposure"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        adjust_exposure(image, self.stops)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -134,8 +168,12 @@ pub struct Blur {
 }
 
 impl Transform for Blur {
-    fn name(&self) -> &'static str { "Blur" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { blur(image, self.sigma) }
+    fn name(&self) -> &'static str {
+        "Blur"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        blur(image, self.sigma)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -145,24 +183,36 @@ pub struct Sharpen {
 }
 
 impl Transform for Sharpen {
-    fn name(&self) -> &'static str { "Sharpen" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { sharpen(image, self.sigma, self.threshold) }
+    fn name(&self) -> &'static str {
+        "Sharpen"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        sharpen(image, self.sigma, self.threshold)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Grayscale;
 
 impl Transform for Grayscale {
-    fn name(&self) -> &'static str { "Grayscale" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { grayscale(image) }
+    fn name(&self) -> &'static str {
+        "Grayscale"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        grayscale(image)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Invert;
 
 impl Transform for Invert {
-    fn name(&self) -> &'static str { "Invert" }
-    fn apply(&self, image: &DynamicImage) -> DynamicImage { invert(image) }
+    fn name(&self) -> &'static str {
+        "Invert"
+    }
+    fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        invert(image)
+    }
 }
 
 // ── Free functions (kept for backward compatibility) ──
@@ -388,7 +438,8 @@ mod tests {
 
     #[test]
     fn transform_pipeline_empty_is_noop() {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
         let pipeline = TransformPipeline::new();
         let result = pipeline.apply_all(&image);
         assert_eq!(result.as_bytes(), image.as_bytes());
@@ -396,7 +447,8 @@ mod tests {
 
     #[test]
     fn transform_pipeline_applies_in_order() {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(3, 3, Rgba([100, 100, 100, 255])));
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(3, 3, Rgba([100, 100, 100, 255])));
         let mut pipeline = TransformPipeline::new();
         pipeline.push(Box::new(RotateLeft));
         pipeline.push(Box::new(FlipHorizontal));
@@ -406,7 +458,8 @@ mod tests {
 
     #[test]
     fn transform_pipeline_over_grayscale() {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([100, 50, 200, 255])));
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([100, 50, 200, 255])));
         let mut pipeline = TransformPipeline::new();
         pipeline.push(Box::new(Grayscale));
         let result = pipeline.apply_all(&image);

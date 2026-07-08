@@ -67,3 +67,56 @@ Phase 5
 
 - Default response language: zh-TW.
 - Do not stage `.codebase-memory/` or `.opencode` runtime cache files.
+
+---
+
+# Task Plan: App Icons and Snapshottable Trait
+
+## Goal
+
+Add Pixel Studio app icons/ICO assets, wire them into the GUI and Windows release build, extract `CanvasSnapshot` app access behind a `Snapshottable` trait, validate release, then commit and push.
+
+## Current Phase
+
+Phase 1
+
+## Phases
+
+### Phase 1: Discovery
+- [x] Check git status and create task branch.
+- [x] Locate `CanvasSnapshot`, clear/restore paths, `main.rs`, and Cargo config.
+- [x] Inspect icon/resource options and existing assets.
+- **Status:** complete
+
+### Phase 2: Icon Assets
+- [x] Generate Pixel Studio icon image using built-in image generation.
+- [x] Convert and save PNG/ICO app icon assets under project resources.
+- [x] Wire runtime window icon and Windows executable resource icon.
+- **Status:** complete
+
+### Phase 3: Snapshottable Refactor
+- [x] Add `Snapshottable` trait.
+- [x] Move `CanvasSnapshot` capture/restore behind trait methods.
+- [x] Update clear/restore paths to use the trait boundary.
+- **Status:** complete
+
+### Phase 4: Validation
+- [x] Run cargo fmt --check.
+- [x] Run cargo clippy --workspace --all-targets -- -D warnings.
+- [x] Run cargo test --workspace.
+- [x] Build release workspace and copy `dist` binaries.
+- [x] Smoke-test release GUI.
+- **Status:** complete
+
+### Phase 5: Delivery
+- [x] Update docs/todos/lessons/progress.
+- [x] Commit and push.
+- [x] Verify remote SHA matches local HEAD.
+- **Status:** complete
+
+## Decisions Made
+
+| Decision | Rationale |
+|----------|-----------|
+| Use built-in image generation for the icon art and local conversion for ICO | No separate ico-generation skill is available in this environment. |
+| Keep `CanvasSnapshot` as the concrete data object and add `Snapshottable` for app boundary methods | This satisfies the requested abstraction without forcing a broad app-state rewrite. |

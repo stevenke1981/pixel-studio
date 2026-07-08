@@ -40,6 +40,11 @@ Rust + egui 圖片編輯與轉檔工具，由 Photo Tool 複刻並擴充進階�
 ### GUI 參考圖
 - Codex 內建生圖產出的常用工具列參考：`docs/assets/pixel-studio-toolbar-reference.png`
 
+### App icons
+- App icon master 與跨平台 icon pack：`assets/icon/`
+- Windows release executable 會嵌入 `assets/icon/pack/windows/pixel-studio.ico`
+- 詳細紀錄：`docs/app-icons.md`
+
 ### UI 架構
 - 上方 UI chrome 使用 `TopChrome` presenter struct 管理選單列與常用工具列。
 - 工具上下文列使用 `ContextualToolbar` presenter struct 管理不同工具的設定。

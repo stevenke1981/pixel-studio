@@ -16,3 +16,6 @@ studio-core = { path = "../studio-core" }
 rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[build-dependencies]
+winresource = "0.1.31"

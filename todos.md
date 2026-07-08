@@ -40,6 +40,16 @@ Follow-up work: implement raster behavior for Eraser/Stamp/Eyedropper/Shape, nam
 - [x] Documented the UI OOP structure in `docs/ui-oop-architecture.md`.
 - [x] Rebuilt release binaries and smoke-tested `dist/studio-app.exe`.
 
+### App icons and Snapshottable — 2026-07-08
+
+- [x] Generated Pixel Studio app icon assets with `D:\ico_create\skills\codex-app-icon-generator`.
+- [x] Added master PNG, Windows `.ico`, platform PNGs, web icons, and icon-pack report under `assets/icon/`.
+- [x] Wired runtime window icon through `crates/studio-app/src/icons.rs`.
+- [x] Wired Windows executable icon through `crates/studio-app/build.rs` and `winresource`.
+- [x] Extracted `CanvasSnapshot` capture/restore behind a `Snapshottable` trait.
+- [x] Added a focused test for snapshot capture/restore round-trip.
+- [x] Rebuilt release binaries and smoke-tested `dist/studio-app.exe`.
+
 ---
 
 ## 0. Read first

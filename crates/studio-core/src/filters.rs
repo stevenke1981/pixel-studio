@@ -1,6 +1,6 @@
 use image::DynamicImage;
 
-use crate::util::{clamp_channel, lerp_channel, rgb_to_hsl, hsl_to_rgb};
+use crate::util::{clamp_channel, hsl_to_rgb, lerp_channel, rgb_to_hsl};
 
 /// A trait for pixel-level image filters.
 ///
@@ -23,7 +23,9 @@ pub struct FilterPipeline {
 
 impl FilterPipeline {
     pub fn new() -> Self {
-        Self { filters: Vec::new() }
+        Self {
+            filters: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, filter: Box<dyn Filter>) {
@@ -64,7 +66,9 @@ impl Default for FilterPipeline {
 pub struct Rotate180;
 
 impl Filter for Rotate180 {
-    fn name(&self) -> &'static str { "Rotate 180" }
+    fn name(&self) -> &'static str {
+        "Rotate 180"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         rotate_180(image)
     }
@@ -77,7 +81,9 @@ pub struct HueAdjust {
 }
 
 impl Filter for HueAdjust {
-    fn name(&self) -> &'static str { "Hue" }
+    fn name(&self) -> &'static str {
+        "Hue"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         adjust_hue(image, self.degrees)
     }
@@ -90,7 +96,9 @@ pub struct Sepia {
 }
 
 impl Filter for Sepia {
-    fn name(&self) -> &'static str { "Sepia" }
+    fn name(&self) -> &'static str {
+        "Sepia"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         sepia(image, self.strength)
     }
@@ -103,7 +111,9 @@ pub struct Vignette {
 }
 
 impl Filter for Vignette {
-    fn name(&self) -> &'static str { "Vignette" }
+    fn name(&self) -> &'static str {
+        "Vignette"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         vignette(image, self.strength)
     }
@@ -116,7 +126,9 @@ pub struct TemperatureAdjust {
 }
 
 impl Filter for TemperatureAdjust {
-    fn name(&self) -> &'static str { "Temperature" }
+    fn name(&self) -> &'static str {
+        "Temperature"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         adjust_temperature(image, self.amount)
     }
@@ -129,7 +141,9 @@ pub struct TintAdjust {
 }
 
 impl Filter for TintAdjust {
-    fn name(&self) -> &'static str { "Tint" }
+    fn name(&self) -> &'static str {
+        "Tint"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         adjust_tint(image, self.amount)
     }
@@ -140,7 +154,9 @@ impl Filter for TintAdjust {
 pub struct AutoContrast;
 
 impl Filter for AutoContrast {
-    fn name(&self) -> &'static str { "Auto Contrast" }
+    fn name(&self) -> &'static str {
+        "Auto Contrast"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         auto_contrast(image)
     }
@@ -153,7 +169,9 @@ pub struct Posterize {
 }
 
 impl Filter for Posterize {
-    fn name(&self) -> &'static str { "Posterize" }
+    fn name(&self) -> &'static str {
+        "Posterize"
+    }
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         posterize(image, self.levels)
     }
@@ -380,7 +398,8 @@ mod tests {
 
     #[test]
     fn filter_pipeline_empty_is_noop() {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([100, 100, 100, 255])));
         let pipeline = FilterPipeline::new();
         let result = pipeline.apply_all(&image);
         assert_eq!(result.as_bytes(), image.as_bytes());
@@ -388,7 +407,8 @@ mod tests {
 
     #[test]
     fn filter_pipeline_applies_in_order() {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([200, 100, 50, 255])));
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([200, 100, 50, 255])));
         let mut pipeline = FilterPipeline::new();
         pipeline.push(Box::new(Rotate180));
         pipeline.push(Box::new(Sepia { strength: 0.5 }));

@@ -1,0 +1,54 @@
+{
+  "source": "D:\\pixel-studio\\assets\\icon\\master.png",
+  "source_size": {
+    "width": 1254,
+    "height": 1254
+  },
+  "name": "pixel-studio",
+  "output_dir": "D:\\pixel-studio\\assets\\icon\\pack",
+  "generated": {
+    "windows_ico": "D:\\pixel-studio\\assets\\icon\\pack\\windows\\pixel-studio.ico",
+    "macos": {
+      "iconset": "D:\\pixel-studio\\assets\\icon\\pack\\macos\\pixel-studio.iconset",
+      "icns": null
+    },
+    "linux": [
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\16x16\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\22x22\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\24x24\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\32x32\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\48x48\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\64x64\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\128x128\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\256x256\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\512x512\\apps\\pixel-studio.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\linux\\hicolor\\1024x1024\\apps\\pixel-studio.png"
+    ],
+    "web": {
+      "files": [
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\favicon-16x16.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\favicon-32x32.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\favicon-48x48.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\apple-touch-icon.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\android-chrome-192x192.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\android-chrome-512x512.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\maskable-192x192.png",
+        "D:\\pixel-studio\\assets\\icon\\pack\\web\\maskable-512x512.png"
+      ],
+      "manifest": "D:\\pixel-studio\\assets\\icon\\pack\\web\\manifest.webmanifest"
+    },
+    "png": [
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\16x16.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\24x24.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\32x32.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\48x48.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\64x64.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\128x128.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\180x180.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\192x192.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\256x256.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\512x512.png",
+      "D:\\pixel-studio\\assets\\icon\\pack\\png\\1024x1024.png"
+    ]
+  }
+}

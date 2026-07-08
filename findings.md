@@ -51,3 +51,37 @@
 - The reference toolbar uses larger 64-72px wide action cells with icon and label, separated into groups: open/paste, save/save as, undo/redo, crop/brush/line, fit/100%, export.
 - The brush tool is visibly active with blue accent fill, matching the app's existing `bg_info` / `text_info` token intent.
 - The contextual toolbar is a separate thin row with brush size, opacity, color, and blend mode controls.
+
+---
+
+# Findings: App Icons and Snapshottable Trait
+
+## Requirements
+
+- Inspect the project before changes.
+- Use available icon/image generation workflow to add app icons/ICO.
+- Execute `CanvasSnapshot → Snapshottable trait` refactor because `CanvasSnapshot` still directly operates on the app struct.
+- Build release binaries.
+- Commit and push with remote confirmation.
+
+## Research Findings
+
+- `CanvasSnapshot` is currently defined in `crates/studio-app/src/app.rs`.
+- `clear_canvas()` stores `self.cleared_canvas = Some(self.capture_canvas_snapshot())`.
+- `restore_canvas()` manually copies every snapshot field back into `PixelStudioApp`.
+- `capture_canvas_snapshot()` clones app fields directly into `CanvasSnapshot`.
+- `main.rs` creates `eframe::NativeOptions` with title/size only; no runtime icon is configured.
+- `crates/studio-app/Cargo.toml` has no build script or Windows resource dependency yet.
+- `egui::ViewportBuilder::with_icon` accepts an `egui::IconData`.
+- `eframe::icon_data::from_png_bytes` can load an embedded PNG into `IconData`.
+- `winresource` provides `WindowsResource::set_icon(...).compile()` for a Windows `.exe` resource icon.
+- The icon generator skill created `assets/icon/pack/windows/pixel-studio.ico` with 16, 24, 32, 48, 64, 128, and 256 px entries.
+
+## Technical Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Generate a square icon PNG first, then derive `.ico` from it locally | Keeps the generated art inspectable and lets Windows resource use a standard ICO. |
+| Add `build.rs` only to `studio-app` | The icon is app-specific and should not affect core/CLI crates. |
+| Add a `Snapshottable` trait implemented for `PixelStudioApp` | Separates snapshot capture/restore behavior from callers while preserving existing data fields. |
+| Embed `assets/icon/pack/png/256x256.png` for runtime icon data | Keeps startup self-contained without loading an external file. |
