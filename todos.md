@@ -31,6 +31,15 @@ Follow-up work: implement raster behavior for Eraser/Stamp/Eyedropper/Shape, nam
 - [x] Styled active tool shortcuts with the existing blue selected state while keeping menus and left categories available.
 - [x] Re-run formatting, clippy, tests, release build, and GUI smoke test after the toolbar change.
 
+### Reference UI and OOP refactor — 2026-07-08
+
+- [x] Split the top chrome into menu row, large common toolbar row, and contextual settings row to match the generated reference image.
+- [x] Reworked the common toolbar into a `TopChrome` presenter struct with object-style render methods.
+- [x] Reworked the contextual toolbar into a `ContextualToolbar` presenter struct.
+- [x] Widened the left rail and added icon + label buttons to better match the generated GUI reference.
+- [x] Documented the UI OOP structure in `docs/ui-oop-architecture.md`.
+- [x] Rebuilt release binaries and smoke-tested `dist/studio-app.exe`.
+
 ---
 
 ## 0. Read first

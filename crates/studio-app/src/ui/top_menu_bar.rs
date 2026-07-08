@@ -1,205 +1,371 @@
-use egui::{Align, Button, Layout, RichText, Ui, Vec2};
+use egui::{Button, RichText, Ui, Vec2};
 
 use crate::i18n::{Language, TextKey};
 use crate::ui::state::ToolId;
 use crate::ui::theme::UiTokens;
 use crate::ui::{CommandAvailability, UiAction};
 
-pub fn show_top_menu_bar(
-    ui: &mut Ui,
-    tokens: &UiTokens,
+pub struct TopChrome<'a> {
+    tokens: &'a UiTokens,
     language: Language,
     availability: CommandAvailability,
     active_tool: ToolId,
-    actions: &mut Vec<UiAction>,
-) {
-    ui.horizontal_centered(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(
-            RichText::new("▣  Pixel Studio")
-                .size(14.0)
-                .color(tokens.text_primary),
-        );
+}
 
-        ui.menu_button(language.t(TextKey::File), |ui| {
-            menu_action(
+impl<'a> TopChrome<'a> {
+    pub fn new(
+        tokens: &'a UiTokens,
+        language: Language,
+        availability: CommandAvailability,
+        active_tool: ToolId,
+    ) -> Self {
+        Self {
+            tokens,
+            language,
+            availability,
+            active_tool,
+        }
+    }
+
+    pub fn show_menu_bar(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 18.0;
+            ui.label(
+                RichText::new("▣  Pixel Studio")
+                    .size(14.0)
+                    .color(self.tokens.text_primary),
+            );
+
+            self.file_menu(ui, actions);
+            self.edit_menu(ui, actions);
+            self.image_menu(ui, actions);
+            self.layers_menu(ui, actions);
+            self.filters_menu(ui, actions);
+            self.view_menu(ui, actions);
+            ui.label(
+                RichText::new(self.language.t(TextKey::Drawing))
+                    .size(13.0)
+                    .color(self.tokens.text_secondary),
+            );
+        });
+    }
+
+    pub fn show_common_toolbar(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            self.action_cell(
                 ui,
-                language.t(TextKey::OpenImage),
+                ToolbarAction::new(
+                    "▱",
+                    self.language.t(TextKey::Open),
+                    self.language.t(TextKey::OpenImage),
+                    true,
+                    UiAction::OpenImage,
+                ),
+                actions,
+            );
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "⧉",
+                    self.language.t(TextKey::Paste),
+                    self.language.t(TextKey::PasteImage),
+                    true,
+                    UiAction::PasteImage,
+                ),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "S",
+                    self.language.t(TextKey::Save),
+                    self.language.t(TextKey::SaveProject),
+                    self.availability.has_image,
+                    UiAction::SaveProject,
+                ),
+                actions,
+            );
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "S+",
+                    self.language.t(TextKey::SaveAsNewFile),
+                    self.language.t(TextKey::SaveAsNewFile),
+                    self.availability.has_image,
+                    UiAction::SaveAs,
+                ),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "←",
+                    self.language.t(TextKey::Undo),
+                    self.language.t(TextKey::Undo),
+                    self.can_undo(),
+                    self.undo_action(),
+                ),
+                actions,
+            );
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "→",
+                    self.language.t(TextKey::Redo),
+                    self.language.t(TextKey::Redo),
+                    self.can_redo(),
+                    self.redo_action(),
+                ),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.tool_cell(ui, ToolId::Crop, self.language.t(TextKey::Crop), actions);
+            self.tool_cell(
+                ui,
+                ToolId::Brush,
+                self.language.t(TextKey::BrushTool),
+                actions,
+            );
+            self.tool_cell(
+                ui,
+                ToolId::Line,
+                self.language.t(TextKey::LineTool),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "□",
+                    self.language.t(TextKey::Fit),
+                    self.language.t(TextKey::Fit),
+                    self.availability.has_image,
+                    UiAction::FitToWindow,
+                ),
+                actions,
+            );
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "1:1",
+                    "100%",
+                    "100%",
+                    self.availability.has_image,
+                    UiAction::ActualSize,
+                ),
+                actions,
+            );
+            group_separator(ui, self.tokens);
+            self.action_cell(
+                ui,
+                ToolbarAction::new(
+                    "↥",
+                    self.language.t(TextKey::Export),
+                    self.language.t(TextKey::Export),
+                    self.availability.has_image,
+                    UiAction::ExportComposite,
+                ),
+                actions,
+            );
+        });
+    }
+
+    fn file_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::File), |ui| {
+            self.menu_action(
+                ui,
+                self.language.t(TextKey::OpenImage),
                 true,
                 UiAction::OpenImage,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::OpenFolder),
+                self.language.t(TextKey::OpenFolder),
                 true,
                 UiAction::OpenFolder,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::PasteImage),
+                self.language.t(TextKey::PasteImage),
                 true,
                 UiAction::PasteImage,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::Reload),
-                availability.has_image,
+                self.language.t(TextKey::Reload),
+                self.availability.has_image,
                 UiAction::Reload,
                 actions,
             );
             ui.separator();
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::OpenProject),
+                self.language.t(TextKey::OpenProject),
                 true,
                 UiAction::OpenProject,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::SaveProject),
-                availability.has_image,
+                self.language.t(TextKey::SaveProject),
+                self.availability.has_image,
                 UiAction::SaveProject,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::SaveAsNewFile),
-                availability.has_image,
+                self.language.t(TextKey::SaveAsNewFile),
+                self.availability.has_image,
                 UiAction::SaveAs,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::Export),
-                availability.has_image,
+                self.language.t(TextKey::Export),
+                self.availability.has_image,
                 UiAction::ExportComposite,
                 actions,
             );
         });
+    }
 
-        ui.menu_button(language.t(TextKey::Edit), |ui| {
-            menu_action(
+    fn edit_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::Edit), |ui| {
+            self.menu_action(
                 ui,
-                language.t(TextKey::Undo),
-                availability.can_undo,
+                self.language.t(TextKey::Undo),
+                self.availability.can_undo,
                 UiAction::Undo,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::Redo),
-                availability.can_redo,
+                self.language.t(TextKey::Redo),
+                self.availability.can_redo,
                 UiAction::Redo,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::ImageUndo),
-                availability.can_undo_image,
+                self.language.t(TextKey::ImageUndo),
+                self.availability.can_undo_image,
                 UiAction::ImageUndo,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::ImageRedo),
-                availability.can_redo_image,
+                self.language.t(TextKey::ImageRedo),
+                self.availability.can_redo_image,
                 UiAction::ImageRedo,
                 actions,
             );
             ui.separator();
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::ClearCanvas),
-                availability.has_image,
+                self.language.t(TextKey::ClearCanvas),
+                self.availability.has_image,
                 UiAction::ClearCanvas,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::RestoreCanvas),
-                availability.can_restore_canvas,
+                self.language.t(TextKey::RestoreCanvas),
+                self.availability.can_restore_canvas,
                 UiAction::RestoreCanvas,
                 actions,
             );
         });
+    }
 
-        ui.menu_button(language.t(TextKey::Image), |ui| {
+    fn image_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::Image), |ui| {
             for (label, action) in [
-                (language.t(TextKey::RotateLeft), UiAction::RotateLeft),
-                (language.t(TextKey::RotateRight), UiAction::RotateRight),
-                (language.t(TextKey::Rotate180), UiAction::Rotate180),
-                (language.t(TextKey::FlipH), UiAction::FlipHorizontal),
-                (language.t(TextKey::FlipV), UiAction::FlipVertical),
+                (self.language.t(TextKey::RotateLeft), UiAction::RotateLeft),
+                (self.language.t(TextKey::RotateRight), UiAction::RotateRight),
+                (self.language.t(TextKey::Rotate180), UiAction::Rotate180),
+                (self.language.t(TextKey::FlipH), UiAction::FlipHorizontal),
+                (self.language.t(TextKey::FlipV), UiAction::FlipVertical),
             ] {
-                menu_action(ui, label, availability.has_image, action, actions);
+                self.menu_action(ui, label, self.availability.has_image, action, actions);
             }
         });
+    }
 
-        ui.menu_button(language.t(TextKey::Layers), |ui| {
-            menu_action(
+    fn layers_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::Layers), |ui| {
+            self.menu_action(
                 ui,
-                language.t(TextKey::AddText),
-                availability.has_image,
+                self.language.t(TextKey::AddText),
+                self.availability.has_image,
                 UiAction::AddTextLayer,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::AddImage),
-                availability.has_image,
+                self.language.t(TextKey::AddImage),
+                self.availability.has_image,
                 UiAction::AddImageLayer,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::DuplicateLayer),
-                availability.has_selected_layer,
+                self.language.t(TextKey::DuplicateLayer),
+                self.availability.has_selected_layer,
                 UiAction::DuplicateLayer,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::DeleteLayer),
-                availability.has_selected_layer,
+                self.language.t(TextKey::DeleteLayer),
+                self.availability.has_selected_layer,
                 UiAction::DeleteLayer,
                 actions,
             );
         });
+    }
 
-        ui.menu_button(language.t(TextKey::Filters), |ui| {
+    fn filters_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::Filters), |ui| {
             for (label, action) in [
-                (language.t(TextKey::Grayscale), UiAction::Grayscale),
-                (language.t(TextKey::Invert), UiAction::Invert),
-                (language.t(TextKey::AutoContrast), UiAction::AutoContrast),
-                (language.t(TextKey::ResetEdits), UiAction::ResetEdits),
+                (self.language.t(TextKey::Grayscale), UiAction::Grayscale),
+                (self.language.t(TextKey::Invert), UiAction::Invert),
+                (
+                    self.language.t(TextKey::AutoContrast),
+                    UiAction::AutoContrast,
+                ),
+                (self.language.t(TextKey::ResetEdits), UiAction::ResetEdits),
             ] {
-                menu_action(ui, label, availability.has_image, action, actions);
+                self.menu_action(ui, label, self.availability.has_image, action, actions);
             }
         });
+    }
 
-        ui.menu_button(language.t(TextKey::View), |ui| {
-            menu_action(
+    fn view_menu(&self, ui: &mut Ui, actions: &mut Vec<UiAction>) {
+        ui.menu_button(self.language.t(TextKey::View), |ui| {
+            self.menu_action(
                 ui,
-                language.t(TextKey::Fit),
-                availability.has_image,
+                self.language.t(TextKey::Fit),
+                self.availability.has_image,
                 UiAction::FitToWindow,
                 actions,
             );
-            menu_action(
+            self.menu_action(
                 ui,
                 "100%",
-                availability.has_image,
+                self.availability.has_image,
                 UiAction::ActualSize,
                 actions,
             );
             ui.separator();
-            menu_action(
+            self.menu_action(
                 ui,
-                language.t(TextKey::LeftTools),
+                self.language.t(TextKey::LeftTools),
                 true,
                 UiAction::ToggleLeftTools,
                 actions,
@@ -207,7 +373,7 @@ pub fn show_top_menu_bar(
             ui.separator();
             for value in [Language::ZhTw, Language::En] {
                 if ui
-                    .selectable_label(language == value, value.name())
+                    .selectable_label(self.language == value, value.name())
                     .clicked()
                 {
                     actions.push(UiAction::SetLanguage(value));
@@ -215,227 +381,152 @@ pub fn show_top_menu_bar(
                 }
             }
         });
-
-        ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width().max(0.0), 24.0),
-            Layout::right_to_left(Align::Center),
-            |ui| {
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "↥",
-                    language.t(TextKey::Export),
-                    availability.has_image,
-                    UiAction::ExportComposite,
-                    actions,
-                );
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "1:1",
-                    "100%",
-                    availability.has_image,
-                    UiAction::ActualSize,
-                    actions,
-                );
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "□",
-                    language.t(TextKey::Fit),
-                    availability.has_image,
-                    UiAction::FitToWindow,
-                    actions,
-                );
-                ui.separator();
-                toolbar_tool_button(
-                    ui,
-                    tokens,
-                    active_tool,
-                    ToolId::Line,
-                    language.t(TextKey::LineTool),
-                    actions,
-                );
-                toolbar_tool_button(
-                    ui,
-                    tokens,
-                    active_tool,
-                    ToolId::Brush,
-                    language.t(TextKey::BrushTool),
-                    actions,
-                );
-                toolbar_tool_button(
-                    ui,
-                    tokens,
-                    active_tool,
-                    ToolId::Crop,
-                    language.t(TextKey::Crop),
-                    actions,
-                );
-                ui.separator();
-                toolbar_redo_button(ui, tokens, language, availability, actions);
-                toolbar_undo_button(ui, tokens, language, availability, actions);
-                ui.separator();
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "S+",
-                    language.t(TextKey::SaveAsNewFile),
-                    availability.has_image,
-                    UiAction::SaveAs,
-                    actions,
-                );
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "S",
-                    language.t(TextKey::SaveProject),
-                    availability.has_image,
-                    UiAction::SaveProject,
-                    actions,
-                );
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "⧉",
-                    language.t(TextKey::PasteImage),
-                    true,
-                    UiAction::PasteImage,
-                    actions,
-                );
-                toolbar_action_button(
-                    ui,
-                    tokens,
-                    "O",
-                    language.t(TextKey::OpenImage),
-                    true,
-                    UiAction::OpenImage,
-                    actions,
-                );
-            },
-        );
-    });
-}
-
-fn menu_action(
-    ui: &mut Ui,
-    label: &str,
-    enabled: bool,
-    action: UiAction,
-    actions: &mut Vec<UiAction>,
-) {
-    if ui.add_enabled(enabled, Button::new(label)).clicked() {
-        actions.push(action);
-        ui.close();
     }
-}
 
-fn toolbar_action_button(
-    ui: &mut Ui,
-    tokens: &UiTokens,
-    icon: &str,
-    tooltip: &str,
-    enabled: bool,
-    action: UiAction,
-    actions: &mut Vec<UiAction>,
-) {
-    let width = match icon.chars().count() {
-        0 | 1 => 28.0,
-        2 => 34.0,
-        _ => 40.0,
-    };
-    let text = RichText::new(icon).size(12.0).color(tokens.text_secondary);
-    let button = Button::new(text)
-        .min_size(Vec2::new(width, 24.0))
-        .fill(egui::Color32::TRANSPARENT)
-        .stroke(egui::Stroke::new(1.0, tokens.border_tertiary));
-    if ui
-        .add_enabled(enabled, button)
-        .on_hover_text(tooltip)
-        .clicked()
-    {
-        actions.push(action);
+    fn menu_action(
+        &self,
+        ui: &mut Ui,
+        label: &str,
+        enabled: bool,
+        action: UiAction,
+        actions: &mut Vec<UiAction>,
+    ) {
+        if ui.add_enabled(enabled, Button::new(label)).clicked() {
+            actions.push(action);
+            ui.close();
+        }
     }
-}
 
-fn toolbar_tool_button(
-    ui: &mut Ui,
-    tokens: &UiTokens,
-    active_tool: ToolId,
-    tool: ToolId,
-    tooltip: &str,
-    actions: &mut Vec<UiAction>,
-) {
-    let selected = active_tool == tool;
-    let text = RichText::new(tool.icon()).size(12.0).color(if selected {
-        tokens.text_info
-    } else {
-        tokens.text_secondary
-    });
-    let button = Button::new(text)
-        .min_size(Vec2::new(28.0, 24.0))
-        .fill(if selected {
-            tokens.bg_info
+    fn action_cell(&self, ui: &mut Ui, item: ToolbarAction<'_>, actions: &mut Vec<UiAction>) {
+        let text_color = if item.enabled {
+            self.tokens.text_primary
         } else {
-            egui::Color32::TRANSPARENT
-        })
-        .stroke(egui::Stroke::new(
-            1.0,
-            if selected {
-                tokens.border_info
+            self.tokens.text_tertiary
+        };
+        let button = Button::new(
+            RichText::new(format!("{}\n{}", item.icon, item.label))
+                .size(12.0)
+                .color(text_color),
+        )
+        .min_size(Vec2::new(72.0, 58.0))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE);
+        if ui
+            .add_enabled(item.enabled, button)
+            .on_hover_text(item.tooltip)
+            .clicked()
+        {
+            actions.push(item.action);
+        }
+    }
+
+    fn tool_cell(&self, ui: &mut Ui, tool: ToolId, label: &str, actions: &mut Vec<UiAction>) {
+        let selected = self.active_tool == tool;
+        let text = RichText::new(format!("{}\n{}", tool.icon(), label))
+            .size(12.0)
+            .color(if selected {
+                self.tokens.text_info
             } else {
-                tokens.border_tertiary
-            },
-        ));
-    if ui.add(button).on_hover_text(tooltip).clicked() {
-        actions.push(UiAction::SelectTool(tool));
+                self.tokens.text_primary
+            });
+        let button = Button::new(text)
+            .min_size(Vec2::new(72.0, 58.0))
+            .fill(if selected {
+                self.tokens.bg_info
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(egui::Stroke::new(
+                1.0,
+                if selected {
+                    self.tokens.border_info
+                } else {
+                    egui::Color32::TRANSPARENT
+                },
+            ));
+        if ui.add(button).on_hover_text(label).clicked() {
+            actions.push(UiAction::SelectTool(tool));
+        }
+    }
+
+    fn can_undo(&self) -> bool {
+        self.availability.can_undo || self.availability.can_undo_image
+    }
+
+    fn can_redo(&self) -> bool {
+        self.availability.can_redo || self.availability.can_redo_image
+    }
+
+    fn undo_action(&self) -> UiAction {
+        if self.availability.can_undo {
+            UiAction::Undo
+        } else {
+            UiAction::ImageUndo
+        }
+    }
+
+    fn redo_action(&self) -> UiAction {
+        if self.availability.can_redo {
+            UiAction::Redo
+        } else {
+            UiAction::ImageRedo
+        }
     }
 }
 
-fn toolbar_undo_button(
+pub fn show_menu_bar(
     ui: &mut Ui,
     tokens: &UiTokens,
     language: Language,
     availability: CommandAvailability,
+    active_tool: ToolId,
     actions: &mut Vec<UiAction>,
 ) {
-    let enabled = availability.can_undo || availability.can_undo_image;
-    let action = if availability.can_undo {
-        UiAction::Undo
-    } else {
-        UiAction::ImageUndo
-    };
-    toolbar_action_button(
-        ui,
-        tokens,
-        "←",
-        language.t(TextKey::Undo),
-        enabled,
-        action,
-        actions,
-    );
+    TopChrome::new(tokens, language, availability, active_tool).show_menu_bar(ui, actions);
 }
 
-fn toolbar_redo_button(
+pub fn show_common_toolbar(
     ui: &mut Ui,
     tokens: &UiTokens,
     language: Language,
     availability: CommandAvailability,
+    active_tool: ToolId,
     actions: &mut Vec<UiAction>,
 ) {
-    let enabled = availability.can_redo || availability.can_redo_image;
-    let action = if availability.can_redo {
-        UiAction::Redo
-    } else {
-        UiAction::ImageRedo
-    };
-    toolbar_action_button(
-        ui,
-        tokens,
-        "→",
-        language.t(TextKey::Redo),
-        enabled,
-        action,
-        actions,
+    TopChrome::new(tokens, language, availability, active_tool).show_common_toolbar(ui, actions);
+}
+
+#[derive(Clone, Copy)]
+struct ToolbarAction<'a> {
+    icon: &'a str,
+    label: &'a str,
+    tooltip: &'a str,
+    enabled: bool,
+    action: UiAction,
+}
+
+impl<'a> ToolbarAction<'a> {
+    fn new(
+        icon: &'a str,
+        label: &'a str,
+        tooltip: &'a str,
+        enabled: bool,
+        action: UiAction,
+    ) -> Self {
+        Self {
+            icon,
+            label,
+            tooltip,
+            enabled,
+            action,
+        }
+    }
+}
+
+fn group_separator(ui: &mut Ui, tokens: &UiTokens) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 54.0), egui::Sense::hover());
+    ui.painter().line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        egui::Stroke::new(1.0, tokens.border_tertiary),
     );
 }

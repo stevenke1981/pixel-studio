@@ -355,10 +355,23 @@ impl eframe::App for PixelStudioApp {
         let mut actions = Vec::new();
 
         egui::Panel::top("top_menu_bar")
-            .exact_size(40.0)
+            .exact_size(38.0)
             .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
             .show_inside(ui, |ui| {
-                top_menu_bar::show_top_menu_bar(
+                top_menu_bar::show_menu_bar(
+                    ui,
+                    &tokens,
+                    language,
+                    availability,
+                    self.ui_state.active_tool,
+                    &mut actions,
+                );
+            });
+        egui::Panel::top("common_toolbar")
+            .exact_size(76.0)
+            .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
+            .show_inside(ui, |ui| {
+                top_menu_bar::show_common_toolbar(
                     ui,
                     &tokens,
                     language,
@@ -368,7 +381,7 @@ impl eframe::App for PixelStudioApp {
                 );
             });
         egui::Panel::top("contextual_toolbar")
-            .exact_size(34.0)
+            .exact_size(54.0)
             .frame(panel_frame(&tokens, tokens.bg_primary, PanelEdge::Bottom))
             .show_inside(ui, |ui| {
                 contextual_toolbar::show_contextual_toolbar(
@@ -396,7 +409,7 @@ impl eframe::App for PixelStudioApp {
                 );
             });
         egui::Panel::left("tool_rail")
-            .exact_size(50.0)
+            .exact_size(92.0)
             .resizable(false)
             .frame(panel_frame(&tokens, tokens.bg_secondary, PanelEdge::Right))
             .show_inside(ui, |ui| {

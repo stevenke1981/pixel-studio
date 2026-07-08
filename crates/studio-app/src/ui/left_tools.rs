@@ -16,18 +16,22 @@ pub fn show_category_rail(
     process_tool_shortcuts(ctx, state, actions);
 
     ui.vertical_centered(|ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().item_spacing.y = 6.0;
         for category in LeftToolCategory::ALL {
             let selected = state.left_category == category && state.left_tools_open;
-            let text = RichText::new(category.icon())
-                .size(15.0)
-                .color(if selected {
-                    tokens.text_info
-                } else {
-                    tokens.text_secondary
-                });
+            let text = RichText::new(format!(
+                "{}\n{}",
+                category.icon(),
+                category_short_label(language, category)
+            ))
+            .size(15.0)
+            .color(if selected {
+                tokens.text_info
+            } else {
+                tokens.text_secondary
+            });
             let button = Button::new(text)
-                .min_size(Vec2::splat(34.0))
+                .min_size(Vec2::new(76.0, 58.0))
                 .fill(if selected {
                     tokens.bg_info
                 } else {
@@ -102,6 +106,20 @@ pub fn category_label(language: Language, category: LeftToolCategory) -> &'stati
         LeftToolCategory::Batch => TextKey::Batch,
         LeftToolCategory::C2pa => TextKey::C2pa,
     })
+}
+
+fn category_short_label(language: Language, category: LeftToolCategory) -> &'static str {
+    match category {
+        LeftToolCategory::File => language.t(TextKey::File),
+        LeftToolCategory::Browse => language.t(TextKey::BrowseTools),
+        LeftToolCategory::Drawing => language.t(TextKey::Drawing),
+        LeftToolCategory::Edit => language.t(TextKey::Edit),
+        LeftToolCategory::Layers => language.t(TextKey::Layers),
+        LeftToolCategory::Export => language.t(TextKey::Export),
+        LeftToolCategory::Gif => "GIF",
+        LeftToolCategory::Batch => language.t(TextKey::Batch),
+        LeftToolCategory::C2pa => "C2PA",
+    }
 }
 
 fn process_tool_shortcuts(ctx: &Context, state: &mut UiState, actions: &mut Vec<UiAction>) {

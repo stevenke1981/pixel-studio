@@ -28,3 +28,8 @@
 **Trigger:** Common actions were reachable through menus and the left drawer, but still not visible enough as first-level controls.
 **Rule:** When a workflow is described as common or frequent, expose it in the top toolbar with a compact button and tooltip while keeping the full categorized panel for deeper tools.
 **Source:** common toolbar migration
+---
+## Lesson #7 - 2026-07-08
+**Trigger:** The generated GUI reference had separate menu, action, and contextual rows, while the app initially squeezed frequent actions into the menu bar.
+**Rule:** When matching a visual reference, preserve the reference's row hierarchy first, then tune button styling; do not compress distinct rows into one control strip.
+**Source:** reference UI and OOP refactor

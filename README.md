@@ -8,6 +8,7 @@ Rust + egui 圖片編輯與轉檔工具，由 Photo Tool 複刻並擴充進階�
 - 開啟單張圖片、資料夾瀏覽、拖放開檔、剪貼簿貼上
 - 預覽區滑鼠滾輪縮放、符合視窗、100% 檢視
 - 檔案資訊面板
+- 參考圖風格的三層上方介面：選單列、常用工具列、上下文工具列
 - 上方常用工具列：開啟、貼上、儲存、另存、復原 / 重做、裁切、筆刷、直線、符合視窗、100%、匯出
 - 左側分類工具面板：檔案、瀏覽、繪畫、編輯、圖層、匯出、GIF、批次、C2PA
 
@@ -38,6 +39,11 @@ Rust + egui 圖片編輯與轉檔工具，由 Photo Tool 複刻並擴充進階�
 
 ### GUI 參考圖
 - Codex 內建生圖產出的常用工具列參考：`docs/assets/pixel-studio-toolbar-reference.png`
+
+### UI 架構
+- 上方 UI chrome 使用 `TopChrome` presenter struct 管理選單列與常用工具列。
+- 工具上下文列使用 `ContextualToolbar` presenter struct 管理不同工具的設定。
+- 詳細設計紀錄：`docs/ui-oop-architecture.md`
 
 ## 執行
 
