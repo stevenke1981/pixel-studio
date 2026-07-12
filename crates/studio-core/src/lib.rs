@@ -22,8 +22,8 @@ pub use c2pa_metadata::{
     C2paInfo, C2paManifestDraft, inspect_c2pa, remove_c2pa_manifest, write_c2pa_manifest,
 };
 pub use compose::{
-    ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, TextLayer, render_composition,
-    text_layer_bounds,
+    ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, ShapeKind, ShapeLayer, TextLayer,
+    compose_layer_bounds, render_composition, shape_layer_bounds, text_layer_bounds,
 };
 pub use convert::{
     ConvertOptions, ConvertResult, convert_image, flatten_alpha, save_dynamic_image,

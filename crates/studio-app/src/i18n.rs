@@ -177,6 +177,18 @@ pub enum TextKey {
     SelectTool,
     BatchC2paRemoveDone,
     BatchC2paAddDone,
+
+    // --- Quick annotation workspace ---
+    QuickAnnotate,
+    AdvancedTools,
+    CaptureScreenshot,
+    CropTool,
+    TextTool,
+    CancelCrop,
+    QuickHint,
+    LineTool,
+    ArrowTool,
+    RectangleTool,
 }
 
 impl TextKey {
@@ -255,7 +267,7 @@ impl TextKey {
             Self::RotateRight => "向右旋轉",
             Self::RunBatch => "開始批次轉檔",
             Self::RunGif => "製作 GIF",
-            Self::SaveAsNewFile => "另存新檔",
+            Self::SaveAsNewFile => "儲存副本",
             Self::SaveConverted => "另存轉檔",
             Self::Grayscale => "灰階",
             Self::GifFrameDelay => "影格延遲",
@@ -338,6 +350,16 @@ impl TextKey {
             Self::SelectTool => "選取",
             Self::BatchC2paRemoveDone => "C2PA 批次移除完成",
             Self::BatchC2paAddDone => "C2PA 批次加入完成",
+            Self::QuickAnnotate => "快速標註",
+            Self::AdvancedTools => "進階工具",
+            Self::CaptureScreenshot => "開始截圖",
+            Self::CropTool => "裁切",
+            Self::TextTool => "文字",
+            Self::CancelCrop => "取消裁切",
+            Self::QuickHint => "快速流程：開啟／貼上圖片 → 裁切 → 加文字 → 儲存副本",
+            Self::LineTool => "線條",
+            Self::ArrowTool => "箭頭",
+            Self::RectangleTool => "框線",
         }
     }
 
@@ -416,7 +438,7 @@ impl TextKey {
             Self::RotateRight => "Rotate Right",
             Self::RunBatch => "Run Batch Convert",
             Self::RunGif => "Create GIF",
-            Self::SaveAsNewFile => "Save As",
+            Self::SaveAsNewFile => "Save Copy",
             Self::SaveConverted => "Save Converted",
             Self::Grayscale => "Grayscale",
             Self::GifFrameDelay => "Frame delay",
@@ -499,6 +521,16 @@ impl TextKey {
             Self::SelectTool => "Select",
             Self::BatchC2paRemoveDone => "C2PA batch removal complete",
             Self::BatchC2paAddDone => "C2PA batch add complete",
+            Self::QuickAnnotate => "Quick Annotate",
+            Self::AdvancedTools => "Advanced Tools",
+            Self::CaptureScreenshot => "Start Screenshot",
+            Self::CropTool => "Crop",
+            Self::TextTool => "Text",
+            Self::CancelCrop => "Cancel Crop",
+            Self::QuickHint => "Quick flow: open/paste image → crop → add text → save a copy",
+            Self::LineTool => "Line",
+            Self::ArrowTool => "Arrow",
+            Self::RectangleTool => "Rectangle",
         }
     }
 }

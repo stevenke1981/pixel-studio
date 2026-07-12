@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -15,11 +16,12 @@ use studio_core::transform::SelectionMask;
 use studio_core::{
     BatchOptions, BatchSummary, C2paAddOptions, C2paInfo, C2paManifestDraft, C2paRemovalOptions,
     ComposeDocument, ComposeLayer, ConvertOptions, ConvertResult, GifOptions, ImageInfo,
-    ImageLayer, PanoramaMode, PanoramaOptions, SupportedFormat, TextLayer, collect_supported_files,
-    inspect_c2pa, inspect_image, load_dynamic_image, process_batch_with_progress,
-    process_c2pa_add_batch_with_progress, process_c2pa_removal_batch_with_progress,
-    remove_c2pa_manifest, render_composition, save_dynamic_image, text_layer_bounds,
-    write_animated_gif, write_c2pa_manifest, write_panorama_dynamic_jpeg,
+    ImageLayer, PanoramaMode, PanoramaOptions, ShapeKind, ShapeLayer, SupportedFormat, TextLayer,
+    collect_supported_files, inspect_c2pa, inspect_image, load_dynamic_image,
+    process_batch_with_progress, process_c2pa_add_batch_with_progress,
+    process_c2pa_removal_batch_with_progress, remove_c2pa_manifest, render_composition,
+    save_dynamic_image, text_layer_bounds, write_animated_gif, write_c2pa_manifest,
+    write_panorama_dynamic_jpeg,
 };
 
 use crate::i18n::{Language, TextKey};
@@ -68,7 +70,18 @@ enum SelectionShape {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PreviewTool {
     Select,
+    Crop,
+    Text,
+    Line,
+    Arrow,
+    Rectangle,
     Hand,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Workspace {
+    Quick,
+    Advanced,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,10 +142,25 @@ enum ProjectLayer {
         opacity: f32,
         visible: bool,
     },
+    Shape {
+        name: String,
+        shape_kind: ShapeKind,
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        stroke_color: [u8; 4],
+        stroke_width: f32,
+        opacity: f32,
+        filled: bool,
+        fill_color: [u8; 4],
+        visible: bool,
+    },
 }
 
 pub struct PixelStudioApp {
     language: Language,
+    workspace: Workspace,
     pending_open: Option<PathBuf>,
     image_path: Option<PathBuf>,
     image_info: Option<ImageInfo>,
@@ -217,6 +245,7 @@ impl PixelStudioApp {
     pub fn new(initial_path: Option<PathBuf>) -> Self {
         Self {
             language: Language::ZhTw,
+            workspace: Workspace::Quick,
             pending_open: initial_path,
             image_path: None,
             image_info: None,
@@ -249,7 +278,7 @@ impl PixelStudioApp {
             fit_to_window: true,
             preview_pan: Vec2::ZERO,
             preview_tool: PreviewTool::Select,
-            output_format: SupportedFormat::Jpeg,
+            output_format: SupportedFormat::Png,
             quality: 92,
             resize_width: 1,
             resize_height: 1,
@@ -316,18 +345,32 @@ impl eframe::App for PixelStudioApp {
         egui::Panel::top("toolbar").show_inside(ui, |ui| self.toolbar(ui, &ctx));
         egui::Panel::left("metadata")
             .resizable(true)
-            .default_size(360.0)
-            .min_size(280.0)
+            .default_size(250.0)
+            .min_size(200.0)
             .show_inside(ui, |ui| self.metadata_panel(ui, &ctx));
         egui::Panel::right("actions")
             .resizable(true)
-            .default_size(380.0)
-            .min_size(320.0)
+            .default_size(300.0)
+            .min_size(240.0)
             .show_inside(ui, |ui| self.actions_panel(ui));
         egui::Panel::bottom("status").show_inside(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("{}:", self.tr(TextKey::Status)));
                 ui.label(&self.status);
+                if let Some(image) = &self.working_image {
+                    ui.separator();
+                    ui.label(format!("{} × {}", image.width(), image.height()));
+                }
+                ui.separator();
+                ui.label(format!("Zoom {:.0}%", self.zoom * 100.0));
+                if let Some(selection) = self.selection_rect {
+                    ui.separator();
+                    ui.label(format!(
+                        "Selection {:.0} × {:.0}",
+                        selection.width(),
+                        selection.height()
+                    ));
+                }
             });
         });
         egui::CentralPanel::default_margins().show_inside(ui, |ui| self.preview_panel(ui));
@@ -341,6 +384,10 @@ impl PixelStudioApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
+            if ui.button(self.tr(TextKey::CaptureScreenshot)).clicked() {
+                self.capture_screenshot(ctx);
+            }
+
             if ui.button(self.tr(TextKey::OpenImage)).clicked()
                 && let Some(path) = rfd::FileDialog::new().pick_file()
             {
@@ -354,36 +401,6 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.working_image.is_some(),
-                    egui::Button::new(self.tr(TextKey::ClearCanvas)),
-                )
-                .clicked()
-            {
-                self.clear_canvas(ctx);
-            }
-
-            if ui
-                .add_enabled(
-                    self.cleared_canvas.is_some(),
-                    egui::Button::new(self.tr(TextKey::RestoreCanvas)),
-                )
-                .clicked()
-            {
-                self.restore_canvas(ctx);
-            }
-
-            if ui.button(self.tr(TextKey::OpenFolder)).clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_folder()
-            {
-                self.open_folder(ctx, path);
-            }
-
-            if ui.button(self.tr(TextKey::OpenProject)).clicked() {
-                self.open_project(ctx);
-            }
-
-            if ui
-                .add_enabled(
-                    self.working_image.is_some(),
                     egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
                 )
                 .clicked()
@@ -391,60 +408,63 @@ impl PixelStudioApp {
                 self.save_as_new_file();
             }
 
-            ui.label(self.tr(TextKey::Project));
             if ui
                 .add_enabled(
-                    self.working_image.is_some(),
-                    egui::Button::new(self.tr(TextKey::SaveProject)),
+                    self.can_undo_image(),
+                    egui::Button::new(self.tr(TextKey::ImageUndo)),
                 )
                 .clicked()
             {
-                self.save_project();
+                self.undo_image_edit(ctx);
             }
-
             if ui
                 .add_enabled(
-                    self.previous_index().is_some(),
-                    egui::Button::new(self.tr(TextKey::Previous)),
+                    self.can_redo_image(),
+                    egui::Button::new(self.tr(TextKey::ImageRedo)),
                 )
                 .clicked()
             {
-                self.open_folder_index(ctx, self.previous_index().unwrap_or(0));
+                self.redo_image_edit(ctx);
             }
-
-            if ui
-                .add_enabled(
-                    self.next_index().is_some(),
-                    egui::Button::new("下一張 / Next"),
-                )
-                .clicked()
-            {
-                self.open_folder_index(ctx, self.next_index().unwrap_or(0));
-            }
-
-            if ui.button(self.tr(TextKey::Reload)).clicked()
-                && let Some(path) = self.image_path.clone()
-            {
-                self.open_image(ctx, path);
-            }
-
-            ui.separator();
-
-            egui::ComboBox::from_label(self.tr(TextKey::Language))
-                .selected_text(self.language.name())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.language, Language::ZhTw, Language::ZhTw.name());
-                    ui.selectable_value(&mut self.language, Language::En, Language::En.name());
-                });
 
             ui.separator();
 
             let select_label = self.tr(TextKey::SelectTool);
             let pan_label = self.tr(TextKey::PanTool);
-            ui.selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label);
-            ui.selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label);
+            let crop_label = self.tr(TextKey::CropTool);
+            let text_label = self.tr(TextKey::TextTool);
+            let line_label = self.tr(TextKey::LineTool);
+            let arrow_label = self.tr(TextKey::ArrowTool);
+            let rectangle_label = self.tr(TextKey::RectangleTool);
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label)
+                .on_hover_text("Select and move layers");
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Crop, crop_label)
+                .on_hover_text("Drag a crop area, Enter applies, Esc cancels");
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Text, text_label)
+                .on_hover_text("Click the canvas to add text");
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Line, line_label)
+                .on_hover_text("Drag to draw a line");
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Arrow, arrow_label)
+                .on_hover_text("Drag to draw an arrow");
+            ui.selectable_value(
+                &mut self.preview_tool,
+                PreviewTool::Rectangle,
+                rectangle_label,
+            )
+            .on_hover_text("Drag to draw a rectangle");
+            ui.selectable_value(&mut self.preview_tool, PreviewTool::Hand, pan_label)
+                .on_hover_text("Pan the canvas");
 
             ui.separator();
+
+            let quick_workspace_label = self.tr(TextKey::QuickAnnotate);
+            let advanced_workspace_label = self.tr(TextKey::AdvancedTools);
+            ui.selectable_value(&mut self.workspace, Workspace::Quick, quick_workspace_label);
+            ui.selectable_value(
+                &mut self.workspace,
+                Workspace::Advanced,
+                advanced_workspace_label,
+            );
 
             if ui.button(self.tr(TextKey::Fit)).clicked() {
                 self.fit_to_window = true;
@@ -464,9 +484,71 @@ impl PixelStudioApp {
                 self.zoom = (self.zoom * 1.25).clamp(0.05, 8.0);
             }
         });
+
+        egui::CollapsingHeader::new(self.tr(TextKey::AdvancedTools))
+            .default_open(self.workspace == Workspace::Advanced)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(self.tr(TextKey::Project));
+                    if ui.button(self.tr(TextKey::OpenFolder)).clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_folder()
+                    {
+                        self.open_folder(ctx, path);
+                    }
+                    if ui.button(self.tr(TextKey::OpenProject)).clicked() {
+                        self.open_project(ctx);
+                    }
+                    if ui.button(self.tr(TextKey::SaveProject)).clicked()
+                        && self.working_image.is_some()
+                    {
+                        self.save_project();
+                    }
+                    if ui.button(self.tr(TextKey::ClearCanvas)).clicked()
+                        && self.working_image.is_some()
+                    {
+                        self.clear_canvas(ctx);
+                    }
+                    if ui.button(self.tr(TextKey::RestoreCanvas)).clicked()
+                        && self.cleared_canvas.is_some()
+                    {
+                        self.restore_canvas(ctx);
+                    }
+                    if ui.button(self.tr(TextKey::Reload)).clicked()
+                        && let Some(path) = self.image_path.clone()
+                    {
+                        self.open_image(ctx, path);
+                    }
+                    if ui.button(self.tr(TextKey::Previous)).clicked()
+                        && let Some(index) = self.previous_index()
+                    {
+                        self.open_folder_index(ctx, index);
+                    }
+                    if ui.button("下一張 / Next").clicked()
+                        && let Some(index) = self.next_index()
+                    {
+                        self.open_folder_index(ctx, index);
+                    }
+                    egui::ComboBox::from_label(self.tr(TextKey::Language))
+                        .selected_text(self.language.name())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.language,
+                                Language::ZhTw,
+                                Language::ZhTw.name(),
+                            );
+                            ui.selectable_value(
+                                &mut self.language,
+                                Language::En,
+                                Language::En.name(),
+                            );
+                        });
+                });
+            });
     }
 
     fn metadata_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.quick_tool_rail(ui);
+        ui.separator();
         ui.heading(self.tr(TextKey::Image));
         ui.separator();
 
@@ -541,6 +623,52 @@ impl PixelStudioApp {
                     }
                 }
             });
+    }
+
+    fn quick_tool_rail(&mut self, ui: &mut egui::Ui) {
+        if self.workspace != Workspace::Quick {
+            return;
+        }
+        ui.label(self.tr(TextKey::QuickAnnotate));
+        ui.horizontal_wrapped(|ui| {
+            for (tool, label, hint) in [
+                (
+                    PreviewTool::Select,
+                    self.tr(TextKey::SelectTool),
+                    "Select or move a layer",
+                ),
+                (
+                    PreviewTool::Crop,
+                    self.tr(TextKey::CropTool),
+                    "Drag crop area; Enter applies; Esc cancels",
+                ),
+                (
+                    PreviewTool::Text,
+                    self.tr(TextKey::TextTool),
+                    "Click canvas to add text",
+                ),
+                (
+                    PreviewTool::Line,
+                    self.tr(TextKey::LineTool),
+                    "Drag to draw a line",
+                ),
+                (
+                    PreviewTool::Arrow,
+                    self.tr(TextKey::ArrowTool),
+                    "Drag to draw an arrow",
+                ),
+                (
+                    PreviewTool::Rectangle,
+                    self.tr(TextKey::RectangleTool),
+                    "Drag to draw a rectangle",
+                ),
+                (PreviewTool::Hand, self.tr(TextKey::PanTool), "Pan canvas"),
+            ] {
+                ui.selectable_value(&mut self.preview_tool, tool, label)
+                    .on_hover_text(hint);
+            }
+        });
+        ui.label(self.tr(TextKey::QuickHint));
     }
 
     fn c2pa_panel(&mut self, ui: &mut egui::Ui) {
@@ -745,20 +873,140 @@ impl PixelStudioApp {
     fn actions_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.tr(TextKey::Actions));
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let ctx = ui.ctx().clone();
-            self.convert_panel(ui);
-            ui.add_space(20.0);
-            self.edit_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.compose_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.panorama_panel(ui);
-            ui.add_space(20.0);
-            self.gif_panel(ui, &ctx);
-            ui.add_space(20.0);
-            self.batch_panel(ui);
+        let ctx = ui.ctx().clone();
+        if self.workspace == Workspace::Quick {
+            self.quick_panel(ui, &ctx);
+            ui.separator();
+        }
+
+        egui::CollapsingHeader::new(self.tr(TextKey::AdvancedTools))
+            .default_open(self.workspace == Workspace::Advanced)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let ctx = ui.ctx().clone();
+                    self.convert_panel(ui);
+                    ui.add_space(20.0);
+                    self.edit_panel(ui, &ctx);
+                    ui.add_space(20.0);
+                    self.compose_panel(ui, &ctx);
+                    ui.add_space(20.0);
+                    self.panorama_panel(ui);
+                    ui.add_space(20.0);
+                    self.gif_panel(ui, &ctx);
+                    ui.add_space(20.0);
+                    self.batch_panel(ui);
+                });
+            });
+    }
+
+    fn quick_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading(self.tr(TextKey::QuickAnnotate));
+        ui.label(self.tr(TextKey::QuickHint));
+
+        let has_image = self.working_image.is_some();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    has_image,
+                    egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
+                )
+                .clicked()
+            {
+                self.save_as_new_file();
+            }
+            if ui
+                .add_enabled(
+                    self.can_undo_image(),
+                    egui::Button::new(self.tr(TextKey::ImageUndo)),
+                )
+                .clicked()
+            {
+                self.undo_image_edit(ctx);
+            }
+            if ui
+                .add_enabled(
+                    self.can_redo_image(),
+                    egui::Button::new(self.tr(TextKey::ImageRedo)),
+                )
+                .clicked()
+            {
+                self.redo_image_edit(ctx);
+            }
         });
+
+        if let Some(selection) = self.selection_rect {
+            ui.group(|ui| {
+                ui.label(self.tr(TextKey::CropRectangle));
+                ui.label(format!(
+                    "X {:.0}  Y {:.0}  W {:.0}  H {:.0}",
+                    selection.min.x,
+                    selection.min.y,
+                    selection.width(),
+                    selection.height()
+                ));
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(has_image, egui::Button::new(self.tr(TextKey::ApplyCrop)))
+                        .clicked()
+                    {
+                        self.apply_selection_crop(ctx);
+                    }
+                    if ui.button(self.tr(TextKey::CancelCrop)).clicked() {
+                        self.selection_rect = None;
+                        self.selection_drag_start = None;
+                        self.preview_tool = PreviewTool::Select;
+                    }
+                });
+            });
+        }
+
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(has_image, egui::Button::new(self.tr(TextKey::AddText)))
+                .clicked()
+            {
+                self.add_text_layer(ctx);
+                self.preview_tool = PreviewTool::Select;
+            }
+            if ui
+                .add_enabled(has_image, egui::Button::new(self.tr(TextKey::Compose)))
+                .clicked()
+            {
+                self.workspace = Workspace::Advanced;
+            }
+        });
+
+        if !self.compose_layers.is_empty() {
+            egui::CollapsingHeader::new(self.tr(TextKey::Layers))
+                .default_open(true)
+                .show(ui, |ui| {
+                    for index in 0..self.compose_layers.len() {
+                        let label = format!(
+                            "{} {}",
+                            if self.compose_layers[index].is_visible() {
+                                "●"
+                            } else {
+                                "○"
+                            },
+                            self.compose_layers[index].name()
+                        );
+                        if ui
+                            .selectable_label(self.selected_layer == Some(index), label)
+                            .clicked()
+                        {
+                            self.selected_layer = Some(index);
+                        }
+                    }
+                    if self.selected_layer.is_some() {
+                        let before_edit = self.compose_layers.clone();
+                        if self.selected_layer_editor(ui) {
+                            self.push_history_snapshot(before_edit);
+                            self.update_texture(ctx);
+                        }
+                    }
+                });
+        }
     }
 
     fn convert_panel(&mut self, ui: &mut egui::Ui) {
@@ -1537,6 +1785,42 @@ impl PixelStudioApp {
                     .add(egui::Slider::new(&mut layer.opacity, 0.0..=1.0).text(opacity_label))
                     .changed();
             }
+            ComposeLayer::Shape(layer) => {
+                ui.label(position_label);
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut layer.x1).prefix("X1 "))
+                        .changed();
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut layer.y1).prefix("Y1 "))
+                        .changed();
+                });
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut layer.x2).prefix("X2 "))
+                        .changed();
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut layer.y2).prefix("Y2 "))
+                        .changed();
+                });
+                changed |= ui
+                    .add(egui::Slider::new(&mut layer.stroke_width, 1.0..=32.0).text("Width"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut layer.opacity, 0.0..=1.0).text(opacity_label))
+                    .changed();
+                ui.label("Stroke color");
+                changed |= ui
+                    .color_edit_button_srgba_unmultiplied(&mut layer.stroke_color)
+                    .changed();
+                changed |= ui.checkbox(&mut layer.filled, "Filled").changed();
+                if layer.filled {
+                    ui.label("Fill color");
+                    changed |= ui
+                        .color_edit_button_srgba_unmultiplied(&mut layer.fill_color)
+                        .changed();
+                }
+            }
         }
 
         changed
@@ -1710,6 +1994,22 @@ impl PixelStudioApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.0);
                 ui.heading("Pixel Studio");
+                ui.label(self.tr(TextKey::QuickHint));
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(self.tr(TextKey::CaptureScreenshot)).clicked() {
+                        self.capture_screenshot(ui.ctx());
+                    }
+                    if ui.button(self.tr(TextKey::PasteImage)).clicked() {
+                        self.paste_clipboard_image(ui.ctx());
+                    }
+                    if ui.button(self.tr(TextKey::OpenImage)).clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_file()
+                    {
+                        self.open_path(ui.ctx(), path);
+                    }
+                });
+                ui.add_space(8.0);
                 ui.label(self.tr(TextKey::BrowseHint));
             });
         }
@@ -1755,11 +2055,70 @@ impl PixelStudioApp {
             return;
         }
 
+        if self.preview_tool == PreviewTool::Text {
+            if response.clicked()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let image_pos = screen_to_image(pointer, image_rect, scale);
+                self.add_text_layer_at(ctx, image_pos);
+                self.preview_tool = PreviewTool::Select;
+            }
+            return;
+        }
+
+        if let Some(shape_kind) = self.shape_tool_kind() {
+            if response.drag_started()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let image_pos = screen_to_image(pointer, image_rect, scale);
+                self.selected_layer = None;
+                self.selection_drag_start = Some(image_pos);
+                self.selection_rect = Some(selection_rect_from_points(
+                    image_pos,
+                    image_pos,
+                    SelectionShape::Rectangle,
+                    self.texture_size,
+                ));
+            }
+            if response.dragged()
+                && let (Some(start), Some(pointer)) =
+                    (self.selection_drag_start, response.interact_pointer_pos())
+            {
+                let image_pos = screen_to_image(pointer, image_rect, scale);
+                self.selection_rect = Some(selection_rect_from_points(
+                    start,
+                    image_pos,
+                    SelectionShape::Rectangle,
+                    self.texture_size,
+                ));
+            }
+            if response.drag_stopped()
+                && let (Some(start), Some(pointer)) = (
+                    self.selection_drag_start.take(),
+                    response.interact_pointer_pos(),
+                )
+            {
+                let end = screen_to_image(pointer, image_rect, scale);
+                if (end - start).length_sq() > 1.0 {
+                    self.add_shape_layer(ctx, shape_kind, start, end);
+                }
+                self.selection_rect = None;
+                self.preview_tool = PreviewTool::Select;
+            }
+            return;
+        }
+
+        let crop_mode = self.preview_tool == PreviewTool::Crop;
+
         if response.drag_started()
             && let Some(pointer) = response.interact_pointer_pos()
         {
             let image_pos = screen_to_image(pointer, image_rect, scale);
-            self.selected_layer = self.hit_test_layer(image_pos);
+            self.selected_layer = if crop_mode {
+                None
+            } else {
+                self.hit_test_layer(image_pos)
+            };
             if self.selected_layer.is_some() {
                 self.drag_snapshot = Some(self.compose_layers.clone());
                 self.selection_drag_start = None;
@@ -1776,6 +2135,7 @@ impl PixelStudioApp {
         }
 
         if response.dragged()
+            && !crop_mode
             && let Some(index) = self.selected_layer
         {
             let frame_delta = response.drag_delta() / scale.max(0.01);
@@ -1786,7 +2146,7 @@ impl PixelStudioApp {
         }
 
         if response.dragged()
-            && self.selected_layer.is_none()
+            && (crop_mode || self.selected_layer.is_none())
             && let (Some(start), Some(pointer)) =
                 (self.selection_drag_start, response.interact_pointer_pos())
         {
@@ -1809,6 +2169,7 @@ impl PixelStudioApp {
         }
 
         if response.clicked()
+            && !crop_mode
             && let Some(pointer) = response.interact_pointer_pos()
         {
             let image_pos = screen_to_image(pointer, image_rect, scale);
@@ -2563,6 +2924,18 @@ impl PixelStudioApp {
         };
     }
 
+    fn apply_selection_crop(&mut self, ctx: &egui::Context) {
+        let Some(selection) = self.selection_rect else {
+            return;
+        };
+        self.crop_x = selection.min.x.floor().max(0.0) as u32;
+        self.crop_y = selection.min.y.floor().max(0.0) as u32;
+        self.crop_width = selection.width().ceil().max(1.0) as u32;
+        self.crop_height = selection.height().ceil().max(1.0) as u32;
+        self.apply_crop(ctx);
+        self.preview_tool = PreviewTool::Select;
+    }
+
     fn reset_edits(&mut self, ctx: &egui::Context) {
         if let Some(image) = self.original_image.clone() {
             self.push_image_history();
@@ -2813,19 +3186,56 @@ impl PixelStudioApp {
             return;
         }
 
-        let (undo, redo, paste, delete, duplicate, left, right, up, down) = ctx.input(|input| {
+        let (
+            undo,
+            redo,
+            paste,
+            delete,
+            duplicate,
+            save_copy,
+            save_project_shortcut,
+            apply_crop,
+            cancel_crop,
+            left,
+            right,
+            up,
+            down,
+        ) = ctx.input(|input| {
             (
                 input.modifiers.ctrl && input.key_pressed(egui::Key::Z),
                 input.modifiers.ctrl && input.key_pressed(egui::Key::Y),
                 input.modifiers.command && input.key_pressed(egui::Key::V),
                 input.key_pressed(egui::Key::Delete),
                 input.modifiers.ctrl && input.key_pressed(egui::Key::D),
+                input.modifiers.ctrl && input.modifiers.shift && input.key_pressed(egui::Key::S),
+                input.modifiers.ctrl && !input.modifiers.shift && input.key_pressed(egui::Key::S),
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
                 input.key_pressed(egui::Key::ArrowLeft),
                 input.key_pressed(egui::Key::ArrowRight),
                 input.key_pressed(egui::Key::ArrowUp),
                 input.key_pressed(egui::Key::ArrowDown),
             )
         });
+
+        if save_copy {
+            self.save_as_new_file();
+            return;
+        }
+        if save_project_shortcut && self.working_image.is_some() {
+            self.save_project();
+            return;
+        }
+        if self.preview_tool == PreviewTool::Crop && apply_crop && self.selection_rect.is_some() {
+            self.apply_selection_crop(ctx);
+            return;
+        }
+        if self.preview_tool == PreviewTool::Crop && cancel_crop {
+            self.selection_rect = None;
+            self.selection_drag_start = None;
+            self.preview_tool = PreviewTool::Select;
+            return;
+        }
 
         if undo {
             if self.can_undo() {
@@ -2992,6 +3402,66 @@ impl PixelStudioApp {
         };
     }
 
+    fn add_text_layer_at(&mut self, ctx: &egui::Context, image_pos: Pos2) {
+        self.push_history();
+        let mut layer = TextLayer {
+            name: match self.language {
+                Language::ZhTw => format!("文字 {}", self.compose_layers.len() + 1),
+                Language::En => format!("Text {}", self.compose_layers.len() + 1),
+            },
+            ..Default::default()
+        };
+        layer.x = image_pos.x.round().max(0.0) as i32;
+        layer.y = image_pos.y.round().max(0.0) as i32;
+        if let Some(image) = &self.working_image {
+            layer.font_size = (image.height() as f32 / 12.0).clamp(24.0, 96.0);
+        }
+        self.compose_layers.push(ComposeLayer::Text(layer));
+        self.selected_layer = Some(self.compose_layers.len() - 1);
+        self.update_texture(ctx);
+        self.status = match self.language {
+            Language::ZhTw => "已在畫布位置新增文字，請在右側編輯內容。".to_owned(),
+            Language::En => {
+                "Text added at the canvas position; edit its content on the right.".to_owned()
+            }
+        };
+    }
+
+    fn shape_tool_kind(&self) -> Option<ShapeKind> {
+        match self.preview_tool {
+            PreviewTool::Line => Some(ShapeKind::Line),
+            PreviewTool::Arrow => Some(ShapeKind::Arrow),
+            PreviewTool::Rectangle => Some(ShapeKind::Rectangle),
+            _ => None,
+        }
+    }
+
+    fn add_shape_layer(&mut self, ctx: &egui::Context, kind: ShapeKind, start: Pos2, end: Pos2) {
+        self.push_history();
+        let mut layer = ShapeLayer::new(
+            kind,
+            start.x.round() as i32,
+            start.y.round() as i32,
+            end.x.round() as i32,
+            end.y.round() as i32,
+        );
+        layer.name = match (self.language, kind) {
+            (Language::ZhTw, ShapeKind::Line) => format!("線條 {}", self.compose_layers.len() + 1),
+            (Language::ZhTw, ShapeKind::Arrow) => format!("箭頭 {}", self.compose_layers.len() + 1),
+            (Language::ZhTw, ShapeKind::Rectangle) => {
+                format!("框線 {}", self.compose_layers.len() + 1)
+            }
+            (Language::En, ShapeKind::Line) => format!("Line {}", self.compose_layers.len() + 1),
+            (Language::En, ShapeKind::Arrow) => format!("Arrow {}", self.compose_layers.len() + 1),
+            (Language::En, ShapeKind::Rectangle) => {
+                format!("Rectangle {}", self.compose_layers.len() + 1)
+            }
+        };
+        self.compose_layers.push(ComposeLayer::Shape(layer));
+        self.selected_layer = Some(self.compose_layers.len() - 1);
+        self.update_texture(ctx);
+    }
+
     fn add_text_watermark(&mut self, ctx: &egui::Context) {
         let Some(image) = &self.working_image else {
             return;
@@ -3077,6 +3547,44 @@ impl PixelStudioApp {
                 self.status = match self.language {
                     Language::ZhTw => format!("剪貼簿沒有可貼上的圖片：{error}"),
                     Language::En => format!("No image could be pasted from clipboard: {error}"),
+                };
+            }
+        }
+    }
+
+    fn capture_screenshot(&mut self, ctx: &egui::Context) {
+        // Hide the editor before capturing so a full-screen shot does not
+        // contain Pixel Studio itself. The provider remains platform-neutral;
+        // non-Windows builds return an actionable fallback error.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let result = crate::capture::capture_fullscreen();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+
+        match result {
+            Ok(image) => {
+                let clipboard_result = arboard::Clipboard::new().and_then(|mut clipboard| {
+                    let rgba = image.to_rgba8();
+                    clipboard.set_image(arboard::ImageData {
+                        width: rgba.width() as usize,
+                        height: rgba.height() as usize,
+                        bytes: Cow::Owned(rgba.into_raw()),
+                    })
+                });
+                self.open_clipboard_image(ctx, image);
+                if let Err(error) = clipboard_result {
+                    self.status = match self.language {
+                        Language::ZhTw => format!("截圖已載入，但無法保留到剪貼簿：{error}"),
+                        Language::En => format!(
+                            "Screenshot loaded, but it could not be copied to the clipboard: {error}"
+                        ),
+                    };
+                }
+            }
+            Err(error) => {
+                self.status = match self.language {
+                    Language::ZhTw => format!("截圖失敗：{error}"),
+                    Language::En => format!("Screenshot failed: {error}"),
                 };
             }
         }
@@ -3317,6 +3825,20 @@ impl PixelStudioApp {
                     opacity: layer.opacity,
                     visible: layer.visible,
                 }),
+                ComposeLayer::Shape(layer) => layers.push(ProjectLayer::Shape {
+                    name: layer.name.clone(),
+                    shape_kind: layer.kind,
+                    x1: layer.x1,
+                    y1: layer.y1,
+                    x2: layer.x2,
+                    y2: layer.y2,
+                    stroke_color: layer.stroke_color,
+                    stroke_width: layer.stroke_width,
+                    opacity: layer.opacity,
+                    filled: layer.filled,
+                    fill_color: layer.fill_color,
+                    visible: layer.visible,
+                }),
             }
         }
 
@@ -3379,6 +3901,33 @@ impl PixelStudioApp {
                     width,
                     height,
                     opacity,
+                    visible,
+                })),
+                ProjectLayer::Shape {
+                    name,
+                    shape_kind,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke_color,
+                    stroke_width,
+                    opacity,
+                    filled,
+                    fill_color,
+                    visible,
+                } => layers.push(ComposeLayer::Shape(ShapeLayer {
+                    name,
+                    kind: shape_kind,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke_color,
+                    stroke_width,
+                    opacity,
+                    filled,
+                    fill_color,
                     visible,
                 })),
             }
@@ -3445,6 +3994,13 @@ impl PixelStudioApp {
                 layer.x += 16;
                 layer.y += 16;
             }
+            ComposeLayer::Shape(layer) => {
+                layer.name = format!("{} copy", layer.name);
+                layer.x1 += 16;
+                layer.y1 += 16;
+                layer.x2 += 16;
+                layer.y2 += 16;
+            }
         }
         let insert_at = index + 1;
         self.compose_layers.insert(insert_at, layer);
@@ -3465,6 +4021,12 @@ impl PixelStudioApp {
             ComposeLayer::Image(layer) => {
                 layer.x += dx;
                 layer.y += dy;
+            }
+            ComposeLayer::Shape(layer) => {
+                layer.x1 += dx;
+                layer.y1 += dy;
+                layer.x2 += dx;
+                layer.y2 += dy;
             }
         }
     }
@@ -3527,6 +4089,13 @@ impl PixelStudioApp {
                 Pos2::new(layer.x as f32, layer.y as f32),
                 Vec2::new(layer.width as f32, layer.height as f32),
             ),
+            ComposeLayer::Shape(layer) => {
+                let bounds = layer.bounds();
+                Rect::from_min_size(
+                    Pos2::new(bounds.x as f32, bounds.y as f32),
+                    Vec2::new(bounds.width as f32, bounds.height as f32),
+                )
+            }
         }
     }
 
