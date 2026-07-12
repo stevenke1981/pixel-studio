@@ -1986,7 +1986,8 @@ impl PixelStudioApp {
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
-            self.handle_preview_zoom(ui.ctx(), &viewport_response, scale);
+            self.handle_middle_pan(ui.ctx(), viewport_rect, scale);
+            self.handle_preview_zoom(ui.ctx(), &viewport_response, viewport_rect, scale);
             self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
             self.paint_selection(ui, image_rect, scale);
             self.paint_selected_layer(ui, image_rect, scale);
@@ -2015,10 +2016,41 @@ impl PixelStudioApp {
         }
     }
 
+    fn handle_middle_pan(&mut self, ctx: &egui::Context, viewport_rect: Rect, current_scale: f32) {
+        let (middle_down, pointer_pos, pointer_delta) = ctx.input(|input| {
+            (
+                input.pointer.button_down(egui::PointerButton::Middle),
+                input.pointer.interact_pos(),
+                input.pointer.delta(),
+            )
+        });
+        let Some(pointer_pos) = pointer_pos else {
+            return;
+        };
+        if !middle_down || !viewport_rect.contains(pointer_pos) {
+            return;
+        }
+
+        ctx.set_cursor_icon(if pointer_delta == Vec2::ZERO {
+            egui::CursorIcon::Grab
+        } else {
+            egui::CursorIcon::Grabbing
+        });
+        if pointer_delta != Vec2::ZERO {
+            if self.fit_to_window {
+                self.zoom = current_scale;
+            }
+            self.fit_to_window = false;
+            self.preview_pan += pointer_delta;
+            ctx.request_repaint();
+        }
+    }
+
     fn handle_preview_zoom(
         &mut self,
         ctx: &egui::Context,
         response: &egui::Response,
+        viewport_rect: Rect,
         current_scale: f32,
     ) {
         if !response.hovered() {
@@ -2031,11 +2063,22 @@ impl PixelStudioApp {
         }
 
         let factor = (scroll_y / 240.0).exp().clamp(0.2, 5.0);
+        let old_zoom = if self.fit_to_window {
+            current_scale
+        } else {
+            self.zoom
+        };
+        let old_image_center = viewport_rect.center() + self.preview_pan;
         if self.fit_to_window {
             self.zoom = current_scale;
             self.fit_to_window = false;
         }
         self.zoom = (self.zoom * factor).clamp(0.05, 8.0);
+        if let Some(pointer_pos) = response.hover_pos() {
+            let image_offset = pointer_pos - old_image_center;
+            let effective_factor = self.zoom / old_zoom;
+            self.preview_pan += image_offset * (1.0 - effective_factor);
+        }
         ctx.request_repaint();
     }
 
@@ -2046,8 +2089,18 @@ impl PixelStudioApp {
         image_rect: Rect,
         scale: f32,
     ) {
+        if ctx.input(|input| {
+            input.pointer.button_down(egui::PointerButton::Middle)
+                || input.pointer.button_released(egui::PointerButton::Middle)
+        }) {
+            return;
+        }
+
         if self.preview_tool == PreviewTool::Hand {
             if response.dragged() {
+                if self.fit_to_window {
+                    self.zoom = scale;
+                }
                 self.fit_to_window = false;
                 self.preview_pan += response.drag_delta();
                 ctx.request_repaint();

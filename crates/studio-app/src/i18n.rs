@@ -207,7 +207,7 @@ impl TextKey {
             Self::Batch => "批次轉檔",
             Self::BatchRunning => "批次轉檔執行中。",
             Self::BrowseHint => {
-                "開啟圖片、資料夾、貼上剪貼簿圖片，或直接把圖檔拖放到視窗。預覽區可用滑鼠滾輪縮放。"
+                "開啟圖片、資料夾、貼上剪貼簿圖片，或直接把圖檔拖放到視窗。預覽區可用滑鼠滾輪縮放，按住中鍵可平移。"
             }
             Self::ClipboardImage => "剪貼簿圖片",
             Self::ClearCanvas => "清除畫面",
@@ -378,7 +378,7 @@ impl TextKey {
             Self::Batch => "Batch",
             Self::BatchRunning => "Batch conversion is running.",
             Self::BrowseHint => {
-                "Open an image, open a folder, paste a clipboard image, or drag files into this window. Use the mouse wheel over the preview to zoom."
+                "Open an image, open a folder, paste a clipboard image, or drag files into this window. Use the mouse wheel over the preview to zoom, or hold the middle button to pan."
             }
             Self::ClipboardImage => "Clipboard image",
             Self::ClearCanvas => "Clear Canvas",
