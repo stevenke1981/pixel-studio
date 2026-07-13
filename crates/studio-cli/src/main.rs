@@ -4,9 +4,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use studio_core::{
     BatchOptions, C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ConvertOptions,
-    GifOptions, PanoramaMode, PanoramaOptions, SupportedFormat, collect_supported_files,
-    convert_image, inspect_image, process_batch, process_c2pa_add_batch,
-    process_c2pa_removal_batch, write_animated_gif, write_panorama_jpeg,
+    GifOptions, PanoramaMode, PanoramaOptions, SupportedFormat, blur_region,
+    collect_supported_files, convert_image, crop_region, inspect_image, load_dynamic_image,
+    process_batch, process_c2pa_add_batch, process_c2pa_removal_batch, remove_c2pa_manifest,
+    save_dynamic_image, write_animated_gif, write_panorama_jpeg,
 };
 
 #[derive(Debug, Parser)]
@@ -27,6 +28,36 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         format: SupportedFormat,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+    },
+    Crop {
+        input: PathBuf,
+        output: PathBuf,
+        #[arg(long)]
+        x: u32,
+        #[arg(long)]
+        y: u32,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: u32,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+    },
+    BlurRegion {
+        input: PathBuf,
+        output: PathBuf,
+        #[arg(long)]
+        x: u32,
+        #[arg(long)]
+        y: u32,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: u32,
+        #[arg(long, default_value_t = 12.0)]
+        sigma: f32,
         #[arg(long, default_value_t = 92)]
         quality: u8,
     },
@@ -61,6 +92,10 @@ enum Command {
     C2paRemove {
         input_dir: PathBuf,
         output_dir: PathBuf,
+    },
+    C2paRemoveFile {
+        input: PathBuf,
+        output: PathBuf,
     },
     C2paAdd {
         input_dir: PathBuf,
@@ -119,6 +154,67 @@ fn main() -> Result<()> {
             println!(
                 "converted {} -> {} ({}x{}, {})",
                 result.input.display(),
+                result.output.display(),
+                result.width,
+                result.height,
+                result.format
+            );
+        }
+        Command::Crop {
+            input,
+            output,
+            x,
+            y,
+            width,
+            height,
+            quality,
+        } => {
+            let image = load_dynamic_image(&input)?;
+            let cropped = crop_region(&image, x, y, width, height)?;
+            let format = output_format(&output)?;
+            let result = save_dynamic_image(
+                &cropped,
+                &output,
+                ConvertOptions {
+                    format,
+                    quality,
+                    background: [255, 255, 255, 255],
+                },
+            )?;
+            println!(
+                "cropped {} -> {} ({}x{}, {})",
+                input.display(),
+                result.output.display(),
+                result.width,
+                result.height,
+                result.format
+            );
+        }
+        Command::BlurRegion {
+            input,
+            output,
+            x,
+            y,
+            width,
+            height,
+            sigma,
+            quality,
+        } => {
+            let image = load_dynamic_image(&input)?;
+            let blurred = blur_region(&image, x, y, width, height, sigma)?;
+            let format = output_format(&output)?;
+            let result = save_dynamic_image(
+                &blurred,
+                &output,
+                ConvertOptions {
+                    format,
+                    quality,
+                    background: [255, 255, 255, 255],
+                },
+            )?;
+            println!(
+                "blurred region in {} -> {} ({}x{}, {})",
+                input.display(),
                 result.output.display(),
                 result.width,
                 result.height,
@@ -223,6 +319,14 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Command::C2paRemoveFile { input, output } => {
+            remove_c2pa_manifest(&input, &output)?;
+            println!(
+                "removed C2PA manifest {} -> {}",
+                input.display(),
+                output.display()
+            );
+        }
         Command::C2paAdd {
             input_dir,
             output_dir,
@@ -291,4 +395,9 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn output_format(output: &std::path::Path) -> Result<SupportedFormat> {
+    SupportedFormat::from_path(output)
+        .ok_or_else(|| anyhow::anyhow!("unsupported output format: {}", output.display()))
 }

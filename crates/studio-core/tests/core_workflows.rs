@@ -39,6 +39,49 @@ fn converts_png_to_jpeg() {
 }
 
 #[test]
+fn webp_can_be_saved_loaded_and_edited() {
+    let dir = temp_dir("webp_round_trip");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("input.png");
+    let webp = dir.join("output.webp");
+    let edited = dir.join("edited.png");
+    DynamicImage::ImageRgba8(RgbaImage::new(16, 12))
+        .save(&input)
+        .unwrap();
+
+    convert_image(
+        &input,
+        &webp,
+        ConvertOptions {
+            format: SupportedFormat::Webp,
+            quality: 90,
+            background: [255, 255, 255, 255],
+        },
+    )
+    .unwrap();
+    let webp_info = inspect_image(&webp).unwrap();
+    assert_eq!(webp_info.format, SupportedFormat::Webp);
+    assert_eq!((webp_info.width, webp_info.height), (16, 12));
+
+    convert_image(
+        &webp,
+        &edited,
+        ConvertOptions {
+            format: SupportedFormat::Png,
+            quality: 90,
+            background: [255, 255, 255, 255],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        image::open(&edited).unwrap().to_rgba8().dimensions(),
+        (16, 12)
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn writes_decodable_gpano_jpeg() {
     let dir = temp_dir("writes_decodable_gpano_jpeg");
     fs::create_dir_all(&dir).unwrap();

@@ -40,3 +40,4 @@ pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
 };
+pub use transform::{blur_region, crop_region};

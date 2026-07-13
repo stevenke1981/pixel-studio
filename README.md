@@ -6,17 +6,20 @@ Rust + egui 圖片編輯與轉檔工具，由 Photo Tool 複刻並擴充進階�
 
 ### 檢視與瀏覽
 - Windows 全螢幕截圖、開啟單張圖片、資料夾瀏覽、拖放開檔、剪貼簿貼上
+- 可開啟、檢視與再次編輯 WebP，快速工作區也能直接另存 WebP 副本
 - 預覽區滑鼠滾輪縮放、符合視窗、100% 檢視
 - 檔案資訊面板
 
 ### 圖片編輯
-- 快速標註工作區：裁切、文字、線條、箭頭、框線與儲存副本
+- 快速標註工作區：截圖後可依序裁切、加入文字／線條／箭頭／框線、模糊敏感區域，再儲存副本
 - 旋轉（左 / 右 / 180°）、水平 / 垂直翻轉
 - 調整尺寸、裁切、局部選取（矩形 / 圓形）
 - 亮度、對比、飽和度、曝光、模糊、銳利化
 - 灰階、反相、**自動對比**
 - **進階濾鏡**：色相、復古、暈影、色溫、色調、色階（Posterize）
 - 編輯復原 / 重做
+
+建議流程：截圖或貼上圖片 → 拖曳選取敏感區域並套用模糊 → 加入框線／文字 → 裁切 → 儲存 PNG、JPEG 或 WebP 副本。若來源檔含有 C2PA，可直接在快速工作區另存移除 C2PA 的副本。
 
 快速標註快捷鍵：`Ctrl+S` 儲存 `.pixel-project`，`Ctrl+Shift+S` 儲存圖片副本，`Enter` 套用裁切，`Esc` 取消裁切。
 
@@ -56,8 +59,11 @@ cargo test --workspace
 ```powershell
 cargo run -p studio-cli -- info input.jpg
 cargo run -p studio-cli -- convert input.png output.jpg --format jpg --quality 90
+cargo run -p studio-cli -- crop input.png cropped.webp --x 20 --y 20 --width 800 --height 450
+cargo run -p studio-cli -- blur-region input.png private.webp --x 120 --y 80 --width 360 --height 100 --sigma 12
 cargo run -p studio-cli -- batch input-folder output-folder --format webp --quality 90
 cargo run -p studio-cli -- c2pa-remove input-folder output-folder
+cargo run -p studio-cli -- c2pa-remove-file input.jpg output-no-c2pa.jpg
 cargo run -p studio-cli -- gif input-folder output.gif --delay-ms 120
 cargo run -p studio-cli -- pano360 input.jpg output_360.jpg --mode pad --width 2048
 ```

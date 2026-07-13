@@ -904,6 +904,7 @@ impl PixelStudioApp {
         ui.label(self.tr(TextKey::QuickHint));
 
         let has_image = self.working_image.is_some();
+        let has_selection = has_image && self.selection_rect.is_some();
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
@@ -932,6 +933,67 @@ impl PixelStudioApp {
             {
                 self.redo_image_edit(ctx);
             }
+        });
+
+        ui.group(|ui| {
+            let privacy_title = self.tr(TextKey::QuickPrivacyTools);
+            let blur_hint = self.tr(TextKey::QuickBlurHint);
+            let c2pa_hint = self.tr(TextKey::QuickC2paHint);
+            let webp_hint = self.tr(TextKey::QuickWebpHint);
+            let select_label = self.tr(TextKey::SelectTool);
+            ui.strong(privacy_title);
+            ui.label(blur_hint);
+            let blur_label = self.tr(TextKey::Blur);
+            ui.add(egui::Slider::new(&mut self.blur_sigma, 2.0..=30.0).text(blur_label));
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label)
+                    .on_hover_text(blur_hint)
+                    .clicked()
+                {
+                    self.selection_shape = SelectionShape::Rectangle;
+                    self.selected_layer = None;
+                }
+                if ui
+                    .add_enabled(
+                        has_selection,
+                        egui::Button::new(self.tr(TextKey::BlurSelection)),
+                    )
+                    .on_hover_text(blur_hint)
+                    .clicked()
+                {
+                    let sigma = self.blur_sigma;
+                    self.map_scoped_working_image(ctx, |image| {
+                        studio_core::transform::blur(image, sigma)
+                    });
+                    self.selection_rect = None;
+                    self.selection_drag_start = None;
+                    self.preview_tool = PreviewTool::Select;
+                }
+
+                if ui
+                    .add_enabled(
+                        self.image_path.is_some() && self.c2pa_info.present,
+                        egui::Button::new(self.tr(TextKey::RemoveC2paQuick)),
+                    )
+                    .on_hover_text(c2pa_hint)
+                    .clicked()
+                {
+                    self.remove_c2pa_copy();
+                }
+
+                if ui
+                    .add_enabled(
+                        has_image,
+                        egui::Button::new(self.tr(TextKey::SaveWebpQuick)),
+                    )
+                    .on_hover_text(webp_hint)
+                    .clicked()
+                {
+                    self.output_format = SupportedFormat::Webp;
+                    self.save_as_new_file();
+                }
+            });
         });
 
         if let Some(selection) = self.selection_rect {
@@ -2617,9 +2679,9 @@ impl PixelStudioApp {
             return;
         };
 
-        if output.extension().is_none()
-            && let Some(extension) = source.extension()
-        {
+        // C2PA removal copies the source image bytes and strips only the
+        // manifest, so the output extension must continue to match the source.
+        if let Some(extension) = source.extension() {
             output.set_extension(extension);
         }
 

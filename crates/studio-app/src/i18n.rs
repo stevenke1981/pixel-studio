@@ -189,6 +189,13 @@ pub enum TextKey {
     LineTool,
     ArrowTool,
     RectangleTool,
+    BlurSelection,
+    RemoveC2paQuick,
+    SaveWebpQuick,
+    QuickPrivacyTools,
+    QuickBlurHint,
+    QuickC2paHint,
+    QuickWebpHint,
 }
 
 impl TextKey {
@@ -356,10 +363,19 @@ impl TextKey {
             Self::CropTool => "裁切",
             Self::TextTool => "文字",
             Self::CancelCrop => "取消裁切",
-            Self::QuickHint => "快速流程：開啟／貼上圖片 → 裁切 → 加文字 → 儲存副本",
+            Self::QuickHint => {
+                "快速流程：截圖／開啟 → 框線與文字 → 模糊敏感區域 → 裁切 → 儲存 PNG／JPEG／WebP 副本"
+            }
             Self::LineTool => "線條",
             Self::ArrowTool => "箭頭",
             Self::RectangleTool => "框線",
+            Self::BlurSelection => "模糊選取區域",
+            Self::RemoveC2paQuick => "移除 C2PA 並另存",
+            Self::SaveWebpQuick => "另存 WebP",
+            Self::QuickPrivacyTools => "隱私與輸出",
+            Self::QuickBlurHint => "先按「選取」並在圖片上拖曳敏感資料範圍，再套用區域模糊。",
+            Self::QuickC2paHint => "來源檔含有 C2PA manifest 時可用；移除後會另存副本。",
+            Self::QuickWebpHint => "直接建立 WebP 副本；「儲存副本」也可選擇 PNG 或 JPEG。",
         }
     }
 
@@ -527,10 +543,25 @@ impl TextKey {
             Self::CropTool => "Crop",
             Self::TextTool => "Text",
             Self::CancelCrop => "Cancel Crop",
-            Self::QuickHint => "Quick flow: open/paste image → crop → add text → save a copy",
+            Self::QuickHint => {
+                "Quick flow: capture/open → add shapes and text → blur private data → crop → save a PNG/JPEG/WebP copy"
+            }
             Self::LineTool => "Line",
             Self::ArrowTool => "Arrow",
             Self::RectangleTool => "Rectangle",
+            Self::BlurSelection => "Blur selected region",
+            Self::RemoveC2paQuick => "Remove C2PA and save",
+            Self::SaveWebpQuick => "Save as WebP",
+            Self::QuickPrivacyTools => "Privacy and export",
+            Self::QuickBlurHint => {
+                "Choose Select, then drag over private data before applying region blur."
+            }
+            Self::QuickC2paHint => {
+                "Available when the source contains a C2PA manifest; removal saves a copy."
+            }
+            Self::QuickWebpHint => {
+                "Create a WebP copy directly; Save Copy also offers PNG and JPEG."
+            }
         }
     }
 }

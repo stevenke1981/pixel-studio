@@ -1,5 +1,7 @@
 use image::{DynamicImage, GenericImageView};
 
+use crate::{PhotoError, Result};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionMask {
     Rectangle {
@@ -72,6 +74,50 @@ pub fn adjust_exposure(image: &DynamicImage, stops: f32) -> DynamicImage {
 
 pub fn blur(image: &DynamicImage, sigma: f32) -> DynamicImage {
     image.blur(sigma.max(0.0))
+}
+
+/// Blurs only the requested rectangle while preserving every pixel outside it.
+///
+/// The blurred pixels are sampled from the complete image so content at the
+/// selection edge is obscured as well. Invalid or empty rectangles are
+/// rejected instead of silently producing a misleading privacy edit.
+pub fn blur_region(
+    image: &DynamicImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    sigma: f32,
+) -> Result<DynamicImage> {
+    if !sigma.is_finite() || sigma <= 0.0 {
+        return Err(PhotoError::InvalidInput(
+            "blur sigma must be a positive finite number".to_string(),
+        ));
+    }
+    let (x, y, width, height) = validate_region(image, x, y, width, height)?;
+    let blurred = blur(image, sigma);
+    Ok(apply_selection_mask(
+        image,
+        &blurred,
+        SelectionMask::Rectangle {
+            x,
+            y,
+            width,
+            height,
+        },
+    ))
+}
+
+/// Returns a cropped copy of an image after validating the requested region.
+pub fn crop_region(
+    image: &DynamicImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<DynamicImage> {
+    let (x, y, width, height) = validate_region(image, x, y, width, height)?;
+    Ok(image.crop_imm(x, y, width, height))
 }
 
 pub fn sharpen(image: &DynamicImage, sigma: f32, threshold: i32) -> DynamicImage {
@@ -149,15 +195,53 @@ fn mask_contains(mask: SelectionMask, x: u32, y: u32) -> bool {
     }
 }
 
+fn validate_region(
+    image: &DynamicImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<(u32, u32, u32, u32)> {
+    if width == 0 || height == 0 {
+        return Err(PhotoError::InvalidInput(
+            "region width and height must be greater than zero".to_string(),
+        ));
+    }
+
+    let (image_width, image_height) = image.dimensions();
+    if x >= image_width || y >= image_height {
+        return Err(PhotoError::InvalidInput(format!(
+            "region origin ({x}, {y}) is outside image bounds {image_width}x{image_height}"
+        )));
+    }
+
+    let end_x = x
+        .checked_add(width)
+        .ok_or_else(|| PhotoError::InvalidInput("region horizontal bounds overflow".to_string()))?;
+    let end_y = y
+        .checked_add(height)
+        .ok_or_else(|| PhotoError::InvalidInput("region vertical bounds overflow".to_string()))?;
+    if end_x > image_width || end_y > image_height {
+        return Err(PhotoError::InvalidInput(format!(
+            "region {x},{y} {width}x{height} exceeds image bounds {image_width}x{image_height}"
+        )));
+    }
+
+    Ok((x, y, width, height))
+}
+
 fn clamp_channel(value: f32) -> u8 {
     value.round().clamp(0.0, 255.0) as u8
 }
 
 #[cfg(test)]
 mod tests {
-    use image::{DynamicImage, Rgba, RgbaImage};
+    use image::{DynamicImage, GenericImageView, Rgba, RgbaImage};
 
-    use super::{SelectionMask, adjust_exposure, adjust_saturation, apply_selection_mask, invert};
+    use super::{
+        SelectionMask, adjust_exposure, adjust_saturation, apply_selection_mask, blur_region,
+        crop_region, invert,
+    };
 
     #[test]
     fn saturation_zero_preserves_alpha() {
@@ -219,5 +303,43 @@ mod tests {
 
         assert_eq!(result.get_pixel(2, 2).0, [255, 0, 0, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn region_blur_preserves_pixels_outside_selection() {
+        let mut source = RgbaImage::new(7, 7);
+        for (x, y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = if (x + y) % 2 == 0 {
+                Rgba([255, 255, 255, 255])
+            } else {
+                Rgba([0, 0, 0, 255])
+            };
+        }
+        let image = DynamicImage::ImageRgba8(source.clone());
+        let result = blur_region(&image, 2, 2, 3, 3, 8.0).unwrap().to_rgba8();
+
+        assert_eq!(result.get_pixel(0, 0), source.get_pixel(0, 0));
+        assert_ne!(result.get_pixel(3, 3), source.get_pixel(3, 3));
+    }
+
+    #[test]
+    fn crop_region_returns_requested_dimensions() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(10, 8));
+        let result = crop_region(&image, 2, 1, 5, 4).unwrap();
+        assert_eq!(result.dimensions(), (5, 4));
+    }
+
+    #[test]
+    fn crop_region_rejects_out_of_bounds_selection() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(10, 8));
+        assert!(crop_region(&image, 8, 1, 5, 4).is_err());
+        assert!(crop_region(&image, 0, 0, 0, 4).is_err());
+    }
+
+    #[test]
+    fn region_blur_rejects_non_positive_sigma() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(10, 8));
+        assert!(blur_region(&image, 0, 0, 4, 4, 0.0).is_err());
+        assert!(blur_region(&image, 0, 0, 4, 4, f32::NAN).is_err());
     }
 }
