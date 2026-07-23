@@ -22,11 +22,14 @@ states and visual-QA gates. This is a capability decision, not a dependency pref
 
 | Template region | Pixel Studio region |
 | --- | --- |
-| Command bar | Capture, open, paste, save, undo/redo, workspace and zoom |
-| Asset rail | Focused vertical annotation tool rail |
+| Command bar | Capture, open, paste, save, clear, undo/redo, workspace and zoom |
+| Tool strip | Select, crop, text, line, arrow, rectangle and hand tools below the command row |
 | Preview | Image canvas |
 | Inspector | Quick workflow, privacy, crop, layers and advanced tools |
 | Timeline/status | Compact status bar with dimensions, zoom and selection |
+
+The former left rail is removed so the preview owns the maximum horizontal space. Image metadata,
+C2PA details and folder navigation remain available from the top `Image` menu.
 
 ## Product state
 

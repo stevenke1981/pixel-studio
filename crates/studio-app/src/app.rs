@@ -350,18 +350,6 @@ impl eframe::App for PixelStudioApp {
                     .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
             )
             .show_inside(ui, |ui| self.toolbar(ui, &ctx));
-        egui::Panel::left("tool_rail")
-            .resizable(true)
-            .default_size(190.0)
-            .min_size(164.0)
-            .max_size(280.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(crate::theme::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(12, 12))
-                    .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
-            )
-            .show_inside(ui, |ui| self.metadata_panel(ui, &ctx));
         egui::Panel::right("inspector")
             .resizable(true)
             .default_size(350.0)
@@ -460,6 +448,17 @@ impl PixelStudioApp {
             {
                 self.save_as_new_file();
             }
+            if ui
+                .add_enabled(
+                    self.working_image.is_some(),
+                    egui::Button::new(format!("×  {}", self.tr(TextKey::ClearCanvas)))
+                        .fill(crate::theme::SURFACE_ALT)
+                        .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
+                )
+                .clicked()
+            {
+                self.clear_canvas(ctx);
+            }
 
             ui.separator();
 
@@ -492,26 +491,6 @@ impl PixelStudioApp {
                 Workspace::Advanced,
                 advanced_workspace_label,
             );
-
-            ui.separator();
-
-            if ui.button(self.tr(TextKey::Fit)).clicked() {
-                self.fit_to_window = true;
-                self.preview_pan = Vec2::ZERO;
-            }
-            if ui.button("100%").clicked() {
-                self.fit_to_window = false;
-                self.zoom = 1.0;
-                self.preview_pan = Vec2::ZERO;
-            }
-            if ui.button(self.tr(TextKey::ZoomOut)).clicked() {
-                self.fit_to_window = false;
-                self.zoom = (self.zoom / 1.25).clamp(0.05, 8.0);
-            }
-            if ui.button(self.tr(TextKey::ZoomIn)).clicked() {
-                self.fit_to_window = false;
-                self.zoom = (self.zoom * 1.25).clamp(0.05, 8.0);
-            }
 
             ui.menu_button(self.tr(TextKey::Project), |ui| {
                 ui.set_min_width(210.0);
@@ -594,12 +573,12 @@ impl PixelStudioApp {
                     });
             });
         });
+
+        ui.add_space(4.0);
+        self.quick_tool_bar(ui, ctx);
     }
 
     fn metadata_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        self.quick_tool_rail(ui);
-        ui.add_space(10.0);
-
         egui::CollapsingHeader::new(self.tr(TextKey::Image))
             .default_open(false)
             .show(ui, |ui| match &self.image_info {
@@ -673,14 +652,7 @@ impl PixelStudioApp {
         });
     }
 
-    fn quick_tool_rail(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            egui::RichText::new(self.tr(TextKey::QuickAnnotate))
-                .strong()
-                .color(crate::theme::MUTED_TEXT),
-        );
-        ui.add_space(4.0);
-
+    fn quick_tool_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tools = [
             (
                 PreviewTool::Select,
@@ -726,43 +698,79 @@ impl PixelStudioApp {
             ),
         ];
 
-        for (tool, shortcut, label, hint) in tools {
-            let selected = self.preview_tool == tool;
-            let text = egui::RichText::new(format!("{shortcut}   {label}"))
-                .color(if selected {
-                    crate::theme::PRIMARY_DARK
-                } else {
-                    crate::theme::TEXT
-                })
-                .strong();
-            if ui
-                .add_sized(
-                    [ui.available_width(), 42.0],
-                    egui::Button::new(text)
-                        .selected(selected)
-                        .fill(if selected {
-                            crate::theme::ACCENT
-                        } else {
-                            crate::theme::SURFACE_ALT
-                        })
-                        .stroke(Stroke::new(
-                            if selected { 1.5_f32 } else { 1.0_f32 },
-                            if selected {
-                                crate::theme::PRIMARY
-                            } else {
-                                crate::theme::BORDER
-                            },
-                        )),
-                )
-                .on_hover_text(hint)
-                .clicked()
-            {
-                self.preview_tool = tool;
-            }
-        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                egui::RichText::new(self.tr(TextKey::QuickAnnotate))
+                    .strong()
+                    .color(crate::theme::MUTED_TEXT),
+            );
+            ui.separator();
 
-        ui.add_space(8.0);
-        ui.colored_label(crate::theme::MUTED_TEXT, self.tr(TextKey::QuickHint));
+            for (tool, shortcut, label, hint) in tools {
+                let selected = self.preview_tool == tool;
+                let text = egui::RichText::new(format!("{shortcut}  {label}"))
+                    .color(if selected {
+                        crate::theme::PRIMARY_DARK
+                    } else {
+                        crate::theme::TEXT
+                    })
+                    .strong();
+                if ui
+                    .add_sized(
+                        [96.0, 38.0],
+                        egui::Button::new(text)
+                            .selected(selected)
+                            .fill(if selected {
+                                crate::theme::ACCENT
+                            } else {
+                                crate::theme::SURFACE_ALT
+                            })
+                            .stroke(Stroke::new(
+                                if selected { 1.5_f32 } else { 1.0_f32 },
+                                if selected {
+                                    crate::theme::PRIMARY
+                                } else {
+                                    crate::theme::BORDER
+                                },
+                            )),
+                    )
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    self.preview_tool = tool;
+                }
+            }
+
+            ui.separator();
+            ui.menu_button(format!("ⓘ  {}", self.tr(TextKey::Image)), |ui| {
+                ui.set_min_width(340.0);
+                ui.set_max_width(420.0);
+                self.metadata_panel(ui, ctx);
+            });
+
+            ui.separator();
+            ui.menu_button(format!("{:.0}%  ▾", self.zoom * 100.0), |ui| {
+                if ui.button(self.tr(TextKey::Fit)).clicked() {
+                    self.fit_to_window = true;
+                    self.preview_pan = Vec2::ZERO;
+                    ui.close();
+                }
+                if ui.button(self.tr(TextKey::ZoomOut)).clicked() {
+                    self.fit_to_window = false;
+                    self.zoom = (self.zoom / 1.25).clamp(0.05, 8.0);
+                }
+                if ui.button(self.tr(TextKey::ZoomIn)).clicked() {
+                    self.fit_to_window = false;
+                    self.zoom = (self.zoom * 1.25).clamp(0.05, 8.0);
+                }
+                if ui.button("100%").clicked() {
+                    self.fit_to_window = false;
+                    self.zoom = 1.0;
+                    self.preview_pan = Vec2::ZERO;
+                    ui.close();
+                }
+            });
+        });
     }
 
     fn c2pa_panel(&mut self, ui: &mut egui::Ui) {

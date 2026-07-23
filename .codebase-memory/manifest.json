@@ -1,0 +1,10 @@
+{
+  "bytes_compressed": 207361,
+  "bytes_raw": 1261568,
+  "exported_at": 1784805478,
+  "files": 24,
+  "format": "sqlite-zstd",
+  "project": "cbm+cbrlm+pixel-studio",
+  "symbols": 425,
+  "version": "0.1.0"
+}

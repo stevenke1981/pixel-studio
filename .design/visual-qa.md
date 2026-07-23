@@ -9,32 +9,36 @@ Design reference: AcmeUI-Native `media-studio` + `focused-productivity` light re
 ## Evidence
 
 - Ran the release executable as a real Windows desktop application.
-- Inspected the empty state and loaded a real 1550 × 838 PNG through the executable's
+- Inspected the empty state and loaded a real 1194 × 758 PNG through the executable's
   initial-path flow.
+- Confirmed the former left rail is absent and the canvas starts at the left workspace edge.
+- Confirmed all seven annotation tools, image menu and zoom menu fit in the second top row at
+  1280 × 720 without wrapping to a third row.
 - Inspected the loaded canvas, enabled save/WebP/text/layer actions and disabled-state contrast.
-- Pressed `R` and visually confirmed the rectangle tool changed to pale-blue fill, blue border and
-  blue text.
-- Set the native window to 1280 × 720 and read the Windows accessibility tree to confirm capture,
-  all seven tools, blur, remove-C2PA, WebP and save actions remain present.
+- Invoked the new top-row Clear Canvas button through Windows UI Automation and confirmed the
+  status `已清除畫面，可按「恢復畫面」取回。`.
+- Invoked Restore Canvas from the Project menu and confirmed the original image and
+  `已恢復清除前畫面。` status returned.
 - Checked WCAG contrast ratios: body text 17.84:1, muted text 7.83:1, white-on-primary 5.38:1 and
   selected-tool text 6.34:1.
 
-The Computer Use screenshot backend reported `SetIsBorderRequired failed (0x80004002)` on this
-machine, so the documented OS screenshot fallback was used. The fallback has a known high-DPI
-window-crop mismatch, so screenshot inspection and the complete accessibility tree were used
-together. No black or occluded capture was accepted as evidence.
+The Computer Use backend reported `GetCursorPos failed: Access denied` on this machine. The
+documented OS fallback was attempted, then Win32 `PrintWindow` was used when the standard helper
+also encountered an invalid desktop handle. Windows UI Automation supplied the functional
+interaction evidence. No black or occluded capture was accepted.
 
 ## Gate review
 
 | Gate | Result | Notes |
 | --- | --- | --- |
-| Hierarchy | Pass | White panels, high-contrast borders and a light canvas clearly separate regions. |
-| Primary journey | Pass | Blue capture action leads; open, paste and save stay in the command bar. |
-| Tool discoverability | Pass | Full labels plus V/C/T/L/A/R/H shortcuts; selected state is unambiguous. |
+| Hierarchy | Pass | Two compact top rows, the canvas, inspector and status bar are clearly separated. |
+| Primary journey | Pass | Capture, open, paste, save and reversible clear stay in the command bar. |
+| Tool discoverability | Pass | Full labels plus V/C/T/L/A/R/H shortcuts remain visible above the canvas. |
+| Canvas space | Pass | Removing the 190 px left rail materially increases preview width. |
 | Privacy workflow | Pass | Blur, remove C2PA and WebP are separate full-width inspector buttons. |
 | Empty state | Pass | One bright launch surface provides capture, open and paste. |
 | Loaded state | Pass | Image preview is centered; relevant editing and export controls enable. |
-| Window sizing | Pass | Major controls remain in the UI Automation tree at 1280 × 720. |
+| Window sizing | Pass | Both top rows fit at 1280 × 720 without adding a third row. |
 | Contrast | Pass | All measured core text/action combinations exceed WCAG AA. |
 | Localization | Pass | Existing Traditional Chinese and English strings remain in use. |
 | Accessibility | Pass | Windows UI Automation exposes major actions and disabled states. |
@@ -45,9 +49,9 @@ together. No black or occluded capture was accepted as evidence.
 - Interaction clarity: 20/20
 - Visual consistency: 19/20
 - Workflow fidelity: 20/20
-- Responsive/high-DPI behavior: 16/20
+- Responsive/high-DPI behavior: 18/20
 
-Total: **94/100**
+Total: **96/100**
 
 The default product appearance is intentionally light-only because the requested direction is a
 bright workspace. A dark appearance is not exposed in this redesign. The advanced workspace

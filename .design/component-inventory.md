@@ -2,8 +2,9 @@
 
 | Component | Responsibility | States |
 | --- | --- | --- |
-| Command bar | Capture/open/paste/save, undo/redo, workspace, zoom | enabled, disabled, selected |
-| Tool rail | Select, crop, text, line, arrow, rectangle, hand | idle, selected, hover, focus |
+| Command bar | Capture/open/paste/save/clear, undo/redo, workspace, zoom | enabled, disabled, selected |
+| Tool strip | Select, crop, text, line, arrow, rectangle, hand | idle, selected, hover, focus |
+| Image menu | Metadata, C2PA details and folder navigation | closed, open, empty, loaded |
 | Canvas | Empty-state launch actions or editable image | empty, loaded, selecting, panning |
 | Inspector | Quick workflow, privacy/export, crop and layers | no-image, image, selection, layer |
 | Privacy group | Select region, blur, remove C2PA, export WebP | disabled, ready, selected |
