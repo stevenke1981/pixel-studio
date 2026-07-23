@@ -364,8 +364,8 @@ impl eframe::App for PixelStudioApp {
             .show_inside(ui, |ui| self.metadata_panel(ui, &ctx));
         egui::Panel::right("inspector")
             .resizable(true)
-            .default_size(330.0)
-            .min_size(280.0)
+            .default_size(350.0)
+            .min_size(310.0)
             .max_size(480.0)
             .frame(
                 egui::Frame::new()
@@ -427,27 +427,34 @@ impl PixelStudioApp {
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new(self.tr(TextKey::CaptureScreenshot)).strong(),
+                        egui::RichText::new(format!("▣  {}", self.tr(TextKey::CaptureScreenshot)))
+                            .strong()
+                            .color(crate::theme::PRIMARY_TEXT),
                     )
-                    .fill(crate::theme::PRIMARY_DARK)
-                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY)),
+                    .fill(crate::theme::PRIMARY)
+                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY_DARK)),
                 )
                 .clicked()
             {
                 self.capture_screenshot(ctx);
             }
-            if ui.button(self.tr(TextKey::OpenImage)).clicked()
+            if ui
+                .button(format!("▢  {}", self.tr(TextKey::OpenImage)))
+                .clicked()
                 && let Some(path) = rfd::FileDialog::new().pick_file()
             {
                 self.open_path(ctx, path);
             }
-            if ui.button(self.tr(TextKey::PasteImage)).clicked() {
+            if ui
+                .button(format!("▤  {}", self.tr(TextKey::PasteImage)))
+                .clicked()
+            {
                 self.paste_clipboard_image(ctx);
             }
             if ui
                 .add_enabled(
                     self.working_image.is_some(),
-                    egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
+                    egui::Button::new(format!("↓  {}", self.tr(TextKey::SaveAsNewFile))),
                 )
                 .clicked()
             {
@@ -459,7 +466,7 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.can_undo_image(),
-                    egui::Button::new(self.tr(TextKey::ImageUndo)),
+                    egui::Button::new(format!("↶  {}", self.tr(TextKey::ImageUndo))),
                 )
                 .clicked()
             {
@@ -468,7 +475,7 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.can_redo_image(),
-                    egui::Button::new(self.tr(TextKey::ImageRedo)),
+                    egui::Button::new(format!("↷  {}", self.tr(TextKey::ImageRedo))),
                 )
                 .clicked()
             {
@@ -723,21 +730,29 @@ impl PixelStudioApp {
             let selected = self.preview_tool == tool;
             let text = egui::RichText::new(format!("{shortcut}   {label}"))
                 .color(if selected {
-                    crate::theme::TEXT
+                    crate::theme::PRIMARY_DARK
                 } else {
-                    crate::theme::MUTED_TEXT
+                    crate::theme::TEXT
                 })
                 .strong();
             if ui
                 .add_sized(
-                    [ui.available_width(), 36.0],
+                    [ui.available_width(), 42.0],
                     egui::Button::new(text)
                         .selected(selected)
                         .fill(if selected {
-                            crate::theme::PRIMARY_DARK
+                            crate::theme::ACCENT
                         } else {
                             crate::theme::SURFACE_ALT
-                        }),
+                        })
+                        .stroke(Stroke::new(
+                            if selected { 1.5_f32 } else { 1.0_f32 },
+                            if selected {
+                                crate::theme::PRIMARY
+                            } else {
+                                crate::theme::BORDER
+                            },
+                        )),
                 )
                 .on_hover_text(hint)
                 .clicked()
@@ -1017,7 +1032,7 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     has_image,
-                    egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
+                    egui::Button::new(format!("↓  {}", self.tr(TextKey::SaveAsNewFile))),
                 )
                 .clicked()
             {
@@ -1026,7 +1041,7 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.can_undo_image(),
-                    egui::Button::new(self.tr(TextKey::ImageUndo)),
+                    egui::Button::new(format!("↶  {}", self.tr(TextKey::ImageUndo))),
                 )
                 .clicked()
             {
@@ -1035,7 +1050,7 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.can_redo_image(),
-                    egui::Button::new(self.tr(TextKey::ImageRedo)),
+                    egui::Button::new(format!("↷  {}", self.tr(TextKey::ImageRedo))),
                 )
                 .clicked()
             {
@@ -1047,6 +1062,7 @@ impl PixelStudioApp {
             .fill(crate::theme::SURFACE_ALT)
             .inner_margin(egui::Margin::same(12))
             .corner_radius(6)
+            .stroke(Stroke::new(1.0_f32, crate::theme::BORDER))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let privacy_title = self.tr(TextKey::QuickPrivacyTools);
@@ -1058,61 +1074,73 @@ impl PixelStudioApp {
                 ui.label(blur_hint);
                 let blur_label = self.tr(TextKey::Blur);
                 ui.add(egui::Slider::new(&mut self.blur_sigma, 2.0..=30.0).text(blur_label));
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .selectable_value(&mut self.preview_tool, PreviewTool::Select, select_label)
-                        .on_hover_text(blur_hint)
-                        .clicked()
-                    {
-                        self.selection_shape = SelectionShape::Rectangle;
-                        self.selected_layer = None;
-                    }
-                    if ui
-                        .add_enabled(
-                            has_selection,
-                            egui::Button::new(self.tr(TextKey::BlurSelection)),
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 40.0],
+                        egui::Button::new(format!("▢  {select_label}")),
+                    )
+                    .on_hover_text(blur_hint)
+                    .clicked()
+                {
+                    self.preview_tool = PreviewTool::Select;
+                    self.selection_shape = SelectionShape::Rectangle;
+                    self.selected_layer = None;
+                }
+                if ui
+                    .add_enabled_ui(has_selection, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), 40.0],
+                            egui::Button::new(format!("▦  {}", self.tr(TextKey::BlurSelection))),
                         )
-                        .on_hover_text(blur_hint)
-                        .clicked()
-                    {
-                        let sigma = self.blur_sigma;
-                        self.map_scoped_working_image(ctx, |image| {
-                            studio_core::transform::blur(image, sigma)
-                        });
-                        self.selection_rect = None;
-                        self.selection_drag_start = None;
-                        self.preview_tool = PreviewTool::Select;
-                    }
+                    })
+                    .inner
+                    .on_hover_text(blur_hint)
+                    .clicked()
+                {
+                    let sigma = self.blur_sigma;
+                    self.map_scoped_working_image(ctx, |image| {
+                        studio_core::transform::blur(image, sigma)
+                    });
+                    self.selection_rect = None;
+                    self.selection_drag_start = None;
+                    self.preview_tool = PreviewTool::Select;
+                }
 
-                    if ui
-                        .add_enabled(
-                            self.image_path.is_some() && self.c2pa_info.present,
-                            egui::Button::new(self.tr(TextKey::RemoveC2paQuick)),
+                ui.separator();
+                if ui
+                    .add_enabled_ui(self.image_path.is_some() && self.c2pa_info.present, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), 40.0],
+                            egui::Button::new(format!("⌫  {}", self.tr(TextKey::RemoveC2paQuick))),
                         )
-                        .on_hover_text(c2pa_hint)
-                        .clicked()
-                    {
-                        self.remove_c2pa_copy();
-                    }
+                    })
+                    .inner
+                    .on_hover_text(c2pa_hint)
+                    .clicked()
+                {
+                    self.remove_c2pa_copy();
+                }
 
-                    if ui
-                        .add_enabled(
-                            has_image,
-                            egui::Button::new(self.tr(TextKey::SaveWebpQuick)),
+                if ui
+                    .add_enabled_ui(has_image, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), 40.0],
+                            egui::Button::new(format!("↓  {}", self.tr(TextKey::SaveWebpQuick))),
                         )
-                        .on_hover_text(webp_hint)
-                        .clicked()
-                    {
-                        self.output_format = SupportedFormat::Webp;
-                        self.save_as_new_file();
-                    }
-                });
+                    })
+                    .inner
+                    .on_hover_text(webp_hint)
+                    .clicked()
+                {
+                    self.output_format = SupportedFormat::Webp;
+                    self.save_as_new_file();
+                }
             });
 
         if let Some(selection) = self.selection_rect {
             ui.add_space(8.0);
             egui::Frame::new()
-                .fill(crate::theme::PRIMARY_DARK)
+                .fill(crate::theme::ACCENT)
                 .inner_margin(egui::Margin::same(12))
                 .corner_radius(6)
                 .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY))
@@ -1143,21 +1171,31 @@ impl PixelStudioApp {
         }
 
         ui.separator();
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(has_image, egui::Button::new(self.tr(TextKey::AddText)))
-                .clicked()
-            {
-                self.add_text_layer(ctx);
-                self.preview_tool = PreviewTool::Select;
-            }
-            if ui
-                .add_enabled(has_image, egui::Button::new(self.tr(TextKey::Compose)))
-                .clicked()
-            {
-                self.workspace = Workspace::Advanced;
-            }
-        });
+        if ui
+            .add_enabled_ui(has_image, |ui| {
+                ui.add_sized(
+                    [ui.available_width(), 40.0],
+                    egui::Button::new(format!("T  {}", self.tr(TextKey::AddText))),
+                )
+            })
+            .inner
+            .clicked()
+        {
+            self.add_text_layer(ctx);
+            self.preview_tool = PreviewTool::Select;
+        }
+        if ui
+            .add_enabled_ui(has_image, |ui| {
+                ui.add_sized(
+                    [ui.available_width(), 40.0],
+                    egui::Button::new(format!("＋  {}", self.tr(TextKey::Compose))),
+                )
+            })
+            .inner
+            .clicked()
+        {
+            self.workspace = Workspace::Advanced;
+        }
 
         if !self.compose_layers.is_empty() {
             egui::CollapsingHeader::new(self.tr(TextKey::Layers))
@@ -2195,12 +2233,16 @@ impl PixelStudioApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        egui::RichText::new(self.tr(TextKey::CaptureScreenshot))
-                                            .strong(),
+                                        egui::RichText::new(format!(
+                                            "▣  {}",
+                                            self.tr(TextKey::CaptureScreenshot)
+                                        ))
+                                        .strong()
+                                        .color(crate::theme::PRIMARY_TEXT),
                                     )
                                     .min_size(Vec2::new(220.0, 42.0))
-                                    .fill(crate::theme::PRIMARY_DARK)
-                                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY)),
+                                    .fill(crate::theme::PRIMARY)
+                                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY_DARK)),
                                 )
                                 .clicked()
                             {

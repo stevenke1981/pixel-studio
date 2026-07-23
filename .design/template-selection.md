@@ -2,12 +2,21 @@
 
 - Mode: redesign
 - Reference template: `media-studio`
-- Visual recipe: `studio-neutral`
-- Runtime decision: keep the existing Rust/egui application.
+- Visual recipe: `focused-productivity` (bright)
+- Target platform: Windows desktop
+- Runtime route: AcmeUI-Native design architecture mapped to the existing Rust UI runtime
 
-The AcmeUI media-studio template is used as an information-architecture reference only.
-Pixel Studio is not an AcmeUI-Native application, so AcmeUI `WidgetNode`, shell, and theme-pack
-APIs are intentionally not introduced.
+## Runtime decision
+
+AcmeUI-Native was evaluated from the official repository at commit
+`b1f12e6447b6a5ecb4520ba42c49ba1cdea2430b`. Its current desktop `ImageView` is a placeholder
+and `acme-core::DrawCommand` exposes quads and text but no image texture command. Moving Pixel
+Studio directly to that runtime now would remove the real image canvas and clipboard-image
+workflow.
+
+The redesign therefore follows the skill's supported “other Rust UI stack” route: preserve the
+working editor runtime while applying AcmeUI's media-studio regions, semantic tokens, explicit
+states and visual-QA gates. This is a capability decision, not a dependency preference.
 
 ## Region mapping
 
