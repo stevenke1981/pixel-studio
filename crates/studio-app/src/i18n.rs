@@ -323,7 +323,7 @@ impl TextKey {
             Self::Undo => "復原",
             Self::Redo => "重做",
             Self::KeyboardHint => {
-                "提示：Ctrl+V 貼上剪貼簿圖片；可在畫布拖曳圖層；Delete 刪除；方向鍵微調。"
+                "提示：V/C/T/L/A/R/H 切換工具；Ctrl+V 貼上；Delete 刪除；方向鍵微調。"
             }
             Self::MoveUp => "上移",
             Self::MoveDown => "下移",
@@ -503,7 +503,7 @@ impl TextKey {
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::KeyboardHint => {
-                "Tip: Ctrl+V pastes a clipboard image; drag layers on canvas; Delete removes; arrow keys nudge."
+                "Tip: V/C/T/L/A/R/H switch tools; Ctrl+V pastes; Delete removes; arrow keys nudge."
             }
             Self::MoveUp => "Move Up",
             Self::MoveDown => "Move Down",

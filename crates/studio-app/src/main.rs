@@ -4,6 +4,7 @@ mod app;
 pub mod capture;
 mod fonts;
 mod i18n;
+mod theme;
 
 use anyhow::Result;
 
@@ -12,8 +13,8 @@ fn main() -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Pixel Studio 像素工作室")
-            .with_inner_size([1440.0, 960.0])
-            .with_min_inner_size([1100.0, 760.0]),
+            .with_inner_size([1180.0, 720.0])
+            .with_min_inner_size([960.0, 640.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -21,6 +22,7 @@ fn main() -> Result<()> {
         options,
         Box::new(|creation_context| {
             fonts::configure_fonts(&creation_context.egui_ctx);
+            theme::configure(&creation_context.egui_ctx);
             Ok(Box::new(app::PixelStudioApp::new(initial_path)))
         }),
     )
