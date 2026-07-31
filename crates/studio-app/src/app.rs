@@ -239,6 +239,7 @@ pub struct PixelStudioApp {
     batch_completed: usize,
     batch_total: usize,
     status: String,
+    pending_excluding_capture: Option<Receiver<anyhow::Result<DynamicImage>>>,
 }
 
 impl PixelStudioApp {
@@ -324,6 +325,7 @@ impl PixelStudioApp {
             batch_completed: 0,
             batch_total: 0,
             status: "請開啟圖片或資料夾。".to_owned(),
+            pending_excluding_capture: None,
         }
     }
 }
@@ -337,6 +339,7 @@ impl Default for PixelStudioApp {
 impl eframe::App for PixelStudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_batch(ui.ctx());
+        self.poll_excluding_window_capture(ui.ctx());
         self.open_pending_path(ui.ctx());
         self.open_dropped_files(ui.ctx());
         self.handle_keyboard_shortcuts(ui.ctx());
@@ -425,6 +428,24 @@ impl PixelStudioApp {
                 .clicked()
             {
                 self.capture_screenshot(ctx);
+            }
+            if ui
+                .add_enabled(
+                    self.pending_excluding_capture.is_none(),
+                    egui::Button::new(
+                        egui::RichText::new(format!(
+                            "▦  {}",
+                            self.tr(TextKey::CaptureScreenshotExcludingWindow)
+                        ))
+                        .strong()
+                        .color(crate::theme::PRIMARY_TEXT),
+                    )
+                    .fill(crate::theme::PRIMARY)
+                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY_DARK)),
+                )
+                .clicked()
+            {
+                self.start_excluding_window_capture(ctx);
             }
             if ui
                 .button(format!("▢  {}", self.tr(TextKey::OpenImage)))
@@ -3901,7 +3922,59 @@ impl PixelStudioApp {
         std::thread::sleep(std::time::Duration::from_millis(150));
         let result = crate::capture::capture_fullscreen();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        self.finish_screenshot(ctx, result);
+    }
 
+    /// Start a full-screen capture that excludes the Pixel Studio window.
+    ///
+    /// Unlike [`Self::capture_screenshot`], the hide command is given time to
+    /// take effect: the capture runs on a background thread while the main
+    /// event loop stays free to process the queued visibility command, so the
+    /// resulting image cannot contain the editor itself. The result is applied
+    /// from [`Self::poll_excluding_window_capture`] on the next frame.
+    fn start_excluding_window_capture(&mut self, ctx: &egui::Context) {
+        if self.pending_excluding_capture.is_some() {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        let (sender, receiver) = mpsc::channel();
+        self.pending_excluding_capture = Some(receiver);
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(250));
+            let result = crate::capture::capture_fullscreen();
+            let _ = sender.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Apply a pending excluding capture result once the background thread has
+    /// finished; restores the editor window and reuses the normal flow.
+    fn poll_excluding_window_capture(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = self.pending_excluding_capture.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.pending_excluding_capture = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.finish_screenshot(ctx, result);
+            }
+            Err(mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending_excluding_capture = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.status = match self.language {
+                    Language::ZhTw => "截圖已取消。".to_owned(),
+                    Language::En => "Screenshot cancelled.".to_owned(),
+                };
+            }
+        }
+    }
+
+    /// Shared tail of every screenshot flow: load the image into the canvas,
+    /// copy it to the clipboard, and report failures through the status bar.
+    fn finish_screenshot(&mut self, ctx: &egui::Context, result: anyhow::Result<DynamicImage>) {
         match result {
             Ok(image) => {
                 let clipboard_result = arboard::Clipboard::new().and_then(|mut clipboard| {
