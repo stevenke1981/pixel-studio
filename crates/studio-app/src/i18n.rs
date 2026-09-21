@@ -21,7 +21,7 @@ impl Language {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextKey {
     Actions,
     ApplyCrop,
@@ -197,6 +197,102 @@ pub enum TextKey {
     QuickBlurHint,
     QuickC2paHint,
     QuickWebpHint,
+
+    // --- M2: App Title & Modes ---
+    AppTitle,
+    ModeViewer,
+    ModePaint,
+    ModeBatch,
+    ModeTagViewer,
+    ModeTagPaint,
+    ModeTagBatch,
+    StatusModeViewer,
+    StatusModePaint,
+    StatusModeBatch,
+
+    // --- M2: Menu Items & Theme ---
+    MenuFile,
+    MenuEdit,
+    MenuImage,
+    MenuFilters,
+    MenuAdvancedFilters,
+    MenuC2pa,
+    MenuLanguage,
+    MenuThemeLight,
+    MenuThemeDark,
+    ThemeLight,
+    ThemeDark,
+
+    // --- M2: Common Actions & Canvas Control ---
+    NewCanvas,
+    ActionScreenshot,
+    StartScreenshot,
+    ActionPaste,
+    PasteImageAction,
+    ActionCopyCanvas,
+    CopyCanvasAction,
+    ResizeCanvas,
+    CopyCanvasSuccess,
+    SaveCopySuccess,
+
+    // --- M2: Paint Tools (14 tools) ---
+    ToolSelect,
+    ToolPencil,
+    ToolBrush,
+    ToolHighlighter,
+    ToolAirbrush,
+    ToolCalligraphy,
+    ToolEraser,
+    ToolFloodFill,
+    ToolColorPicker,
+    ToolEyedropper,
+    ToolText,
+    ToolMosaic,
+    ToolCrop,
+    ToolHand,
+    ToolShapes,
+
+    // --- M2: Ribbon Options & Palette ---
+    RibbonStrokeThickness,
+    StrokeWidth,
+    RibbonColor1,
+    Color1Foreground,
+    RibbonColor2,
+    Color2Background,
+    RibbonCustomColor,
+    CustomColor,
+
+    // --- M2: Inspector Tabs ---
+    TabProperties,
+    TabLayers,
+    TabHistory,
+    TabFilters,
+    TabInfo,
+    TabC2pa,
+
+    // --- M2: Properties Panel ---
+    PropToolSettings,
+    ToolPropsAndQuickActions,
+    BrushSettings,
+    PropBrushRadius,
+    BrushRadiusPx,
+    PropQuickExport,
+    QuickExportAndConvert,
+    PropExportFormat,
+    FormatLabel,
+    PropSaveCopy,
+    SaveCopy,
+
+    // --- M2: Status Bar ---
+    StatusReadyPrompt,
+    StatusReadyPaint,
+    StatusCoordinates,
+    CoordinatesLabel,
+    StatusPixelColor,
+    StatusCanvasSize,
+    CanvasSizeLabel,
+    StatusZoom,
+    ZoomLabel,
 }
 
 impl TextKey {
@@ -378,6 +474,106 @@ impl TextKey {
             Self::QuickBlurHint => "先按「選取」並在圖片上拖曳敏感資料範圍，再套用區域模糊。",
             Self::QuickC2paHint => "來源檔含有 C2PA manifest 時可用；移除後會另存副本。",
             Self::QuickWebpHint => "直接建立 WebP 副本；「儲存副本」也可選擇 PNG 或 JPEG。",
+
+            // --- M2: App Title & Modes ---
+            Self::AppTitle => "Pixel Paint & Viewer 像素畫家與圖片檢視器",
+            Self::ModeViewer => "🖼️ 圖片檢視模式",
+            Self::ModePaint => "🎨 小畫家繪圖模式",
+            Self::ModeBatch => "⚡ 批次轉檔",
+            Self::ModeTagViewer => "【圖片檢視模式】",
+            Self::ModeTagPaint => "【小畫家繪圖模式】",
+            Self::ModeTagBatch => "【批次轉檔模式】",
+            Self::StatusModeViewer => "【圖片檢視模式】",
+            Self::StatusModePaint => "【小畫家繪圖模式】",
+            Self::StatusModeBatch => "【批次轉檔模式】",
+
+            // --- M2: Menu Items & Theme ---
+            Self::MenuFile => "檔案",
+            Self::MenuEdit => "編輯",
+            Self::MenuImage => "圖片",
+            Self::MenuFilters => "進階濾鏡",
+            Self::MenuAdvancedFilters => "進階濾鏡",
+            Self::MenuC2pa => "🌐 C2PA 憑證",
+            Self::MenuLanguage => "語言",
+            Self::MenuThemeLight => "☀️ 淺色模式",
+            Self::MenuThemeDark => "🌙 深色模式",
+            Self::ThemeLight => "☀️ 淺色模式",
+            Self::ThemeDark => "🌙 深色模式",
+
+            // --- M2: Common Actions & Canvas Control ---
+            Self::NewCanvas => "開新畫布",
+            Self::ActionScreenshot => "📷 開始截圖",
+            Self::StartScreenshot => "📷 開始截圖",
+            Self::ActionPaste => "📋 貼上圖片",
+            Self::PasteImageAction => "📋 貼上圖片",
+            Self::ActionCopyCanvas => "📄 複製畫布",
+            Self::CopyCanvasAction => "📄 複製畫布",
+            Self::ResizeCanvas => "調整畫布大小",
+            Self::CopyCanvasSuccess => "已複製畫布影像至剪貼簿。",
+            Self::SaveCopySuccess => "已成功儲存副本。",
+
+            // --- M2: Paint Tools (14 tools) ---
+            Self::ToolSelect => "🔲 選取",
+            Self::ToolPencil => "✏️ 鉛筆",
+            Self::ToolBrush => "🖌️ 畫筆",
+            Self::ToolHighlighter => "🖊️ 螢光標記筆",
+            Self::ToolAirbrush => "💨 噴槍",
+            Self::ToolCalligraphy => "✒️ 書法筆",
+            Self::ToolEraser => "🧽 橡皮擦",
+            Self::ToolFloodFill => "🪣 油漆桶填色",
+            Self::ToolColorPicker => "💧 滴管取色",
+            Self::ToolEyedropper => "💧 滴管取色",
+            Self::ToolText => "🔤 文字",
+            Self::ToolMosaic => "▦ 馬賽克",
+            Self::ToolCrop => "✂️ 裁切",
+            Self::ToolHand => "✋ 手掌",
+            Self::ToolShapes => "📐 形狀",
+
+            // --- M2: Ribbon Options & Palette ---
+            Self::RibbonStrokeThickness => "粗細:",
+            Self::StrokeWidth => "粗細:",
+            Self::RibbonColor1 => "色彩 1 (前景)",
+            Self::Color1Foreground => "色彩 1 (前景)",
+            Self::RibbonColor2 => "色彩 2 (背景)",
+            Self::Color2Background => "色彩 2 (背景)",
+            Self::RibbonCustomColor => "🎨 自訂",
+            Self::CustomColor => "🎨 自訂",
+
+            // --- M2: Inspector Tabs ---
+            Self::TabProperties => "⚙️ 屬性",
+            Self::TabLayers => "📚 圖層",
+            Self::TabHistory => "⏱️ 歷史",
+            Self::TabFilters => "✨ 濾鏡",
+            Self::TabInfo => "📊 資訊",
+            Self::TabC2pa => "🛡️ C2PA",
+
+            // --- M2: Properties Panel ---
+            Self::PropToolSettings => "工具屬性與快速操作",
+            Self::ToolPropsAndQuickActions => "工具屬性與快速操作",
+            Self::BrushSettings => "筆刷設定",
+            Self::PropBrushRadius => "筆刷半徑 (px)",
+            Self::BrushRadiusPx => "筆刷半徑 (px)",
+            Self::PropQuickExport => "快速轉檔與匯出",
+            Self::QuickExportAndConvert => "快速轉檔與匯出",
+            Self::PropExportFormat => "格式:",
+            Self::FormatLabel => "格式:",
+            Self::PropSaveCopy => "💾 儲存副本",
+            Self::SaveCopy => "💾 儲存副本",
+
+            // --- M2: Status Bar ---
+            Self::StatusReadyPrompt => {
+                "準備就緒。支援拖曳開啟、剪貼簿貼上、小畫家繪圖與高畫質圖片檢視。"
+            }
+            Self::StatusReadyPaint => {
+                "準備就緒。支援拖曳開啟、剪貼簿貼上、小畫家繪圖與高畫質圖片檢視。"
+            }
+            Self::StatusCoordinates => "座標",
+            Self::CoordinatesLabel => "座標",
+            Self::StatusPixelColor => "色彩",
+            Self::StatusCanvasSize => "畫布",
+            Self::CanvasSizeLabel => "畫布",
+            Self::StatusZoom => "縮放",
+            Self::ZoomLabel => "縮放",
         }
     }
 
@@ -564,6 +760,616 @@ impl TextKey {
             }
             Self::QuickWebpHint => {
                 "Create a WebP copy directly; Save Copy also offers PNG and JPEG."
+            }
+
+            // --- M2: App Title & Modes ---
+            Self::AppTitle => "Pixel Paint & Viewer",
+            Self::ModeViewer => "🖼️ Image Viewer",
+            Self::ModePaint => "🎨 Paint Drawing",
+            Self::ModeBatch => "⚡ Batch Convert",
+            Self::ModeTagViewer => "[Image Viewer Mode]",
+            Self::ModeTagPaint => "[Paint Drawing Mode]",
+            Self::ModeTagBatch => "[Batch Convert Mode]",
+            Self::StatusModeViewer => "[Image Viewer Mode]",
+            Self::StatusModePaint => "[Paint Drawing Mode]",
+            Self::StatusModeBatch => "[Batch Convert Mode]",
+
+            // --- M2: Menu Items & Theme ---
+            Self::MenuFile => "File",
+            Self::MenuEdit => "Edit",
+            Self::MenuImage => "Image",
+            Self::MenuFilters => "Advanced Filters",
+            Self::MenuAdvancedFilters => "Advanced Filters",
+            Self::MenuC2pa => "🌐 C2PA Credentials",
+            Self::MenuLanguage => "Language",
+            Self::MenuThemeLight => "☀️ Light Mode",
+            Self::MenuThemeDark => "🌙 Dark Mode",
+            Self::ThemeLight => "☀️ Light Mode",
+            Self::ThemeDark => "🌙 Dark Mode",
+
+            // --- M2: Common Actions & Canvas Control ---
+            Self::NewCanvas => "New Canvas",
+            Self::ActionScreenshot => "📷 Screenshot",
+            Self::StartScreenshot => "📷 Screenshot",
+            Self::ActionPaste => "📋 Paste Image",
+            Self::PasteImageAction => "📋 Paste Image",
+            Self::ActionCopyCanvas => "📄 Copy Canvas",
+            Self::CopyCanvasAction => "📄 Copy Canvas",
+            Self::ResizeCanvas => "Resize Canvas",
+            Self::CopyCanvasSuccess => "Canvas image copied to clipboard.",
+            Self::SaveCopySuccess => "Copy saved successfully.",
+
+            // --- M2: Paint Tools (14 tools) ---
+            Self::ToolSelect => "🔲 Select",
+            Self::ToolPencil => "✏️ Pencil",
+            Self::ToolBrush => "🖌️ Brush",
+            Self::ToolHighlighter => "🖊️ Highlighter",
+            Self::ToolAirbrush => "💨 Airbrush",
+            Self::ToolCalligraphy => "✒️ Calligraphy",
+            Self::ToolEraser => "🧽 Eraser",
+            Self::ToolFloodFill => "🪣 Flood Fill",
+            Self::ToolColorPicker => "💧 Eyedropper",
+            Self::ToolEyedropper => "💧 Eyedropper",
+            Self::ToolText => "🔤 Text",
+            Self::ToolMosaic => "▦ Mosaic",
+            Self::ToolCrop => "✂️ Crop",
+            Self::ToolHand => "✋ Hand",
+            Self::ToolShapes => "📐 Shapes",
+
+            // --- M2: Ribbon Options & Palette ---
+            Self::RibbonStrokeThickness => "Size:",
+            Self::StrokeWidth => "Size:",
+            Self::RibbonColor1 => "Color 1 (Foreground)",
+            Self::Color1Foreground => "Color 1 (Foreground)",
+            Self::RibbonColor2 => "Color 2 (Background)",
+            Self::Color2Background => "Color 2 (Background)",
+            Self::RibbonCustomColor => "🎨 Custom",
+            Self::CustomColor => "🎨 Custom",
+
+            // --- M2: Inspector Tabs ---
+            Self::TabProperties => "⚙️ Properties",
+            Self::TabLayers => "📚 Layers",
+            Self::TabHistory => "⏱️ History",
+            Self::TabFilters => "✨ Filters",
+            Self::TabInfo => "📊 Info",
+            Self::TabC2pa => "🛡️ C2PA",
+
+            // --- M2: Properties Panel ---
+            Self::PropToolSettings => "Tool Properties & Quick Actions",
+            Self::ToolPropsAndQuickActions => "Tool Properties & Quick Actions",
+            Self::BrushSettings => "Brush Settings",
+            Self::PropBrushRadius => "Brush Radius (px)",
+            Self::BrushRadiusPx => "Brush Radius (px)",
+            Self::PropQuickExport => "Quick Export & Convert",
+            Self::QuickExportAndConvert => "Quick Export & Convert",
+            Self::PropExportFormat => "Format:",
+            Self::FormatLabel => "Format:",
+            Self::PropSaveCopy => "💾 Save Copy",
+            Self::SaveCopy => "💾 Save Copy",
+
+            // --- M2: Status Bar ---
+            Self::StatusReadyPrompt => {
+                "Ready. Drag & drop, clipboard paste, paint drawing & HD viewer supported."
+            }
+            Self::StatusReadyPaint => {
+                "Ready. Drag & drop, clipboard paste, paint drawing & HD viewer supported."
+            }
+            Self::StatusCoordinates => "Coords",
+            Self::CoordinatesLabel => "Coords",
+            Self::StatusPixelColor => "Color",
+            Self::StatusCanvasSize => "Canvas",
+            Self::CanvasSizeLabel => "Canvas",
+            Self::StatusZoom => "Zoom",
+            Self::ZoomLabel => "Zoom",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_language_names() {
+        assert_eq!(Language::ZhTw.name(), "繁體中文");
+        assert_eq!(Language::En.name(), "English");
+    }
+
+    #[test]
+    fn test_m2_keys_translations_symmetrical_and_non_empty() {
+        let keys = [
+            TextKey::AppTitle,
+            TextKey::ModeViewer,
+            TextKey::ModePaint,
+            TextKey::ModeBatch,
+            TextKey::ModeTagViewer,
+            TextKey::ModeTagPaint,
+            TextKey::ModeTagBatch,
+            TextKey::StatusModeViewer,
+            TextKey::StatusModePaint,
+            TextKey::StatusModeBatch,
+            TextKey::MenuFile,
+            TextKey::MenuEdit,
+            TextKey::MenuImage,
+            TextKey::MenuFilters,
+            TextKey::MenuAdvancedFilters,
+            TextKey::MenuC2pa,
+            TextKey::MenuLanguage,
+            TextKey::MenuThemeLight,
+            TextKey::MenuThemeDark,
+            TextKey::ThemeLight,
+            TextKey::ThemeDark,
+            TextKey::NewCanvas,
+            TextKey::ActionScreenshot,
+            TextKey::StartScreenshot,
+            TextKey::ActionPaste,
+            TextKey::PasteImageAction,
+            TextKey::ActionCopyCanvas,
+            TextKey::CopyCanvasAction,
+            TextKey::ResizeCanvas,
+            TextKey::CopyCanvasSuccess,
+            TextKey::SaveCopySuccess,
+            TextKey::ToolSelect,
+            TextKey::ToolPencil,
+            TextKey::ToolBrush,
+            TextKey::ToolHighlighter,
+            TextKey::ToolAirbrush,
+            TextKey::ToolCalligraphy,
+            TextKey::ToolEraser,
+            TextKey::ToolFloodFill,
+            TextKey::ToolColorPicker,
+            TextKey::ToolEyedropper,
+            TextKey::ToolText,
+            TextKey::ToolMosaic,
+            TextKey::ToolCrop,
+            TextKey::ToolHand,
+            TextKey::ToolShapes,
+            TextKey::RibbonStrokeThickness,
+            TextKey::StrokeWidth,
+            TextKey::RibbonColor1,
+            TextKey::Color1Foreground,
+            TextKey::RibbonColor2,
+            TextKey::Color2Background,
+            TextKey::RibbonCustomColor,
+            TextKey::CustomColor,
+            TextKey::TabProperties,
+            TextKey::TabLayers,
+            TextKey::TabHistory,
+            TextKey::TabFilters,
+            TextKey::TabInfo,
+            TextKey::TabC2pa,
+            TextKey::PropToolSettings,
+            TextKey::ToolPropsAndQuickActions,
+            TextKey::BrushSettings,
+            TextKey::PropBrushRadius,
+            TextKey::BrushRadiusPx,
+            TextKey::PropQuickExport,
+            TextKey::QuickExportAndConvert,
+            TextKey::PropExportFormat,
+            TextKey::FormatLabel,
+            TextKey::PropSaveCopy,
+            TextKey::SaveCopy,
+            TextKey::StatusReadyPrompt,
+            TextKey::StatusReadyPaint,
+            TextKey::StatusCoordinates,
+            TextKey::CoordinatesLabel,
+            TextKey::StatusPixelColor,
+            TextKey::StatusCanvasSize,
+            TextKey::CanvasSizeLabel,
+            TextKey::StatusZoom,
+            TextKey::ZoomLabel,
+        ];
+
+        for &key in &keys {
+            let zh = key.zh_tw();
+            let en = key.en();
+            assert!(!zh.is_empty(), "zh_tw empty for {:?}", key);
+            assert!(!en.is_empty(), "en empty for {:?}", key);
+            assert_eq!(Language::ZhTw.t(key), zh);
+            assert_eq!(Language::En.t(key), en);
+        }
+    }
+
+    #[test]
+    fn test_app_title_exact_match() {
+        assert_eq!(
+            TextKey::AppTitle.zh_tw(),
+            "Pixel Paint & Viewer 像素畫家與圖片檢視器"
+        );
+        assert_eq!(TextKey::AppTitle.en(), "Pixel Paint & Viewer");
+    }
+
+    #[test]
+    fn test_mode_labels() {
+        assert_eq!(TextKey::ModeViewer.zh_tw(), "🖼️ 圖片檢視模式");
+        assert_eq!(TextKey::ModePaint.zh_tw(), "🎨 小畫家繪圖模式");
+        assert_eq!(TextKey::ModeBatch.zh_tw(), "⚡ 批次轉檔");
+        assert_eq!(TextKey::ModeViewer.en(), "🖼️ Image Viewer");
+        assert_eq!(TextKey::ModePaint.en(), "🎨 Paint Drawing");
+        assert_eq!(TextKey::ModeBatch.en(), "⚡ Batch Convert");
+    }
+
+    #[test]
+    fn test_menu_and_actions() {
+        assert_eq!(TextKey::MenuFile.zh_tw(), "檔案");
+        assert_eq!(TextKey::MenuFile.en(), "File");
+        assert_eq!(TextKey::NewCanvas.zh_tw(), "開新畫布");
+        assert_eq!(TextKey::NewCanvas.en(), "New Canvas");
+        assert_eq!(TextKey::ActionScreenshot.zh_tw(), "📷 開始截圖");
+        assert_eq!(TextKey::ActionScreenshot.en(), "📷 Screenshot");
+        assert_eq!(TextKey::ActionPaste.zh_tw(), "📋 貼上圖片");
+        assert_eq!(TextKey::ActionPaste.en(), "📋 Paste Image");
+        assert_eq!(TextKey::ActionCopyCanvas.zh_tw(), "📄 複製畫布");
+        assert_eq!(TextKey::ActionCopyCanvas.en(), "📄 Copy Canvas");
+    }
+
+    #[test]
+    fn test_paint_tools_14_variants() {
+        let tools = [
+            (TextKey::ToolSelect, "🔲 選取", "🔲 Select"),
+            (TextKey::ToolPencil, "✏️ 鉛筆", "✏️ Pencil"),
+            (TextKey::ToolBrush, "🖌️ 畫筆", "🖌️ Brush"),
+            (TextKey::ToolHighlighter, "🖊️ 螢光標記筆", "🖊️ Highlighter"),
+            (TextKey::ToolAirbrush, "💨 噴槍", "💨 Airbrush"),
+            (TextKey::ToolCalligraphy, "✒️ 書法筆", "✒️ Calligraphy"),
+            (TextKey::ToolEraser, "🧽 橡皮擦", "🧽 Eraser"),
+            (TextKey::ToolFloodFill, "🪣 油漆桶填色", "🪣 Flood Fill"),
+            (TextKey::ToolColorPicker, "💧 滴管取色", "💧 Eyedropper"),
+            (TextKey::ToolText, "🔤 文字", "🔤 Text"),
+            (TextKey::ToolMosaic, "▦ 馬賽克", "▦ Mosaic"),
+            (TextKey::ToolCrop, "✂️ 裁切", "✂️ Crop"),
+            (TextKey::ToolHand, "✋ 手掌", "✋ Hand"),
+            (TextKey::ToolShapes, "📐 形狀", "📐 Shapes"),
+        ];
+
+        for (tool, zh, en) in tools {
+            assert_eq!(tool.zh_tw(), zh);
+            assert_eq!(tool.en(), en);
+        }
+    }
+
+    #[test]
+    fn test_ribbon_and_tabs() {
+        assert_eq!(TextKey::RibbonStrokeThickness.zh_tw(), "粗細:");
+        assert_eq!(TextKey::RibbonStrokeThickness.en(), "Size:");
+        assert_eq!(TextKey::RibbonColor1.zh_tw(), "色彩 1 (前景)");
+        assert_eq!(TextKey::RibbonColor1.en(), "Color 1 (Foreground)");
+        assert_eq!(TextKey::RibbonColor2.zh_tw(), "色彩 2 (背景)");
+        assert_eq!(TextKey::RibbonColor2.en(), "Color 2 (Background)");
+        assert_eq!(TextKey::RibbonCustomColor.zh_tw(), "🎨 自訂");
+        assert_eq!(TextKey::RibbonCustomColor.en(), "🎨 Custom");
+
+        assert_eq!(TextKey::TabProperties.zh_tw(), "⚙️ 屬性");
+        assert_eq!(TextKey::TabProperties.en(), "⚙️ Properties");
+        assert_eq!(TextKey::TabLayers.zh_tw(), "📚 圖層");
+        assert_eq!(TextKey::TabLayers.en(), "📚 Layers");
+        assert_eq!(TextKey::TabHistory.zh_tw(), "⏱️ 歷史");
+        assert_eq!(TextKey::TabHistory.en(), "⏱️ History");
+        assert_eq!(TextKey::TabFilters.zh_tw(), "✨ 濾鏡");
+        assert_eq!(TextKey::TabFilters.en(), "✨ Filters");
+        assert_eq!(TextKey::TabInfo.zh_tw(), "📊 資訊");
+        assert_eq!(TextKey::TabInfo.en(), "📊 Info");
+        assert_eq!(TextKey::TabC2pa.zh_tw(), "🛡️ C2PA");
+        assert_eq!(TextKey::TabC2pa.en(), "🛡️ C2PA");
+    }
+
+    #[test]
+    fn test_status_bar_labels() {
+        assert_eq!(TextKey::StatusModePaint.zh_tw(), "【小畫家繪圖模式】");
+        assert_eq!(TextKey::StatusModePaint.en(), "[Paint Drawing Mode]");
+        assert_eq!(TextKey::StatusCoordinates.zh_tw(), "座標");
+        assert_eq!(TextKey::StatusCoordinates.en(), "Coords");
+        assert_eq!(TextKey::StatusPixelColor.zh_tw(), "色彩");
+        assert_eq!(TextKey::StatusPixelColor.en(), "Color");
+        assert_eq!(TextKey::StatusCanvasSize.zh_tw(), "畫布");
+        assert_eq!(TextKey::StatusCanvasSize.en(), "Canvas");
+        assert_eq!(TextKey::StatusZoom.zh_tw(), "縮放");
+        assert_eq!(TextKey::StatusZoom.en(), "Zoom");
+    }
+
+    #[test]
+    fn test_all_250_text_keys_symmetrical_and_non_empty_and_no_chinese_in_en() {
+        let all_keys = [
+            TextKey::Actions,
+            TextKey::ApplyCrop,
+            TextKey::ApplyResize,
+            TextKey::ApplyBlur,
+            TextKey::ApplyBrightness,
+            TextKey::ApplyContrast,
+            TextKey::ApplyExposure,
+            TextKey::ApplySaturation,
+            TextKey::ApplySharpen,
+            TextKey::Adjustments,
+            TextKey::Batch,
+            TextKey::BatchRunning,
+            TextKey::BrowseHint,
+            TextKey::ClipboardImage,
+            TextKey::ClearCanvas,
+            TextKey::RestoreCanvas,
+            TextKey::Convert,
+            TextKey::Compose,
+            TextKey::CropRectangle,
+            TextKey::Current,
+            TextKey::Edit,
+            TextKey::Export360,
+            TextKey::ExportComposite,
+            TextKey::File,
+            TextKey::Fit,
+            TextKey::FlipH,
+            TextKey::FlipV,
+            TextKey::Folder,
+            TextKey::Format,
+            TextKey::C2pa,
+            TextKey::C2paMissing,
+            TextKey::C2paWriteOnSave,
+            TextKey::C2paRawJson,
+            TextKey::AddC2paCopy,
+            TextKey::RemoveC2paCopy,
+            TextKey::Creator,
+            TextKey::ActionNote,
+            TextKey::Title,
+            TextKey::Manifests,
+            TextKey::Image,
+            TextKey::AddImage,
+            TextKey::AddText,
+            TextKey::AddWatermark,
+            TextKey::Font,
+            TextKey::Project,
+            TextKey::SaveProject,
+            TextKey::OpenProject,
+            TextKey::Images,
+            TextKey::InputFolder,
+            TextKey::LastBatch,
+            TextKey::Language,
+            TextKey::Layers,
+            TextKey::LayerName,
+            TextKey::MaxH,
+            TextKey::MaxW,
+            TextKey::NoImage,
+            TextKey::NoLayer,
+            TextKey::OpenFolder,
+            TextKey::OpenImage,
+            TextKey::OutputFolder,
+            TextKey::PasteImage,
+            TextKey::PreserveAspect,
+            TextKey::Previous,
+            TextKey::Quality,
+            TextKey::Reload,
+            TextKey::ResetEdits,
+            TextKey::ResizeToFit,
+            TextKey::RotateLeft,
+            TextKey::RotateRight,
+            TextKey::RunBatch,
+            TextKey::RunGif,
+            TextKey::SaveAsNewFile,
+            TextKey::SaveConverted,
+            TextKey::Grayscale,
+            TextKey::GifFrameDelay,
+            TextKey::GifMaker,
+            TextKey::GifRepeat,
+            TextKey::GifResize,
+            TextKey::GifSource,
+            TextKey::Invert,
+            TextKey::Brightness,
+            TextKey::Contrast,
+            TextKey::Saturation,
+            TextKey::Exposure,
+            TextKey::Blur,
+            TextKey::Sharpen,
+            TextKey::Threshold,
+            TextKey::SelectedLayer,
+            TextKey::Selection,
+            TextKey::SelectionCircle,
+            TextKey::SelectionRectangle,
+            TextKey::ClearSelection,
+            TextKey::ImageUndo,
+            TextKey::ImageRedo,
+            TextKey::Source,
+            TextKey::Status,
+            TextKey::TextColor,
+            TextKey::TextContent,
+            TextKey::FontSize,
+            TextKey::Opacity,
+            TextKey::WatermarkText,
+            TextKey::WatermarkOpacity,
+            TextKey::WatermarkFontSize,
+            TextKey::Position,
+            TextKey::Size,
+            TextKey::Stroke,
+            TextKey::Shadow,
+            TextKey::Align,
+            TextKey::AlignLeft,
+            TextKey::AlignCenter,
+            TextKey::AlignRight,
+            TextKey::AlignTop,
+            TextKey::AlignMiddle,
+            TextKey::AlignBottom,
+            TextKey::Visible,
+            TextKey::DeleteLayer,
+            TextKey::DuplicateLayer,
+            TextKey::Undo,
+            TextKey::Redo,
+            TextKey::KeyboardHint,
+            TextKey::MoveUp,
+            TextKey::MoveDown,
+            TextKey::ZoomIn,
+            TextKey::ZoomOut,
+            TextKey::BatchC2pa,
+            TextKey::BatchC2paAdd,
+            TextKey::BatchC2paRemove,
+            TextKey::BatchC2paInputFolder,
+            TextKey::BatchC2paOutputFolder,
+            TextKey::BatchC2paRunAdd,
+            TextKey::BatchC2paRunRemove,
+            TextKey::C2paSingleCopy,
+            TextKey::BatchWatermarkEnable,
+            TextKey::Rotate180,
+            TextKey::Hue,
+            TextKey::ApplyHue,
+            TextKey::Sepia,
+            TextKey::ApplySepia,
+            TextKey::Vignette,
+            TextKey::ApplyVignette,
+            TextKey::Temperature,
+            TextKey::ApplyTemperature,
+            TextKey::Tint,
+            TextKey::ApplyTint,
+            TextKey::AutoContrast,
+            TextKey::Posterize,
+            TextKey::ApplyPosterize,
+            TextKey::Filters,
+            TextKey::PanTool,
+            TextKey::SelectTool,
+            TextKey::BatchC2paRemoveDone,
+            TextKey::BatchC2paAddDone,
+            TextKey::QuickAnnotate,
+            TextKey::AdvancedTools,
+            TextKey::CaptureScreenshot,
+            TextKey::CaptureScreenshotExcludingWindow,
+            TextKey::CropTool,
+            TextKey::TextTool,
+            TextKey::CancelCrop,
+            TextKey::QuickHint,
+            TextKey::LineTool,
+            TextKey::ArrowTool,
+            TextKey::RectangleTool,
+            TextKey::BlurSelection,
+            TextKey::RemoveC2paQuick,
+            TextKey::SaveWebpQuick,
+            TextKey::QuickPrivacyTools,
+            TextKey::QuickBlurHint,
+            TextKey::QuickC2paHint,
+            TextKey::QuickWebpHint,
+            TextKey::AppTitle,
+            TextKey::ModeViewer,
+            TextKey::ModePaint,
+            TextKey::ModeBatch,
+            TextKey::ModeTagViewer,
+            TextKey::ModeTagPaint,
+            TextKey::ModeTagBatch,
+            TextKey::StatusModeViewer,
+            TextKey::StatusModePaint,
+            TextKey::StatusModeBatch,
+            TextKey::MenuFile,
+            TextKey::MenuEdit,
+            TextKey::MenuImage,
+            TextKey::MenuFilters,
+            TextKey::MenuAdvancedFilters,
+            TextKey::MenuC2pa,
+            TextKey::MenuLanguage,
+            TextKey::MenuThemeLight,
+            TextKey::MenuThemeDark,
+            TextKey::ThemeLight,
+            TextKey::ThemeDark,
+            TextKey::NewCanvas,
+            TextKey::ActionScreenshot,
+            TextKey::StartScreenshot,
+            TextKey::ActionPaste,
+            TextKey::PasteImageAction,
+            TextKey::ActionCopyCanvas,
+            TextKey::CopyCanvasAction,
+            TextKey::ResizeCanvas,
+            TextKey::CopyCanvasSuccess,
+            TextKey::SaveCopySuccess,
+            TextKey::ToolSelect,
+            TextKey::ToolPencil,
+            TextKey::ToolBrush,
+            TextKey::ToolHighlighter,
+            TextKey::ToolAirbrush,
+            TextKey::ToolCalligraphy,
+            TextKey::ToolEraser,
+            TextKey::ToolFloodFill,
+            TextKey::ToolColorPicker,
+            TextKey::ToolEyedropper,
+            TextKey::ToolText,
+            TextKey::ToolMosaic,
+            TextKey::ToolCrop,
+            TextKey::ToolHand,
+            TextKey::ToolShapes,
+            TextKey::RibbonStrokeThickness,
+            TextKey::StrokeWidth,
+            TextKey::RibbonColor1,
+            TextKey::Color1Foreground,
+            TextKey::RibbonColor2,
+            TextKey::Color2Background,
+            TextKey::RibbonCustomColor,
+            TextKey::CustomColor,
+            TextKey::TabProperties,
+            TextKey::TabLayers,
+            TextKey::TabHistory,
+            TextKey::TabFilters,
+            TextKey::TabInfo,
+            TextKey::TabC2pa,
+            TextKey::PropToolSettings,
+            TextKey::ToolPropsAndQuickActions,
+            TextKey::BrushSettings,
+            TextKey::PropBrushRadius,
+            TextKey::BrushRadiusPx,
+            TextKey::PropQuickExport,
+            TextKey::QuickExportAndConvert,
+            TextKey::PropExportFormat,
+            TextKey::FormatLabel,
+            TextKey::PropSaveCopy,
+            TextKey::SaveCopy,
+            TextKey::StatusReadyPrompt,
+            TextKey::StatusReadyPaint,
+            TextKey::StatusCoordinates,
+            TextKey::CoordinatesLabel,
+            TextKey::StatusPixelColor,
+            TextKey::StatusCanvasSize,
+            TextKey::CanvasSizeLabel,
+            TextKey::StatusZoom,
+            TextKey::ZoomLabel,
+        ];
+
+        assert_eq!(all_keys.len(), 250, "Expected exactly 250 TextKey variants");
+
+        for &key in &all_keys {
+            let zh = key.zh_tw();
+            let en = key.en();
+
+            assert!(
+                !zh.trim().is_empty(),
+                "zh_tw translation for {:?} is empty",
+                key
+            );
+            assert!(
+                !en.trim().is_empty(),
+                "en translation for {:?} is empty",
+                key
+            );
+
+            assert_eq!(
+                Language::ZhTw.t(key),
+                zh,
+                "Language::ZhTw.t({:?}) mismatch with key.zh_tw()",
+                key
+            );
+            assert_eq!(
+                Language::En.t(key),
+                en,
+                "Language::En.t({:?}) mismatch with key.en()",
+                key
+            );
+
+            // Verify no Chinese characters appear in English outputs
+            for c in en.chars() {
+                let is_cjk = ('\u{4e00}'..='\u{9fff}').contains(&c)
+                    || ('\u{3400}'..='\u{4dbf}').contains(&c)
+                    || ('\u{f900}'..='\u{faff}').contains(&c);
+                assert!(
+                    !is_cjk,
+                    "English translation for {:?} contains Chinese character '{}': \"{}\"",
+                    key, c, en
+                );
+
+                let is_cjk_punct =
+                    ['（', '）', '【', '】', '：', '，', '。', '、', '「', '」'].contains(&c);
+                assert!(
+                    !is_cjk_punct,
+                    "English translation for {:?} contains Chinese punctuation '{}': \"{}\"",
+                    key, c, en
+                );
             }
         }
     }

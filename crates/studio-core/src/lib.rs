@@ -2,6 +2,7 @@ pub mod batch;
 pub mod c2pa_metadata;
 pub mod compose;
 pub mod convert;
+pub mod drawing;
 pub mod error;
 pub mod filters;
 pub mod formats;
@@ -28,6 +29,11 @@ pub use compose::{
 pub use convert::{
     ConvertOptions, ConvertResult, convert_image, flatten_alpha, save_dynamic_image,
 };
+pub use drawing::{
+    apply_mosaic_region, draw_airbrush, draw_brush_stroke, draw_calligraphy_stroke, draw_circle,
+    draw_ellipse, draw_eraser, draw_highlighter_stroke, draw_pencil_line, draw_rectangle,
+    flood_fill, sample_color,
+};
 pub use error::{PhotoError, Result};
 pub use filters::{
     adjust_hue, adjust_temperature, adjust_tint, auto_contrast, posterize, rotate_180, sepia,
@@ -40,4 +46,5 @@ pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
 };
+pub use resize::{canvas_resize, resize_exact, resize_to_fit};
 pub use transform::{blur_region, crop_region};

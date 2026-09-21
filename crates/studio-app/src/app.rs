@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::borrow::Cow;
 use std::fs;
 use std::io::Cursor;
@@ -5,6 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use crate::i18n::{Language, TextKey};
+use crate::paint::{
+    self, AppMode, DragHandle, InspectorTab, PRESET_PALETTE_30, PaintState, PaintTool,
+};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::Local;
 use eframe::egui;
@@ -23,8 +29,6 @@ use studio_core::{
     save_dynamic_image, text_layer_bounds, write_animated_gif, write_c2pa_manifest,
     write_panorama_dynamic_jpeg,
 };
-
-use crate::i18n::{Language, TextKey};
 
 enum BatchMessage {
     Progress {
@@ -240,10 +244,23 @@ pub struct PixelStudioApp {
     batch_total: usize,
     status: String,
     pending_excluding_capture: Option<Receiver<anyhow::Result<DynamicImage>>>,
+    pub paint_state: PaintState,
+    pub dark_mode: bool,
 }
 
 impl PixelStudioApp {
     pub fn new(initial_path: Option<PathBuf>) -> Self {
+        let (initial_working, initial_orig, initial_tex_size) = if initial_path.is_none() {
+            let blank = image::RgbaImage::from_pixel(1280, 720, image::Rgba([255, 255, 255, 255]));
+            let dynamic = DynamicImage::ImageRgba8(blank);
+            (
+                Some(dynamic.clone()),
+                Some(dynamic),
+                Vec2::new(1280.0, 720.0),
+            )
+        } else {
+            (None, None, Vec2::ZERO)
+        };
         Self {
             language: Language::ZhTw,
             workspace: Workspace::Quick,
@@ -253,11 +270,13 @@ impl PixelStudioApp {
             c2pa_info: C2paInfo::default(),
             c2pa_draft: C2paManifestDraft::default(),
             c2pa_write_on_save: false,
-            original_image: None,
-            working_image: None,
+            original_image: initial_orig,
+            working_image: initial_working,
             texture: None,
-            texture_size: Vec2::ZERO,
+            texture_size: initial_tex_size,
             cleared_canvas: None,
+            paint_state: PaintState::default(),
+            dark_mode: false,
             compose_layers: Vec::new(),
             selected_layer: None,
             undo_stack: Vec::new(),
@@ -324,7 +343,7 @@ impl PixelStudioApp {
             c2pa_batch_result: None,
             batch_completed: 0,
             batch_total: 0,
-            status: "請開啟圖片或資料夾。".to_owned(),
+            status: "準備就緒。支援拖曳開啟、剪貼簿貼上、小畫家繪圖與高畫質圖片檢視。".to_owned(),
             pending_excluding_capture: None,
         }
     }
@@ -344,15 +363,22 @@ impl eframe::App for PixelStudioApp {
         self.open_dropped_files(ui.ctx());
         self.handle_keyboard_shortcuts(ui.ctx());
 
+        if self.working_image.is_none() && self.paint_state.active_mode == AppMode::Paint {
+            self.init_default_paint_canvas(ui.ctx());
+        }
+        if self.working_image.is_some() && self.texture.is_none() {
+            self.update_texture(ui.ctx());
+        }
+
         let ctx = ui.ctx().clone();
         egui::Panel::top("command_bar")
             .frame(
                 egui::Frame::new()
                     .fill(crate::theme::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .inner_margin(egui::Margin::symmetric(12, 6))
                     .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
             )
-            .show_inside(ui, |ui| self.toolbar(ui, &ctx));
+            .show_inside(ui, |ui| self.top_chrome_and_toolbar(ui, &ctx));
         egui::Panel::right("inspector")
             .resizable(true)
             .default_size(350.0)
@@ -364,40 +390,30 @@ impl eframe::App for PixelStudioApp {
                     .inner_margin(egui::Margin::symmetric(14, 12))
                     .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
             )
-            .show_inside(ui, |ui| self.actions_panel(ui));
+            .show_inside(ui, |ui| self.inspector_panel(ui, &ctx));
         egui::Panel::bottom("status")
             .frame(
                 egui::Frame::new()
                     .fill(crate::theme::SURFACE_ALT)
-                    .inner_margin(egui::Margin::symmetric(12, 5)),
+                    .inner_margin(egui::Margin::symmetric(12, 5))
+                    .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
             )
-            .show_inside(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(crate::theme::MUTED_TEXT, self.tr(TextKey::Status));
-                    ui.label(&self.status);
-                    if let Some(image) = &self.working_image {
-                        ui.separator();
-                        ui.label(format!("{} × {}", image.width(), image.height()));
-                    }
-                    ui.separator();
-                    ui.label(format!("Zoom {:.0}%", self.zoom * 100.0));
-                    if let Some(selection) = self.selection_rect {
-                        ui.separator();
-                        ui.label(format!(
-                            "Selection {:.0} × {:.0}",
-                            selection.width(),
-                            selection.height()
-                        ));
-                    }
-                });
-            });
+            .show_inside(ui, |ui| self.status_bar(ui));
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
                     .fill(crate::theme::BACKGROUND)
                     .inner_margin(egui::Margin::same(12)),
             )
-            .show_inside(ui, |ui| self.preview_panel(ui));
+            .show_inside(ui, |ui| {
+                if self.paint_state.active_mode == AppMode::Batch {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.batch_panel(ui);
+                    });
+                } else {
+                    self.preview_panel(ui);
+                }
+            });
     }
 }
 
@@ -406,56 +422,379 @@ impl PixelStudioApp {
         self.language.t(key)
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                egui::RichText::new("PIXEL STUDIO")
-                    .strong()
-                    .color(crate::theme::PRIMARY),
-            );
-            ui.separator();
+    fn init_default_paint_canvas(&mut self, ctx: &egui::Context) {
+        let blank = image::RgbaImage::from_pixel(1280, 720, image::Rgba([255, 255, 255, 255]));
+        let dynamic = DynamicImage::ImageRgba8(blank);
+        self.original_image = Some(dynamic.clone());
+        self.working_image = Some(dynamic);
+        self.image_path = None;
+        self.image_info = None;
+        self.compose_layers.clear();
+        self.selected_layer = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.image_undo_stack.clear();
+        self.image_redo_stack.clear();
+        self.drag_snapshot = None;
+        self.selection_rect = None;
+        self.selection_drag_start = None;
+        self.folder_files.clear();
+        self.selected_index = None;
+        self.sync_edit_dimensions();
+        self.update_texture(ctx);
+        self.status = self.tr(TextKey::StatusReadyPaint).to_owned();
+    }
 
+    fn top_chrome_and_toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Row 1: Menus on the left, Mode switcher on the right
+        ui.horizontal(|ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(self.tr(TextKey::MenuFile), |ui| {
+                    ui.set_min_width(220.0);
+                    if ui.button(self.tr(TextKey::NewCanvas)).clicked() {
+                        self.init_default_paint_canvas(ctx);
+                        ui.close();
+                    }
+                    if ui.button(self.tr(TextKey::OpenImage)).clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_file()
+                    {
+                        self.open_path(ctx, path);
+                        ui.close();
+                    }
+                    if ui.button(self.tr(TextKey::OpenFolder)).clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_folder()
+                    {
+                        self.open_folder(ctx, path);
+                        ui.close();
+                    }
+                    if ui.button(self.tr(TextKey::OpenProject)).clicked() {
+                        self.open_project(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.working_image.is_some(),
+                            egui::Button::new(self.tr(TextKey::SaveProject)),
+                        )
+                        .clicked()
+                    {
+                        self.save_project();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.working_image.is_some(),
+                            egui::Button::new(self.tr(TextKey::SaveAsNewFile)),
+                        )
+                        .clicked()
+                    {
+                        self.save_as_new_file();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.working_image.is_some(),
+                            egui::Button::new(self.tr(TextKey::SaveCopy)),
+                        )
+                        .clicked()
+                    {
+                        self.save_quick_copy();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.image_path.is_some(),
+                            egui::Button::new(self.tr(TextKey::Reload)),
+                        )
+                        .clicked()
+                        && let Some(path) = self.image_path.clone()
+                    {
+                        self.open_image(ctx, path);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.working_image.is_some(),
+                            egui::Button::new(self.tr(TextKey::ClearCanvas)),
+                        )
+                        .clicked()
+                    {
+                        self.clear_canvas(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.cleared_canvas.is_some(),
+                            egui::Button::new(self.tr(TextKey::RestoreCanvas)),
+                        )
+                        .clicked()
+                    {
+                        self.restore_canvas(ctx);
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(self.tr(TextKey::MenuEdit), |ui| {
+                    ui.set_min_width(200.0);
+                    if ui
+                        .add_enabled(
+                            self.can_undo_image(),
+                            egui::Button::new(self.tr(TextKey::ImageUndo)),
+                        )
+                        .clicked()
+                    {
+                        self.undo_image_edit(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.can_redo_image(),
+                            egui::Button::new(self.tr(TextKey::ImageRedo)),
+                        )
+                        .clicked()
+                    {
+                        self.redo_image_edit(ctx);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(self.tr(TextKey::PasteImageAction)).clicked() {
+                        self.paste_clipboard_image(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.working_image.is_some(),
+                            egui::Button::new(self.tr(TextKey::CopyCanvasAction)),
+                        )
+                        .clicked()
+                    {
+                        self.copy_canvas_to_clipboard();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.selection_rect.is_some(),
+                            egui::Button::new(self.tr(TextKey::ClearSelection)),
+                        )
+                        .clicked()
+                    {
+                        self.selection_rect = None;
+                        self.selection_drag_start = None;
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(self.tr(TextKey::MenuImage), |ui| {
+                    ui.set_min_width(200.0);
+                    if ui.button(self.tr(TextKey::Fit)).clicked() {
+                        self.fit_to_window = true;
+                        self.preview_pan = Vec2::ZERO;
+                        ui.close();
+                    }
+                    if ui.button("100% 原始大小 / 100% Zoom").clicked() {
+                        self.fit_to_window = false;
+                        self.zoom = 1.0;
+                        self.preview_pan = Vec2::ZERO;
+                        ui.close();
+                    }
+                    ui.separator();
+                    let has_img = self.working_image.is_some();
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::RotateLeft)))
+                        .clicked()
+                    {
+                        self.map_working_image(ctx, studio_core::transform::rotate_left);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::RotateRight)))
+                        .clicked()
+                    {
+                        self.map_working_image(ctx, studio_core::transform::rotate_right);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::Rotate180)))
+                        .clicked()
+                    {
+                        self.map_working_image(ctx, studio_core::filters::rotate_180);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::FlipH)))
+                        .clicked()
+                    {
+                        self.map_working_image(ctx, studio_core::transform::flip_horizontal);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::FlipV)))
+                        .clicked()
+                    {
+                        self.map_working_image(ctx, studio_core::transform::flip_vertical);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            has_img && self.selection_rect.is_some(),
+                            egui::Button::new(self.tr(TextKey::ApplyCrop)),
+                        )
+                        .clicked()
+                    {
+                        self.apply_selection_crop(ctx);
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(self.tr(TextKey::MenuAdvancedFilters), |ui| {
+                    ui.set_min_width(200.0);
+                    let has_img = self.working_image.is_some();
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::AutoContrast)))
+                        .clicked()
+                    {
+                        self.map_scoped_working_image(ctx, studio_core::filters::auto_contrast);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::Grayscale)))
+                        .clicked()
+                    {
+                        self.map_scoped_working_image(ctx, studio_core::transform::grayscale);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_img, egui::Button::new(self.tr(TextKey::Invert)))
+                        .clicked()
+                    {
+                        self.map_scoped_working_image(ctx, studio_core::transform::invert);
+                        ui.close();
+                    }
+                    if ui.button(self.tr(TextKey::TabFilters)).clicked() {
+                        self.paint_state.active_inspector_tab = InspectorTab::Filters;
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(self.tr(TextKey::MenuC2pa), |ui| {
+                    ui.set_min_width(220.0);
+                    if ui.button(self.tr(TextKey::TabC2pa)).clicked() {
+                        self.paint_state.active_inspector_tab = InspectorTab::C2pa;
+                        ui.close();
+                    }
+                    let c2pa_save_label = self.tr(TextKey::C2paWriteOnSave);
+                    ui.checkbox(&mut self.c2pa_write_on_save, c2pa_save_label);
+                    if ui
+                        .add_enabled(
+                            self.image_path.is_some(),
+                            egui::Button::new(self.tr(TextKey::RemoveC2paCopy)),
+                        )
+                        .clicked()
+                    {
+                        self.remove_c2pa_copy();
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(self.tr(TextKey::MenuLanguage), |ui| {
+                    if ui
+                        .selectable_label(self.language == Language::ZhTw, "繁體中文")
+                        .clicked()
+                    {
+                        self.language = Language::ZhTw;
+                        ui.close();
+                    }
+                    if ui
+                        .selectable_label(self.language == Language::En, "English")
+                        .clicked()
+                    {
+                        self.language = Language::En;
+                        ui.close();
+                    }
+                });
+
+                let theme_label = if self.dark_mode {
+                    self.tr(TextKey::ThemeDark)
+                } else {
+                    self.tr(TextKey::ThemeLight)
+                };
+                if ui.button(theme_label).clicked() {
+                    self.dark_mode = !self.dark_mode;
+                    if self.dark_mode {
+                        ctx.set_visuals(egui::Visuals::dark());
+                    } else {
+                        crate::theme::configure(ctx);
+                    }
+                }
+            });
+
+            // Right side: 3 Mode Buttons
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                for mode in [AppMode::Batch, AppMode::Paint, AppMode::Viewer] {
+                    let active = self.paint_state.active_mode == mode;
+                    let text = egui::RichText::new(self.tr(mode.text_key()))
+                        .strong()
+                        .color(if active {
+                            crate::theme::PRIMARY_DARK
+                        } else {
+                            crate::theme::TEXT
+                        });
+                    let btn = egui::Button::new(text)
+                        .fill(if active {
+                            Color32::from_rgb(180, 220, 255)
+                        } else {
+                            crate::theme::SURFACE_ALT
+                        })
+                        .stroke(Stroke::new(
+                            if active { 1.5 } else { 1.0 },
+                            if active {
+                                crate::theme::PRIMARY
+                            } else {
+                                crate::theme::BORDER
+                            },
+                        ))
+                        .corner_radius(5);
+                    if ui.add(btn).clicked() {
+                        self.paint_state.active_mode = mode;
+                        if mode == AppMode::Paint && self.working_image.is_none() {
+                            self.init_default_paint_canvas(ctx);
+                        }
+                    }
+                }
+            });
+        });
+
+        ui.add_space(3.0);
+        ui.separator();
+        ui.add_space(2.0);
+
+        // Row 2: Paint Toolbar (3 actions + 14 tools)
+        ui.horizontal_wrapped(|ui| {
+            // Action buttons
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new(format!("▣  {}", self.tr(TextKey::CaptureScreenshot)))
+                        egui::RichText::new(self.tr(TextKey::ActionScreenshot))
                             .strong()
                             .color(crate::theme::PRIMARY_TEXT),
                     )
                     .fill(crate::theme::PRIMARY)
-                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY_DARK)),
+                    .stroke(Stroke::new(1.0, crate::theme::PRIMARY_DARK))
+                    .corner_radius(5),
                 )
                 .clicked()
             {
                 self.capture_screenshot(ctx);
             }
             if ui
-                .add_enabled(
-                    self.pending_excluding_capture.is_none(),
-                    egui::Button::new(
-                        egui::RichText::new(format!(
-                            "▦  {}",
-                            self.tr(TextKey::CaptureScreenshotExcludingWindow)
-                        ))
-                        .strong()
-                        .color(crate::theme::PRIMARY_TEXT),
-                    )
-                    .fill(crate::theme::PRIMARY)
-                    .stroke(Stroke::new(1.0_f32, crate::theme::PRIMARY_DARK)),
+                .add(
+                    egui::Button::new(egui::RichText::new(self.tr(TextKey::ActionPaste)).strong())
+                        .fill(crate::theme::SURFACE_ALT)
+                        .stroke(Stroke::new(1.0, crate::theme::BORDER))
+                        .corner_radius(5),
                 )
-                .clicked()
-            {
-                self.start_excluding_window_capture(ctx);
-            }
-            if ui
-                .button(format!("▢  {}", self.tr(TextKey::OpenImage)))
-                .clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_file()
-            {
-                self.open_path(ctx, path);
-            }
-            if ui
-                .button(format!("▤  {}", self.tr(TextKey::PasteImage)))
                 .clicked()
             {
                 self.paste_clipboard_image(ctx);
@@ -463,26 +802,421 @@ impl PixelStudioApp {
             if ui
                 .add_enabled(
                     self.working_image.is_some(),
-                    egui::Button::new(format!("↓  {}", self.tr(TextKey::SaveAsNewFile))),
+                    egui::Button::new(
+                        egui::RichText::new(self.tr(TextKey::ActionCopyCanvas)).strong(),
+                    )
+                    .fill(crate::theme::SURFACE_ALT)
+                    .stroke(Stroke::new(1.0, crate::theme::BORDER))
+                    .corner_radius(5),
                 )
                 .clicked()
             {
-                self.save_as_new_file();
-            }
-            if ui
-                .add_enabled(
-                    self.working_image.is_some(),
-                    egui::Button::new(format!("×  {}", self.tr(TextKey::ClearCanvas)))
-                        .fill(crate::theme::SURFACE_ALT)
-                        .stroke(Stroke::new(1.0_f32, crate::theme::BORDER)),
-                )
-                .clicked()
-            {
-                self.clear_canvas(ctx);
+                self.copy_canvas_to_clipboard();
             }
 
             ui.separator();
 
+            // 14 Tools
+            for tool in PaintTool::ALL_TOOLS {
+                let active = self.paint_state.active_tool == tool;
+                let label = format!("{} {}", tool.icon(), self.tr(tool.text_key()));
+                let text = egui::RichText::new(label).strong().color(if active {
+                    crate::theme::PRIMARY_DARK
+                } else {
+                    crate::theme::TEXT
+                });
+                let btn = egui::Button::new(text)
+                    .fill(if active {
+                        Color32::from_rgb(180, 220, 255)
+                    } else {
+                        crate::theme::SURFACE_ALT
+                    })
+                    .stroke(Stroke::new(
+                        if active { 1.5 } else { 1.0 },
+                        if active {
+                            crate::theme::PRIMARY
+                        } else {
+                            crate::theme::BORDER
+                        },
+                    ))
+                    .corner_radius(5);
+                if ui.add(btn).clicked() {
+                    self.paint_state.active_tool = tool;
+                    match tool {
+                        PaintTool::Hand => self.preview_tool = PreviewTool::Hand,
+                        PaintTool::Crop => self.preview_tool = PreviewTool::Crop,
+                        PaintTool::Text => self.preview_tool = PreviewTool::Text,
+                        PaintTool::Shapes => self.preview_tool = PreviewTool::Rectangle,
+                        _ => self.preview_tool = PreviewTool::Select,
+                    }
+                }
+            }
+        });
+
+        ui.add_space(2.0);
+        ui.separator();
+        ui.add_space(2.0);
+
+        // Row 3: Ribbon Row (Stroke size, Dual color boxes, 30 Preset colors, Custom color)
+        self.ribbon_row(ui);
+    }
+
+    fn ribbon_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // Stroke width dropdown
+            let stroke_label = format!(
+                "{} {:.0} px ▾",
+                self.tr(TextKey::StrokeWidth),
+                self.paint_state.brush_stroke_width
+            );
+            egui::ComboBox::from_id_salt("ribbon_stroke_combo")
+                .selected_text(stroke_label)
+                .show_ui(ui, |ui| {
+                    for w in [1.0, 2.0, 4.0, 8.0, 16.0, 24.0, 32.0] {
+                        let text = format!("{:.0} px", w);
+                        if ui
+                            .selectable_label(self.paint_state.brush_stroke_width == w, text)
+                            .clicked()
+                        {
+                            self.paint_state.brush_stroke_width = w;
+                        }
+                    }
+                });
+
+            ui.separator();
+
+            // Color 1 Box
+            let is_c1 = self.paint_state.is_color_1_selected;
+            let (c1_rect, c1_resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+            ui.painter()
+                .rect_filled(c1_rect, 3.0, self.paint_state.color_1_foreground);
+            ui.painter().rect_stroke(
+                c1_rect,
+                3.0,
+                Stroke::new(
+                    if is_c1 { 2.0 } else { 1.0 },
+                    if is_c1 {
+                        crate::theme::PRIMARY
+                    } else {
+                        crate::theme::BORDER
+                    },
+                ),
+                StrokeKind::Outside,
+            );
+            if c1_resp.clicked() {
+                self.paint_state.is_color_1_selected = true;
+            }
+            ui.label(self.tr(TextKey::Color1Foreground));
+
+            // Color 2 Box
+            let is_c2 = !self.paint_state.is_color_1_selected;
+            let (c2_rect, c2_resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+            ui.painter()
+                .rect_filled(c2_rect, 3.0, self.paint_state.color_2_background);
+            ui.painter().rect_stroke(
+                c2_rect,
+                3.0,
+                Stroke::new(
+                    if is_c2 { 2.0 } else { 1.0 },
+                    if is_c2 {
+                        crate::theme::PRIMARY
+                    } else {
+                        crate::theme::BORDER
+                    },
+                ),
+                StrokeKind::Outside,
+            );
+            if c2_resp.clicked() {
+                self.paint_state.is_color_1_selected = false;
+            }
+            ui.label(self.tr(TextKey::Color2Background));
+
+            ui.separator();
+
+            // 30 preset color swatches
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    for &color in &PRESET_PALETTE_30[0..15] {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(Vec2::new(16.0, 14.0), Sense::click());
+                        ui.painter().rect_filled(rect, 2.0, color);
+                        ui.painter().rect_stroke(
+                            rect,
+                            2.0,
+                            Stroke::new(1.0, crate::theme::BORDER),
+                            StrokeKind::Outside,
+                        );
+                        if resp.clicked() {
+                            self.paint_state.set_active_color(color);
+                        }
+                        if resp.secondary_clicked() {
+                            self.paint_state.color_2_background = color;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    for &color in &PRESET_PALETTE_30[15..30] {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(Vec2::new(16.0, 14.0), Sense::click());
+                        ui.painter().rect_filled(rect, 2.0, color);
+                        ui.painter().rect_stroke(
+                            rect,
+                            2.0,
+                            Stroke::new(1.0, crate::theme::BORDER),
+                            StrokeKind::Outside,
+                        );
+                        if resp.clicked() {
+                            self.paint_state.set_active_color(color);
+                        }
+                        if resp.secondary_clicked() {
+                            self.paint_state.color_2_background = color;
+                        }
+                    }
+                });
+            });
+
+            ui.separator();
+
+            // Custom color picker
+            let mut cur_color = self.paint_state.active_color();
+            let color_resp = ui.color_edit_button_srgba(&mut cur_color);
+            if color_resp.changed() {
+                self.paint_state.set_active_color(cur_color);
+            }
+            ui.label(self.tr(TextKey::CustomColor));
+        });
+    }
+
+    fn copy_canvas_to_clipboard(&mut self) {
+        if let Some(image) = self.render_current_image() {
+            let rgba = image.to_rgba8();
+            let width = rgba.width() as usize;
+            let height = rgba.height() as usize;
+            match arboard::Clipboard::new().and_then(|mut clipboard| {
+                clipboard.set_image(arboard::ImageData {
+                    width,
+                    height,
+                    bytes: Cow::Owned(rgba.into_raw()),
+                })
+            }) {
+                Ok(_) => {
+                    self.status = self.tr(TextKey::CopyCanvasSuccess).to_string();
+                }
+                Err(error) => {
+                    self.status = format!("Copy canvas failed: {error}");
+                }
+            }
+        }
+    }
+
+    fn save_quick_copy(&mut self) {
+        let Some(image) = self.render_current_image() else {
+            return;
+        };
+        let format = self.paint_state.quick_export_format;
+        let ext = format.extension();
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+        let default_name = format!("pixel_{timestamp}.{ext}");
+        let Some(mut output) = rfd::FileDialog::new()
+            .add_filter(ext, &[ext])
+            .set_file_name(default_name)
+            .save_file()
+        else {
+            return;
+        };
+        if output.extension().is_none() {
+            output.set_extension(ext);
+        }
+        match self.save_image_with_optional_c2pa(&image, &output, format) {
+            Ok(result) => {
+                self.status = match self.language {
+                    Language::ZhTw => format!("已成功儲存副本：{}", result.output.display()),
+                    Language::En => {
+                        format!("Copy saved successfully to {}", result.output.display())
+                    }
+                };
+            }
+            Err(error) => {
+                self.status = format!("Save failed: {error}");
+            }
+        }
+    }
+
+    fn inspector_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Tab header
+        ui.horizontal_wrapped(|ui| {
+            for tab in InspectorTab::ALL_TABS {
+                let active = self.paint_state.active_inspector_tab == tab;
+                let label = format!("{} {}", tab.icon(), self.tr(tab.text_key()));
+                let text = egui::RichText::new(label).strong().color(if active {
+                    crate::theme::PRIMARY_DARK
+                } else {
+                    crate::theme::TEXT
+                });
+                let btn = egui::Button::new(text)
+                    .fill(if active {
+                        Color32::from_rgb(180, 220, 255)
+                    } else {
+                        crate::theme::SURFACE_ALT
+                    })
+                    .stroke(Stroke::new(
+                        if active { 1.5 } else { 1.0 },
+                        if active {
+                            crate::theme::PRIMARY
+                        } else {
+                            crate::theme::BORDER
+                        },
+                    ))
+                    .corner_radius(5);
+                if ui.add(btn).clicked() {
+                    self.paint_state.active_inspector_tab = tab;
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Tab content
+        egui::ScrollArea::vertical().show(ui, |ui| match self.paint_state.active_inspector_tab {
+            InspectorTab::Properties => {
+                self.properties_tab_panel(ui);
+            }
+            InspectorTab::Layers => {
+                self.compose_panel(ui, ctx);
+            }
+            InspectorTab::History => {
+                self.history_tab_panel(ui, ctx);
+            }
+            InspectorTab::Filters => {
+                self.edit_panel(ui, ctx);
+            }
+            InspectorTab::Info => {
+                self.metadata_panel(ui, ctx);
+            }
+            InspectorTab::C2pa => {
+                self.c2pa_panel(ui);
+            }
+        });
+    }
+
+    fn properties_tab_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading(self.tr(TextKey::ToolPropsAndQuickActions));
+        ui.add_space(4.0);
+
+        // Group 1: Brush settings
+        egui::Frame::new()
+            .fill(crate::theme::SURFACE)
+            .inner_margin(egui::Margin::same(12))
+            .stroke(Stroke::new(1.0, crate::theme::BORDER))
+            .corner_radius(6)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(self.tr(TextKey::BrushSettings)).strong());
+                ui.add_space(4.0);
+
+                let radius_label = self.tr(TextKey::BrushRadiusPx);
+                let mut radius = self.paint_state.brush_radius();
+                ui.horizontal(|ui| {
+                    ui.label(radius_label);
+                    if ui
+                        .add(egui::Slider::new(&mut radius, 0.5..=64.0).step_by(0.5))
+                        .changed()
+                    {
+                        self.paint_state.set_brush_radius(radius);
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(self.tr(TextKey::StrokeWidth));
+                    for w in [1.0, 2.0, 4.0, 8.0, 16.0, 24.0] {
+                        let selected = self.paint_state.brush_stroke_width == w;
+                        if ui
+                            .selectable_label(selected, format!("{:.0}px", w))
+                            .clicked()
+                        {
+                            self.paint_state.brush_stroke_width = w;
+                        }
+                    }
+                });
+
+                ui.add_space(6.0);
+                let active_tool = self.paint_state.active_tool;
+                ui.label(
+                    egui::RichText::new(format!(
+                        "目前工具 / Tool: {} {}",
+                        active_tool.icon(),
+                        self.tr(active_tool.text_key())
+                    ))
+                    .color(crate::theme::MUTED_TEXT),
+                );
+            });
+
+        ui.add_space(8.0);
+
+        // Group 2: Quick export & convert
+        egui::Frame::new()
+            .fill(crate::theme::SURFACE)
+            .inner_margin(egui::Margin::same(12))
+            .stroke(Stroke::new(1.0, crate::theme::BORDER))
+            .corner_radius(6)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(self.tr(TextKey::QuickExportAndConvert)).strong());
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(self.tr(TextKey::FormatLabel));
+                    egui::ComboBox::from_id_salt("quick_export_fmt_combo")
+                        .selected_text(format!("{:?}", self.paint_state.quick_export_format))
+                        .show_ui(ui, |ui| {
+                            for fmt in [
+                                SupportedFormat::Png,
+                                SupportedFormat::Jpeg,
+                                SupportedFormat::Webp,
+                            ] {
+                                let label = format!("{:?}", fmt);
+                                ui.selectable_value(
+                                    &mut self.paint_state.quick_export_format,
+                                    fmt,
+                                    label,
+                                );
+                            }
+                        });
+                });
+
+                ui.add_space(6.0);
+                if ui
+                    .add_enabled(
+                        self.working_image.is_some(),
+                        egui::Button::new(egui::RichText::new(self.tr(TextKey::SaveCopy)).strong())
+                            .fill(crate::theme::PRIMARY)
+                            .stroke(Stroke::new(1.0, crate::theme::PRIMARY_DARK))
+                            .corner_radius(5),
+                    )
+                    .clicked()
+                {
+                    self.save_quick_copy();
+                }
+            });
+    }
+
+    fn history_tab_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading(self.tr(TextKey::TabHistory));
+        ui.separator();
+        ui.add_space(4.0);
+
+        ui.label(format!(
+            "影像復原步數 / Undo steps: {}",
+            self.image_undo_stack.len()
+        ));
+        ui.label(format!(
+            "影像重做步數 / Redo steps: {}",
+            self.image_redo_stack.len()
+        ));
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     self.can_undo_image(),
@@ -501,102 +1235,102 @@ impl PixelStudioApp {
             {
                 self.redo_image_edit(ctx);
             }
-
-            ui.separator();
-
-            let quick_workspace_label = self.tr(TextKey::QuickAnnotate);
-            let advanced_workspace_label = self.tr(TextKey::AdvancedTools);
-            ui.selectable_value(&mut self.workspace, Workspace::Quick, quick_workspace_label);
-            ui.selectable_value(
-                &mut self.workspace,
-                Workspace::Advanced,
-                advanced_workspace_label,
-            );
-
-            ui.menu_button(self.tr(TextKey::Project), |ui| {
-                ui.set_min_width(210.0);
-                if ui.button(self.tr(TextKey::OpenFolder)).clicked()
-                    && let Some(path) = rfd::FileDialog::new().pick_folder()
-                {
-                    self.open_folder(ctx, path);
-                    ui.close();
-                }
-                if ui.button(self.tr(TextKey::OpenProject)).clicked() {
-                    self.open_project(ctx);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.working_image.is_some(),
-                        egui::Button::new(self.tr(TextKey::SaveProject)),
-                    )
-                    .clicked()
-                {
-                    self.save_project();
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        self.working_image.is_some(),
-                        egui::Button::new(self.tr(TextKey::ClearCanvas)),
-                    )
-                    .clicked()
-                {
-                    self.clear_canvas(ctx);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.cleared_canvas.is_some(),
-                        egui::Button::new(self.tr(TextKey::RestoreCanvas)),
-                    )
-                    .clicked()
-                {
-                    self.restore_canvas(ctx);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.image_path.is_some(),
-                        egui::Button::new(self.tr(TextKey::Reload)),
-                    )
-                    .clicked()
-                    && let Some(path) = self.image_path.clone()
-                {
-                    self.open_image(ctx, path);
-                    ui.close();
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(self.tr(TextKey::Project));
-                    if ui.button(self.tr(TextKey::Previous)).clicked()
-                        && let Some(index) = self.previous_index()
-                    {
-                        self.open_folder_index(ctx, index);
-                    }
-                    if ui.button("下一張 / Next").clicked()
-                        && let Some(index) = self.next_index()
-                    {
-                        self.open_folder_index(ctx, index);
-                    }
-                });
-                ui.separator();
-                egui::ComboBox::from_label(self.tr(TextKey::Language))
-                    .selected_text(self.language.name())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.language,
-                            Language::ZhTw,
-                            Language::ZhTw.name(),
-                        );
-                        ui.selectable_value(&mut self.language, Language::En, Language::En.name());
-                    });
-            });
         });
 
-        ui.add_space(4.0);
-        self.quick_tool_bar(ui, ctx);
+        ui.add_space(12.0);
+        if ui
+            .add_enabled(
+                self.original_image.is_some(),
+                egui::Button::new(self.tr(TextKey::ResetEdits)),
+            )
+            .clicked()
+        {
+            self.reset_edits(ctx);
+        }
+    }
+
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // 1. Mode tag badge
+            let tag_text = self.tr(self.paint_state.active_mode.tag_text_key());
+            ui.label(
+                egui::RichText::new(tag_text)
+                    .strong()
+                    .color(crate::theme::PRIMARY_DARK),
+            );
+            ui.separator();
+
+            // 2. Prompt text
+            let prompt = if !self.status.is_empty() {
+                &self.status
+            } else {
+                self.tr(TextKey::StatusReadyPaint)
+            };
+            ui.label(prompt);
+            ui.separator();
+
+            // 3. Mouse coordinates
+            let coords_str = match self.paint_state.hover_pixel_coord {
+                Some((x, y)) => {
+                    format!("{}: {}, {} px", self.tr(TextKey::CoordinatesLabel), x, y)
+                }
+                None => format!("{}: -- , -- px", self.tr(TextKey::CoordinatesLabel)),
+            };
+            ui.label(egui::RichText::new(coords_str).color(crate::theme::MUTED_TEXT));
+            ui.separator();
+
+            // 4. Hover pixel color swatch & hex
+            if let Some(color) = self.paint_state.hover_pixel_color {
+                let c32 = paint::rgba_to_color32(color);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, c32);
+                ui.painter().rect_stroke(
+                    rect,
+                    2.0,
+                    Stroke::new(1.0, crate::theme::BORDER),
+                    StrokeKind::Outside,
+                );
+                let hex_str = format!(
+                    "#{:02X}{:02X}{:02X}{:02X} (R:{} G:{} B:{})",
+                    color[0], color[1], color[2], color[3], color[0], color[1], color[2]
+                );
+                ui.label(egui::RichText::new(hex_str).monospace().small());
+            } else {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
+                ui.painter().rect_stroke(
+                    rect,
+                    2.0,
+                    Stroke::new(1.0, crate::theme::BORDER),
+                    StrokeKind::Outside,
+                );
+                ui.label(egui::RichText::new("--").color(crate::theme::MUTED_TEXT));
+            }
+            ui.separator();
+
+            // 5. Canvas size
+            if let Some(img) = &self.working_image {
+                let size_str = format!(
+                    "{}: {} × {} px",
+                    self.tr(TextKey::CanvasSizeLabel),
+                    img.width(),
+                    img.height()
+                );
+                ui.label(size_str);
+            }
+            ui.separator();
+
+            // 6. Zoom slider
+            ui.label(format!(
+                "{}: {:.0}%",
+                self.tr(TextKey::ZoomLabel),
+                self.zoom * 100.0
+            ));
+            ui.add(
+                egui::Slider::new(&mut self.zoom, 0.05..=8.0)
+                    .show_value(false)
+                    .logarithmic(true),
+            );
+        });
     }
 
     fn metadata_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -2213,11 +2947,133 @@ impl PixelStudioApp {
                 ui.allocate_exact_size(available, Sense::hover());
             let image_center = viewport_rect.center() + self.preview_pan;
             let image_rect = Rect::from_center_size(image_center, display_size);
-            let response = if self.preview_tool == PreviewTool::Hand {
+
+            // Real-time hover tracking for status bar coordinates and color sampling
+            if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if image_rect.contains(hover_pos) {
+                    let img_pos = screen_to_image(hover_pos, image_rect, scale);
+                    let ix = img_pos.x.floor() as i32;
+                    let iy = img_pos.y.floor() as i32;
+                    self.paint_state.hover_pixel_coord = Some((ix, iy));
+                    if let Some(image) = &self.working_image {
+                        let rgba = image.to_rgba8();
+                        if ix >= 0
+                            && iy >= 0
+                            && (ix as u32) < rgba.width()
+                            && (iy as u32) < rgba.height()
+                        {
+                            self.paint_state.hover_pixel_color =
+                                studio_core::drawing::sample_color(&rgba, ix as u32, iy as u32);
+                        } else {
+                            self.paint_state.hover_pixel_color = None;
+                        }
+                    }
+                } else {
+                    self.paint_state.hover_pixel_coord = None;
+                    self.paint_state.hover_pixel_color = None;
+                }
+            } else {
+                self.paint_state.hover_pixel_coord = None;
+                self.paint_state.hover_pixel_color = None;
+            }
+
+            // Canvas drop shadow
+            ui.painter().rect_filled(
+                image_rect.translate(Vec2::new(2.0, 2.0)),
+                0.0,
+                Color32::from_black_alpha(25),
+            );
+            // Image texture
+            ui.painter().image(
+                texture_id,
+                image_rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+            // Canvas boundary
+            ui.painter().rect_stroke(
+                image_rect,
+                0.0,
+                Stroke::new(1.0, crate::theme::BORDER),
+                StrokeKind::Outside,
+            );
+
+            // Resize handles in Paint mode
+            let is_paint_mode = self.paint_state.active_mode == AppMode::Paint;
+            let (right_resp, bottom_resp, corner_resp) = if is_paint_mode {
+                let handle_size = 7.0_f32;
+                let hit_size = 14.0_f32;
+                let right_pos = Pos2::new(image_rect.right(), image_rect.center().y);
+                let bottom_pos = Pos2::new(image_rect.center().x, image_rect.bottom());
+                let corner_pos = image_rect.right_bottom();
+
+                let r_hit = Rect::from_center_size(right_pos, Vec2::splat(hit_size));
+                let b_hit = Rect::from_center_size(bottom_pos, Vec2::splat(hit_size));
+                let c_hit = Rect::from_center_size(corner_pos, Vec2::splat(hit_size));
+
+                let r_resp = ui.interact(r_hit, ui.id().with("handle_r"), Sense::drag());
+                let b_resp = ui.interact(b_hit, ui.id().with("handle_b"), Sense::drag());
+                let c_resp = ui.interact(c_hit, ui.id().with("handle_c"), Sense::drag());
+
+                if r_resp.hovered() || r_resp.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                } else if b_resp.hovered() || b_resp.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                } else if c_resp.hovered() || c_resp.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                }
+
+                let draw_handle = |pos: Pos2| {
+                    let rect = Rect::from_center_size(pos, Vec2::splat(handle_size));
+                    ui.painter().rect_filled(rect, 0.0, Color32::WHITE);
+                    ui.painter().rect_stroke(
+                        rect,
+                        0.0,
+                        Stroke::new(1.0, Color32::from_rgb(85, 85, 85)),
+                        StrokeKind::Outside,
+                    );
+                };
+                draw_handle(right_pos);
+                draw_handle(bottom_pos);
+                draw_handle(corner_pos);
+
+                self.handle_canvas_resize_drag(
+                    ui.ctx(),
+                    &r_resp,
+                    &b_resp,
+                    &c_resp,
+                    image_rect,
+                    scale,
+                );
+                (Some(r_resp), Some(b_resp), Some(c_resp))
+            } else {
+                (None, None, None)
+            };
+
+            let handle_active = right_resp
+                .as_ref()
+                .is_some_and(|r| r.hovered() || r.dragged())
+                || bottom_resp
+                    .as_ref()
+                    .is_some_and(|r| r.hovered() || r.dragged())
+                || corner_resp
+                    .as_ref()
+                    .is_some_and(|r| r.hovered() || r.dragged())
+                || self.paint_state.canvas_drag_handle.is_some();
+
+            let is_hand = self.paint_state.active_tool == PaintTool::Hand
+                || self.preview_tool == PreviewTool::Hand;
+            let response = if is_hand {
                 let pan_response =
                     ui.interact(viewport_rect, ui.id().with("canvas_pan"), Sense::drag());
                 if pan_response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if self.fit_to_window {
+                        self.zoom = scale;
+                    }
+                    self.fit_to_window = false;
+                    self.preview_pan += pan_response.drag_delta();
+                    ui.ctx().request_repaint();
                 } else if pan_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
@@ -2229,15 +3085,17 @@ impl PixelStudioApp {
                     Sense::click_and_drag(),
                 )
             };
-            ui.painter().image(
-                texture_id,
-                image_rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
-            );
+
             self.handle_middle_pan(ui.ctx(), viewport_rect, scale);
             self.handle_preview_zoom(ui.ctx(), &viewport_response, viewport_rect, scale);
-            self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
+
+            if !handle_active && !is_hand {
+                if is_paint_mode {
+                    self.handle_paint_canvas_interaction(ui.ctx(), &response, image_rect, scale);
+                } else {
+                    self.handle_canvas_interaction(ui.ctx(), &response, image_rect, scale);
+                }
+            }
             self.paint_selection(ui, image_rect, scale);
             self.paint_selected_layer(ui, image_rect, scale);
         } else {
@@ -2297,6 +3155,352 @@ impl PixelStudioApp {
                     });
             });
         }
+    }
+
+    fn handle_canvas_resize_drag(
+        &mut self,
+        ctx: &egui::Context,
+        right_resp: &egui::Response,
+        bottom_resp: &egui::Response,
+        corner_resp: &egui::Response,
+        image_rect: Rect,
+        scale: f32,
+    ) {
+        if right_resp.drag_started() {
+            self.paint_state.canvas_drag_handle = Some(DragHandle::Right);
+            if let Some(img) = &self.working_image {
+                self.paint_state.drag_resize_start_size = Some((img.width(), img.height()));
+            }
+        } else if bottom_resp.drag_started() {
+            self.paint_state.canvas_drag_handle = Some(DragHandle::Bottom);
+            if let Some(img) = &self.working_image {
+                self.paint_state.drag_resize_start_size = Some((img.width(), img.height()));
+            }
+        } else if corner_resp.drag_started() {
+            self.paint_state.canvas_drag_handle = Some(DragHandle::Corner);
+            if let Some(img) = &self.working_image {
+                self.paint_state.drag_resize_start_size = Some((img.width(), img.height()));
+            }
+        }
+
+        let is_dragging = right_resp.dragged() || bottom_resp.dragged() || corner_resp.dragged();
+        let is_stopped =
+            right_resp.drag_stopped() || bottom_resp.drag_stopped() || corner_resp.drag_stopped();
+
+        if let (Some(handle), Some((orig_w, orig_h))) = (
+            self.paint_state.canvas_drag_handle,
+            self.paint_state.drag_resize_start_size,
+        ) {
+            let pointer_pos =
+                ctx.input(|i| i.pointer.hover_pos().or_else(|| i.pointer.interact_pos()));
+            if let Some(pointer) = pointer_pos {
+                let current_w = match handle {
+                    DragHandle::Right | DragHandle::Corner => {
+                        let dx = (pointer.x - image_rect.min.x) / scale.max(0.01);
+                        (dx.round() as i32).clamp(16, 8192) as u32
+                    }
+                    DragHandle::Bottom => orig_w,
+                };
+                let current_h = match handle {
+                    DragHandle::Bottom | DragHandle::Corner => {
+                        let dy = (pointer.y - image_rect.min.y) / scale.max(0.01);
+                        (dy.round() as i32).clamp(16, 8192) as u32
+                    }
+                    DragHandle::Right => orig_h,
+                };
+
+                if is_dragging {
+                    self.status = format!(
+                        "調整畫布大小 / Resize Canvas: {} × {} px",
+                        current_w, current_h
+                    );
+                }
+
+                if is_stopped {
+                    self.paint_state.canvas_drag_handle = None;
+                    self.paint_state.drag_resize_start_size = None;
+                    if current_w != orig_w || current_h != orig_h {
+                        self.apply_canvas_resize(ctx, current_w, current_h);
+                    }
+                }
+            } else if is_stopped {
+                self.paint_state.canvas_drag_handle = None;
+                self.paint_state.drag_resize_start_size = None;
+            }
+        }
+    }
+
+    fn apply_canvas_resize(&mut self, ctx: &egui::Context, new_w: u32, new_h: u32) {
+        let rgba = if let Some(img) = &self.working_image {
+            img.to_rgba8()
+        } else {
+            return;
+        };
+        self.push_image_history();
+        let bg_color = paint::color32_to_rgba(self.paint_state.color_2_background);
+        let resized = studio_core::resize::canvas_resize(&rgba, new_w, new_h, bg_color);
+        self.working_image = Some(DynamicImage::ImageRgba8(resized));
+        self.sync_edit_dimensions();
+        self.update_texture(ctx);
+        self.status = match self.language {
+            Language::ZhTw => format!("畫布大小已調整為 {} × {} px。", new_w, new_h),
+            Language::En => format!("Canvas resized to {} × {} px.", new_w, new_h),
+        };
+    }
+
+    fn handle_paint_canvas_interaction(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        image_rect: Rect,
+        scale: f32,
+    ) {
+        if ctx.input(|input| {
+            input.pointer.button_down(egui::PointerButton::Middle)
+                || input.pointer.button_released(egui::PointerButton::Middle)
+        }) {
+            return;
+        }
+
+        let is_secondary = ctx.input(|i| {
+            i.pointer.button_down(egui::PointerButton::Secondary)
+                || i.pointer.button_released(egui::PointerButton::Secondary)
+        });
+
+        match self.paint_state.active_tool {
+            PaintTool::Hand => {}
+            PaintTool::Text => {
+                if response.clicked()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let image_pos = screen_to_image(pointer, image_rect, scale);
+                    self.add_text_layer_at(ctx, image_pos);
+                    self.paint_state.active_tool = PaintTool::Select;
+                }
+            }
+            PaintTool::Crop => {
+                if response.drag_started()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let image_pos = screen_to_image(pointer, image_rect, scale);
+                    self.selected_layer = None;
+                    self.selection_drag_start = Some(image_pos);
+                    self.selection_rect = Some(selection_rect_from_points(
+                        image_pos,
+                        image_pos,
+                        self.selection_shape,
+                        self.texture_size,
+                    ));
+                    self.drag_snapshot = None;
+                }
+                if response.dragged()
+                    && let (Some(start), Some(pointer)) =
+                        (self.selection_drag_start, response.interact_pointer_pos())
+                {
+                    let image_pos = screen_to_image(pointer, image_rect, scale);
+                    self.selection_rect = Some(selection_rect_from_points(
+                        start,
+                        image_pos,
+                        self.selection_shape,
+                        self.texture_size,
+                    ));
+                }
+            }
+            PaintTool::Select => {
+                self.handle_canvas_interaction(ctx, response, image_rect, scale);
+            }
+            PaintTool::Shapes => {
+                let shape_kind = ShapeKind::Rectangle;
+                if response.drag_started()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let image_pos = screen_to_image(pointer, image_rect, scale);
+                    self.selection_drag_start = Some(image_pos);
+                    self.selection_rect = Some(selection_rect_from_points(
+                        image_pos,
+                        image_pos,
+                        SelectionShape::Rectangle,
+                        self.texture_size,
+                    ));
+                }
+                if response.dragged()
+                    && let (Some(start), Some(pointer)) =
+                        (self.selection_drag_start, response.interact_pointer_pos())
+                {
+                    let image_pos = screen_to_image(pointer, image_rect, scale);
+                    self.selection_rect = Some(selection_rect_from_points(
+                        start,
+                        image_pos,
+                        SelectionShape::Rectangle,
+                        self.texture_size,
+                    ));
+                }
+                if response.drag_stopped()
+                    && let (Some(start), Some(pointer)) = (
+                        self.selection_drag_start.take(),
+                        response.interact_pointer_pos(),
+                    )
+                {
+                    let end = screen_to_image(pointer, image_rect, scale);
+                    if (end - start).length_sq() > 1.0 {
+                        self.add_shape_layer(ctx, shape_kind, start, end);
+                    }
+                    self.selection_rect = None;
+                }
+            }
+            PaintTool::ColorPicker => {
+                if (response.clicked() || response.drag_started())
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let img_pos = screen_to_image(pointer, image_rect, scale);
+                    let ix = img_pos.x.floor() as i32;
+                    let iy = img_pos.y.floor() as i32;
+                    if let Some(image) = &self.working_image {
+                        let rgba = image.to_rgba8();
+                        if ix >= 0
+                            && iy >= 0
+                            && (ix as u32) < rgba.width()
+                            && (iy as u32) < rgba.height()
+                            && let Some(sample) =
+                                studio_core::drawing::sample_color(&rgba, ix as u32, iy as u32)
+                        {
+                            let c32 = paint::rgba_to_color32(sample);
+                            if is_secondary {
+                                self.paint_state.color_2_background = c32;
+                            } else {
+                                self.paint_state.color_1_foreground = c32;
+                            }
+                            self.status = format!(
+                                "取色 / Picked: #{:02X}{:02X}{:02X}{:02X}",
+                                sample[0], sample[1], sample[2], sample[3]
+                            );
+                        }
+                    }
+                }
+            }
+            PaintTool::FloodFill => {
+                if (response.clicked() || response.drag_started())
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let img_pos = screen_to_image(pointer, image_rect, scale);
+                    let ix = img_pos.x.floor() as i32;
+                    let iy = img_pos.y.floor() as i32;
+                    if let Some(image) = &self.working_image {
+                        let mut rgba = image.to_rgba8();
+                        if ix >= 0
+                            && iy >= 0
+                            && (ix as u32) < rgba.width()
+                            && (iy as u32) < rgba.height()
+                        {
+                            self.push_image_history();
+                            let fill_color = paint::color32_to_rgba(if is_secondary {
+                                self.paint_state.color_2_background
+                            } else {
+                                self.paint_state.color_1_foreground
+                            });
+                            studio_core::drawing::flood_fill(
+                                &mut rgba, ix as u32, iy as u32, fill_color, 16,
+                            );
+                            self.working_image = Some(DynamicImage::ImageRgba8(rgba));
+                            self.update_texture(ctx);
+                            self.status = "油漆桶填色完成 / Flood fill completed.".to_owned();
+                        }
+                    }
+                }
+            }
+            PaintTool::Pencil
+            | PaintTool::Brush
+            | PaintTool::Highlighter
+            | PaintTool::Airbrush
+            | PaintTool::Calligraphy
+            | PaintTool::Eraser
+            | PaintTool::Mosaic => {
+                if response.drag_started()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    self.push_image_history();
+                    self.paint_state.is_drawing_stroke = true;
+                    let img_pos = screen_to_image(pointer, image_rect, scale);
+                    self.execute_raster_stroke(img_pos, img_pos, is_secondary);
+                    self.paint_state.last_mouse_image_pos = Some(img_pos);
+                    self.update_texture(ctx);
+                }
+                if response.dragged()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let img_pos = screen_to_image(pointer, image_rect, scale);
+                    let from_pos = self.paint_state.last_mouse_image_pos.unwrap_or(img_pos);
+                    self.execute_raster_stroke(from_pos, img_pos, is_secondary);
+                    self.paint_state.last_mouse_image_pos = Some(img_pos);
+                    self.update_texture(ctx);
+                }
+                if response.drag_stopped() {
+                    self.paint_state.is_drawing_stroke = false;
+                    self.paint_state.last_mouse_image_pos = None;
+                }
+            }
+        }
+    }
+
+    fn execute_raster_stroke(&mut self, from: Pos2, to: Pos2, is_secondary: bool) {
+        let Some(image) = &mut self.working_image else {
+            return;
+        };
+        let mut rgba = image.to_rgba8();
+        let x0 = from.x.round() as i32;
+        let y0 = from.y.round() as i32;
+        let x1 = to.x.round() as i32;
+        let y1 = to.y.round() as i32;
+
+        let tool = self.paint_state.active_tool;
+        let stroke_width = self.paint_state.brush_stroke_width;
+        let radius = self.paint_state.brush_radius();
+        let draw_color = if is_secondary || tool == PaintTool::Eraser {
+            paint::color32_to_rgba(self.paint_state.color_2_background)
+        } else {
+            paint::color32_to_rgba(self.paint_state.color_1_foreground)
+        };
+
+        match tool {
+            PaintTool::Pencil => {
+                studio_core::drawing::draw_pencil_line(&mut rgba, x0, y0, x1, y1, draw_color);
+            }
+            PaintTool::Brush => {
+                studio_core::drawing::draw_brush_stroke(
+                    &mut rgba, x0, y0, x1, y1, radius, draw_color,
+                );
+            }
+            PaintTool::Highlighter => {
+                studio_core::drawing::draw_highlighter_stroke(
+                    &mut rgba, x0, y0, x1, y1, radius, draw_color, 128,
+                );
+            }
+            PaintTool::Airbrush => {
+                let air_radius = (stroke_width * 1.5).clamp(4.0, 64.0);
+                studio_core::drawing::draw_airbrush(&mut rgba, x1, y1, air_radius, 25, draw_color);
+            }
+            PaintTool::Calligraphy => {
+                let width = (stroke_width * 1.5).clamp(3.0, 64.0);
+                studio_core::drawing::draw_calligraphy_stroke(
+                    &mut rgba, x0, y0, x1, y1, width, 45.0, draw_color,
+                );
+            }
+            PaintTool::Eraser => {
+                studio_core::drawing::draw_eraser(&mut rgba, x0, y0, x1, y1, radius, draw_color);
+            }
+            PaintTool::Mosaic => {
+                let block = (stroke_width as u32).clamp(4, 32);
+                let box_size = block * 3;
+                let rx = (x1.max(0) as u32).saturating_sub(box_size / 2);
+                let ry = (y1.max(0) as u32).saturating_sub(box_size / 2);
+                studio_core::drawing::apply_mosaic_region(
+                    &mut rgba, rx, ry, box_size, box_size, block,
+                );
+            }
+            _ => {}
+        }
+
+        self.working_image = Some(DynamicImage::ImageRgba8(rgba));
     }
 
     fn handle_middle_pan(&mut self, ctx: &egui::Context, viewport_rect: Rect, current_scale: f32) {
@@ -3522,35 +4726,79 @@ impl PixelStudioApp {
             return;
         }
 
-        let shortcut_tool = ctx.input(|input| {
-            if input.modifiers.ctrl || input.modifiers.command || input.modifiers.alt {
-                None
-            } else if input.key_pressed(egui::Key::V) {
-                Some(PreviewTool::Select)
-            } else if input.key_pressed(egui::Key::C) {
-                Some(PreviewTool::Crop)
-            } else if input.key_pressed(egui::Key::T) {
-                Some(PreviewTool::Text)
-            } else if input.key_pressed(egui::Key::L) {
-                Some(PreviewTool::Line)
-            } else if input.key_pressed(egui::Key::A) {
-                Some(PreviewTool::Arrow)
-            } else if input.key_pressed(egui::Key::R) {
-                Some(PreviewTool::Rectangle)
-            } else if input.key_pressed(egui::Key::H) {
-                Some(PreviewTool::Hand)
-            } else {
-                None
+        if self.paint_state.active_mode == AppMode::Paint {
+            let shortcut_paint_tool = ctx.input(|input| {
+                if input.modifiers.ctrl || input.modifiers.command || input.modifiers.alt {
+                    None
+                } else if input.key_pressed(egui::Key::B) {
+                    Some(PaintTool::Brush)
+                } else if input.key_pressed(egui::Key::P) {
+                    Some(PaintTool::Pencil)
+                } else if input.key_pressed(egui::Key::E) {
+                    Some(PaintTool::Eraser)
+                } else if input.key_pressed(egui::Key::G) {
+                    Some(PaintTool::FloodFill)
+                } else if input.key_pressed(egui::Key::I) {
+                    Some(PaintTool::ColorPicker)
+                } else if input.key_pressed(egui::Key::A) {
+                    Some(PaintTool::Airbrush)
+                } else if input.key_pressed(egui::Key::K) {
+                    Some(PaintTool::Calligraphy)
+                } else if input.key_pressed(egui::Key::H) {
+                    Some(PaintTool::Highlighter)
+                } else if input.key_pressed(egui::Key::X) {
+                    Some(PaintTool::Mosaic)
+                } else if input.key_pressed(egui::Key::T) {
+                    Some(PaintTool::Text)
+                } else if input.key_pressed(egui::Key::C) {
+                    Some(PaintTool::Crop)
+                } else if input.key_pressed(egui::Key::S) {
+                    Some(PaintTool::Select)
+                } else if input.key_pressed(egui::Key::U) {
+                    Some(PaintTool::Shapes)
+                } else if input.key_pressed(egui::Key::V) {
+                    Some(PaintTool::Hand)
+                } else {
+                    None
+                }
+            });
+            if let Some(tool) = shortcut_paint_tool {
+                self.paint_state.active_tool = tool;
+                self.status = format!("切換工具：{}", tool.label(self.language));
+                return;
             }
-        });
-        if let Some(tool) = shortcut_tool {
-            self.preview_tool = tool;
-            return;
+        } else {
+            let shortcut_tool = ctx.input(|input| {
+                if input.modifiers.ctrl || input.modifiers.command || input.modifiers.alt {
+                    None
+                } else if input.key_pressed(egui::Key::V) {
+                    Some(PreviewTool::Select)
+                } else if input.key_pressed(egui::Key::C) {
+                    Some(PreviewTool::Crop)
+                } else if input.key_pressed(egui::Key::T) {
+                    Some(PreviewTool::Text)
+                } else if input.key_pressed(egui::Key::L) {
+                    Some(PreviewTool::Line)
+                } else if input.key_pressed(egui::Key::A) {
+                    Some(PreviewTool::Arrow)
+                } else if input.key_pressed(egui::Key::R) {
+                    Some(PreviewTool::Rectangle)
+                } else if input.key_pressed(egui::Key::H) {
+                    Some(PreviewTool::Hand)
+                } else {
+                    None
+                }
+            });
+            if let Some(tool) = shortcut_tool {
+                self.preview_tool = tool;
+                return;
+            }
         }
 
         let (
             undo,
             redo,
+            copy,
             paste,
             delete,
             duplicate,
@@ -3566,7 +4814,10 @@ impl PixelStudioApp {
             (
                 input.modifiers.ctrl && input.key_pressed(egui::Key::Z),
                 input.modifiers.ctrl && input.key_pressed(egui::Key::Y),
-                input.modifiers.command && input.key_pressed(egui::Key::V),
+                (input.modifiers.ctrl || input.modifiers.command)
+                    && input.key_pressed(egui::Key::C),
+                (input.modifiers.ctrl || input.modifiers.command)
+                    && input.key_pressed(egui::Key::V),
                 input.key_pressed(egui::Key::Delete),
                 input.modifiers.ctrl && input.key_pressed(egui::Key::D),
                 input.modifiers.ctrl && input.modifiers.shift && input.key_pressed(egui::Key::S),
@@ -3579,6 +4830,11 @@ impl PixelStudioApp {
                 input.key_pressed(egui::Key::ArrowDown),
             )
         });
+
+        if copy && self.working_image.is_some() {
+            self.copy_canvas_to_clipboard();
+            return;
+        }
 
         if save_copy {
             self.save_as_new_file();
