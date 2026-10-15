@@ -10,7 +10,10 @@ use img_parts::{Bytes, DynImage, ImageEXIF, ImageICC};
 pub fn copy_metadata(src: &Path, dst: &Path) -> anyhow::Result<bool> {
     let src_bytes = Bytes::from(std::fs::read(src)?);
     let dst_bytes = Bytes::from(std::fs::read(dst)?);
-    let (Some(s), Some(mut d)) = (DynImage::from_bytes(src_bytes)?, DynImage::from_bytes(dst_bytes)?) else {
+    let (Some(s), Some(mut d)) = (
+        DynImage::from_bytes(src_bytes)?,
+        DynImage::from_bytes(dst_bytes)?,
+    ) else {
         return Ok(false);
     };
     d.set_exif(s.exif());

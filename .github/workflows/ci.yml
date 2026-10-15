@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libgtk-3-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev \
+            libwayland-dev libfontconfig1-dev libxdo-dev fonts-noto-cjk
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch OCR models
+        shell: bash
+        run: ./scripts/fetch-models.sh
+      - name: Build (release)
+        run: cargo build --release --locked
+      - name: Test
+        shell: bash
+        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --release --locked --workspace
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          B=target/release/studio-cli
+          $B --version
+          PIXEL_STUDIO_MODEL_DIR="$PWD/models" $B redact crates/studio-core/tests/fixtures/redact_sample.png redacted.png
+          $B convert redacted.png redacted.webp --format webp --quality 80
+          $B info redacted.webp
+      - name: Shell registration smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export HOME=$(mktemp -d)
+          target/release/pixel-studio --register-shell
+          test -f $HOME/.local/share/applications/pixel-studio.desktop
+          grep -q "image/webp" $HOME/.local/share/applications/pixel-studio.desktop
+          target/release/pixel-studio --unregister-shell
+          test ! -f $HOME/.local/share/applications/pixel-studio.desktop
+      - name: GUI screenshot (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/win-screenshot.ps1
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && always()
+        with:
+          name: windows-gui-screenshot
+          path: win-screenshot.png
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-installer.ps1
+      - name: Installer smoke test (silent install / uninstall)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/installer-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: pixel-studio-setup-windows-x64
+          path: dist/pixel-studio-setup-windows-x64.exe
+      - name: Validate app Info.plist
+        if: runner.os == 'macOS'
+        run: plutil -lint scripts/Info.plist

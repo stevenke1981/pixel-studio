@@ -79,7 +79,12 @@ pub struct StickerStyle {
 
 impl Default for StickerStyle {
     fn default() -> Self {
-        Self { fill: [229, 57, 53, 255], stroke: [255, 255, 255, 255], stroke_width: 4.0, shadow: true }
+        Self {
+            fill: [229, 57, 53, 255],
+            stroke: [255, 255, 255, 255],
+            stroke_width: 4.0,
+            shadow: true,
+        }
     }
 }
 
@@ -89,12 +94,16 @@ const GREEN: [u8; 4] = [67, 160, 71, 255];
 const BLUE: [u8; 4] = [30, 136, 229, 255];
 
 fn p(fill_path: &str) -> String {
-    format!(r#"<path d="{fill_path}" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}" stroke-linejoin="round"/>"#)
+    format!(
+        r#"<path d="{fill_path}" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}" stroke-linejoin="round"/>"#
+    )
 }
 
 fn ring(shape: &str) -> String {
     // Highlight outlines: the fill colour is used as the stroke so they stay hollow.
-    format!(r#"{shape} fill="none" stroke="{{S}}" stroke-width="calc" /><!--outer-->{shape} fill="none" stroke="{{F}}" stroke-width="8"/>"#)
+    format!(
+        r#"{shape} fill="none" stroke="{{S}}" stroke-width="calc" /><!--outer-->{shape} fill="none" stroke="{{F}}" stroke-width="8"/>"#
+    )
 }
 
 fn label(text: &str, fill: &str, font: u32) -> String {
@@ -184,11 +193,35 @@ pub fn library() -> Vec<Sticker> {
         ("social-pin".into(), Social, "location pin map 地點 打卡", format!(r#"{}<circle cx="50" cy="38" r="12" fill="white"/>"#, p("M50 94 C30 66 18 52 18 38 C18 20 32 6 50 6 C68 6 82 20 82 38 C82 52 70 66 50 94 Z")), RED),
     ];
     for n in 1..=9 {
-        v.push((format!("badge-{n}"), Badges, "number badge step 數字 步驟", digit_badge(n), RED));
+        v.push((
+            format!("badge-{n}"),
+            Badges,
+            "number badge step 數字 步驟",
+            digit_badge(n),
+            RED,
+        ));
     }
-    v.push(("badge-plus".into(), Badges, "plus add 加", digit_badge(0).replace(">0<", ">+<"), GREEN));
-    v.push(("badge-exclaim".into(), Badges, "exclamation important 重要", digit_badge(0).replace(">0<", ">!<"), [255, 87, 34, 255]));
-    v.push(("badge-question".into(), Badges, "question help 問題", digit_badge(0).replace(">0<", ">?<"), BLUE));
+    v.push((
+        "badge-plus".into(),
+        Badges,
+        "plus add 加",
+        digit_badge(0).replace(">0<", ">+<"),
+        GREEN,
+    ));
+    v.push((
+        "badge-exclaim".into(),
+        Badges,
+        "exclamation important 重要",
+        digit_badge(0).replace(">0<", ">!<"),
+        [255, 87, 34, 255],
+    ));
+    v.push((
+        "badge-question".into(),
+        Badges,
+        "question help 問題",
+        digit_badge(0).replace(">0<", ">?<"),
+        BLUE,
+    ));
     v.push(("badge-seal".into(), Badges, "seal award best 推薦 獎章", p("M50 4 L60 14 L74 10 L78 24 L92 28 L88 42 L98 52 L88 62 L92 76 L78 80 L74 94 L60 90 L50 100 L40 90 L26 94 L22 80 L8 76 L12 62 L2 52 L12 42 L8 28 L22 24 L26 10 L40 14 Z"), YELLOW));
     v.into_iter()
         .map(|(id, category, keywords, svg, default_fill)| Sticker {
@@ -202,7 +235,11 @@ pub fn library() -> Vec<Sticker> {
 }
 
 /// Case-insensitive search across id and keywords.
-pub fn search<'a>(lib: &'a [Sticker], query: &str, category: Option<StickerCategory>) -> Vec<&'a Sticker> {
+pub fn search<'a>(
+    lib: &'a [Sticker],
+    query: &str,
+    category: Option<StickerCategory>,
+) -> Vec<&'a Sticker> {
     let q = query.trim().to_lowercase();
     lib.iter()
         .filter(|s| category.is_none_or(|c| s.category == c))
@@ -223,9 +260,19 @@ pub fn styled_svg(sticker: &Sticker, style: &StickerStyle) -> String {
     let w = style.stroke_width.max(0.0);
     let body = sticker
         .svg
-        .replace("stroke-width=\"calc\"", &format!("stroke-width=\"{}\"", 8.0 + w * 2.0))
+        .replace(
+            "stroke-width=\"calc\"",
+            &format!("stroke-width=\"{}\"", 8.0 + w * 2.0),
+        )
         .replace("{F}", &hex(style.fill))
-        .replace("{S}", &if w > 0.0 { hex(style.stroke) } else { "none".into() })
+        .replace(
+            "{S}",
+            &if w > 0.0 {
+                hex(style.stroke)
+            } else {
+                "none".into()
+            },
+        )
         .replace("{W}", &format!("{w}"))
         .replace("{FONT}", FONT_STACK);
     let fo = f32::from(style.fill[3]) / 255.0;
@@ -236,7 +283,11 @@ pub fn styled_svg(sticker: &Sticker, style: &StickerStyle) -> String {
     } else {
         String::new()
     };
-    let filter = if style.shadow { r#" filter="url(#sh)""# } else { "" };
+    let filter = if style.shadow {
+        r#" filter="url(#sh)""#
+    } else {
+        ""
+    };
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -6 112 112">{shadow}<g opacity="{fo}"{filter}>{body}</g></svg>"#
     )
@@ -252,8 +303,21 @@ fn font_db() -> &'static resvg::usvg::fontdb::Database {
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
         // Make the generic `sans-serif` resolve to something that exists on this machine.
-        let have = |n: &str| db.faces().any(|f| f.families.iter().any(|(fam, _)| fam == n));
-        if let Some(f) = ["Arial", "Segoe UI", "Helvetica", "DejaVu Sans", "Liberation Sans", "Noto Sans"].into_iter().find(|n| have(n)) {
+        let have = |n: &str| {
+            db.faces()
+                .any(|f| f.families.iter().any(|(fam, _)| fam == n))
+        };
+        if let Some(f) = [
+            "Arial",
+            "Segoe UI",
+            "Helvetica",
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Noto Sans",
+        ]
+        .into_iter()
+        .find(|n| have(n))
+        {
             db.set_sans_serif_family(f);
         }
         db
@@ -261,15 +325,26 @@ fn font_db() -> &'static resvg::usvg::fontdb::Database {
 }
 
 /// Rasterize a sticker to an RGBA image of `width` x `height` pixels.
-pub fn render_sticker(sticker: &Sticker, style: &StickerStyle, width: u32, height: u32) -> DynamicImage {
+pub fn render_sticker(
+    sticker: &Sticker,
+    style: &StickerStyle,
+    width: u32,
+    height: u32,
+) -> DynamicImage {
     let svg = styled_svg(sticker, style);
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = std::sync::Arc::new(font_db().clone());
     let (w, h) = (width.max(1), height.max(1));
     let mut out = RgbaImage::new(w, h);
-    if let (Ok(tree), Some(mut pixmap)) = (resvg::usvg::Tree::from_str(&svg, &opt), resvg::tiny_skia::Pixmap::new(w, h)) {
+    if let (Ok(tree), Some(mut pixmap)) = (
+        resvg::usvg::Tree::from_str(&svg, &opt),
+        resvg::tiny_skia::Pixmap::new(w, h),
+    ) {
         let size = tree.size();
-        let t = resvg::tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+        let t = resvg::tiny_skia::Transform::from_scale(
+            w as f32 / size.width(),
+            h as f32 / size.height(),
+        );
         resvg::render(&tree, t, &mut pixmap.as_mut());
         // tiny-skia uses premultiplied alpha
         for (dst, src) in out.pixels_mut().zip(pixmap.pixels()) {
@@ -313,7 +388,10 @@ mod tests {
     #[test]
     fn every_sticker_renders_non_empty() {
         for s in library() {
-            let style = StickerStyle { fill: s.default_fill, ..Default::default() };
+            let style = StickerStyle {
+                fill: s.default_fill,
+                ..Default::default()
+            };
             let img = render_sticker(&s, &style, 64, 64).to_rgba8();
             let opaque = img.pixels().filter(|p| p[3] > 0).count();
             assert!(opaque > 64, "{} rendered {opaque} px", s.id);
@@ -324,7 +402,11 @@ mod tests {
     fn recolor_changes_pixels() {
         let lib = library();
         let s = find(&lib, "heart").unwrap();
-        let mut style = StickerStyle { shadow: false, stroke_width: 0.0, ..Default::default() };
+        let mut style = StickerStyle {
+            shadow: false,
+            stroke_width: 0.0,
+            ..Default::default()
+        };
         style.fill = [0, 0, 255, 255];
         let img = render_sticker(s, &style, 100, 100).to_rgba8();
         let c = img.get_pixel(50, 50);
@@ -335,7 +417,11 @@ mod tests {
     fn search_works_in_both_languages() {
         let lib = library();
         assert!(search(&lib, "愛心", None).iter().any(|s| s.id == "heart"));
-        assert!(search(&lib, "SALE", None).iter().any(|s| s.id == "label-sale"));
+        assert!(
+            search(&lib, "SALE", None)
+                .iter()
+                .any(|s| s.id == "label-sale")
+        );
         assert_eq!(search(&lib, "", Some(StickerCategory::Badges)).len(), 13);
     }
 
@@ -344,9 +430,17 @@ mod tests {
         // A label with text must have white glyph pixels inside the coloured plate.
         let lib = library();
         let s = find(&lib, "label-new").unwrap();
-        let style = StickerStyle { fill: [229, 57, 53, 255], stroke_width: 0.0, shadow: false, ..Default::default() };
+        let style = StickerStyle {
+            fill: [229, 57, 53, 255],
+            stroke_width: 0.0,
+            shadow: false,
+            ..Default::default()
+        };
         let img = render_sticker(s, &style, 200, 200).to_rgba8();
-        let white = img.pixels().filter(|p| p[0] > 240 && p[1] > 240 && p[2] > 240 && p[3] > 240).count();
+        let white = img
+            .pixels()
+            .filter(|p| p[0] > 240 && p[1] > 240 && p[2] > 240 && p[3] > 240)
+            .count();
         assert!(white > 200, "glyph pixels: {white}");
     }
 }

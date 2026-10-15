@@ -30,7 +30,9 @@ pub fn configure_fonts(ctx: &egui::Context) {
     for (i, path) in symbol_fonts.iter().enumerate() {
         if let Ok(bytes) = std::fs::read(path) {
             let name = format!("symbol_fallback_{i}");
-            fonts.font_data.insert(name.clone(), egui::FontData::from_owned(bytes).into());
+            fonts
+                .font_data
+                .insert(name.clone(), egui::FontData::from_owned(bytes).into());
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts.families.entry(family).or_default().push(name.clone());
             }
@@ -71,9 +73,15 @@ pub fn list_system_font_paths() -> Vec<PathBuf> {
         PathBuf::from("/usr/share/fonts/opentype/noto"),
     ]
     .into_iter()
-    .chain(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Microsoft\Windows\Fonts")))
+    .chain(
+        std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Microsoft\Windows\Fonts")),
+    )
     .collect();
-    for entry in dirs.iter().filter_map(|d| std::fs::read_dir(d).ok()).flat_map(|e| e.flatten()) {
+    for entry in dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|e| e.flatten())
+    {
         let path = entry.path();
         let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
             continue;

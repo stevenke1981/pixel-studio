@@ -146,7 +146,16 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Redact { input, output, style, padding, keyword, all, keep_metadata, quality } => {
+        Command::Redact {
+            input,
+            output,
+            style,
+            padding,
+            keyword,
+            all,
+            keep_metadata,
+            quality,
+        } => {
             use studio_core::redact::{RedactStyle, apply_redactions, select_by_keyword};
             let image = load_dynamic_image(&input)?;
             let dir = studio_core::ocr::ensure_models()?;
@@ -162,7 +171,10 @@ fn main() -> Result<()> {
                 println!(
                     "{} {:>4},{:<4} {:>4}x{:<3} {:<8} {}",
                     if b.selected { "[x]" } else { "[ ]" },
-                    b.x, b.y, b.width, b.height,
+                    b.x,
+                    b.y,
+                    b.width,
+                    b.height,
                     b.kind.map(|k| k.label()).unwrap_or("-"),
                     b.text
                 );
@@ -174,7 +186,15 @@ fn main() -> Result<()> {
             };
             let (out, n) = apply_redactions(&image, &boxes, style, padding);
             let format = studio_core::convert::require_output_format(&output)?;
-            save_dynamic_image(&out, &output, ConvertOptions { format, quality, ..Default::default() })?;
+            save_dynamic_image(
+                &out,
+                &output,
+                ConvertOptions {
+                    format,
+                    quality,
+                    ..Default::default()
+                },
+            )?;
             if keep_metadata {
                 studio_core::metadata::copy_metadata(&input, &output)?;
             }

@@ -74,6 +74,8 @@ pub enum ShapeKind {
     Line,
     Arrow,
     Rectangle,
+    Ellipse,
+    Triangle,
 }
 
 /// A serializable vector annotation layer.
@@ -101,6 +103,8 @@ impl ShapeLayer {
                 ShapeKind::Line => "Line",
                 ShapeKind::Arrow => "Arrow",
                 ShapeKind::Rectangle => "Rectangle",
+                ShapeKind::Ellipse => "Ellipse",
+                ShapeKind::Triangle => "Triangle",
             }
             .to_owned(),
             kind,
@@ -387,6 +391,40 @@ fn draw_shape_layer(canvas: &mut RgbaImage, layer: &ShapeLayer) {
     let max_y = layer.y1.max(layer.y2);
 
     match layer.kind {
+        ShapeKind::Ellipse => {
+            let (cx, cy) = ((min_x + max_x) / 2, (min_y + max_y) / 2);
+            let (rx, ry) = (((max_x - min_x) / 2).max(1), ((max_y - min_y) / 2).max(1));
+            if layer.filled {
+                imageproc::drawing::draw_filled_ellipse_mut(canvas, (cx, cy), rx, ry, fill);
+            }
+            for i in 0..width as i32 {
+                if rx - i < 1 || ry - i < 1 {
+                    break;
+                }
+                imageproc::drawing::draw_hollow_ellipse_mut(
+                    canvas,
+                    (cx, cy),
+                    rx - i,
+                    ry - i,
+                    stroke,
+                );
+            }
+        }
+        ShapeKind::Triangle => {
+            let top = ((min_x + max_x) / 2, min_y);
+            let (bl, br) = ((min_x, max_y), (max_x, max_y));
+            if layer.filled && max_x > min_x && max_y > min_y {
+                let pts = [
+                    imageproc::point::Point::new(top.0, top.1),
+                    imageproc::point::Point::new(br.0, br.1),
+                    imageproc::point::Point::new(bl.0, bl.1),
+                ];
+                imageproc::drawing::draw_polygon_mut(canvas, &pts, fill);
+            }
+            for (a, b) in [(top, br), (br, bl), (bl, top)] {
+                draw_thick_line(canvas, a.0, a.1, b.0, b.1, stroke, width);
+            }
+        }
         ShapeKind::Line => draw_thick_line(
             canvas, layer.x1, layer.y1, layer.x2, layer.y2, stroke, width,
         ),

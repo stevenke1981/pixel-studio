@@ -24,7 +24,10 @@ pub fn model_dirs() -> Vec<PathBuf> {
     if let Some(d) = std::env::var_os("PIXEL_STUDIO_MODEL_DIR") {
         dirs.push(PathBuf::from(d));
     }
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
         dirs.push(exe_dir.join("models"));
     }
     if let Some(d) = dirs::data_dir() {
@@ -54,7 +57,11 @@ pub fn ensure_models() -> anyhow::Result<PathBuf> {
             continue;
         }
         let mut resp = ureq::get(&format!("{MODEL_BASE_URL}{name}")).call()?;
-        let bytes = resp.body_mut().with_config().limit(64 * 1024 * 1024).read_to_vec()?;
+        let bytes = resp
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024 * 1024)
+            .read_to_vec()?;
         let tmp = target.with_extension("part");
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &target)?;

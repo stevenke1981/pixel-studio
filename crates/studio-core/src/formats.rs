@@ -83,7 +83,10 @@ impl SupportedFormat {
     }
 
     pub fn supports_alpha(self) -> bool {
-        matches!(self, Self::Png | Self::Webp | Self::Tiff | Self::Gif | Self::Ico)
+        matches!(
+            self,
+            Self::Png | Self::Webp | Self::Tiff | Self::Gif | Self::Ico
+        )
     }
 }
 

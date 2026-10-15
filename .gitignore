@@ -4,3 +4,5 @@
 *.log
 .opencode/
 
+models/
+installer/ChineseTraditional.isl

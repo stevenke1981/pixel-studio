@@ -287,6 +287,10 @@ pub struct PaintState {
     pub drag_resize_start_pos: Option<Pos2>,
     /// Whether an active drawing stroke is currently ongoing.
     pub is_drawing_stroke: bool,
+    /// Shape drawn by the Shapes tool.
+    pub shape_kind: studio_core::ShapeKind,
+    /// Fill shapes with Color 2.
+    pub shape_filled: bool,
 }
 
 impl Default for PaintState {
@@ -309,6 +313,8 @@ impl Default for PaintState {
             drag_resize_start_size: None,
             drag_resize_start_pos: None,
             is_drawing_stroke: false,
+            shape_kind: studio_core::ShapeKind::Rectangle,
+            shape_filled: false,
         }
     }
 }

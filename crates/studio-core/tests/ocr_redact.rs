@@ -13,7 +13,11 @@ fn detects_and_redacts_sensitive_lines() {
     if std::env::var_os("PIXEL_STUDIO_SKIP_OCR").is_some() {
         return;
     }
-    let img = image::open(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/redact_sample.png")).unwrap();
+    let img = image::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/redact_sample.png"
+    ))
+    .unwrap();
     let dir = studio_core::ocr::ensure_models().expect("models");
     let det = studio_core::ocr::TextDetector::load(&dir).unwrap();
     let mut boxes = det.detect(&img).unwrap();
@@ -27,14 +31,23 @@ fn detects_and_redacts_sensitive_lines() {
     ];
     for (rect, kind) in expected {
         assert!(
-            boxes.iter().any(|b| b.selected && b.kind == Some(kind) && overlaps(b, rect)),
+            boxes
+                .iter()
+                .any(|b| b.selected && b.kind == Some(kind) && overlaps(b, rect)),
             "{kind:?} not pre-selected near {rect:?}: {boxes:#?}"
         );
     }
     // Chinese-only lines are still *detected* (script-agnostic detector).
-    assert!(boxes.iter().any(|b| overlaps(b, [30, 330, 434, 356])), "address line detected");
+    assert!(
+        boxes.iter().any(|b| overlaps(b, [30, 330, 434, 356])),
+        "address line detected"
+    );
     // Non-sensitive line is not pre-selected.
-    assert!(!boxes.iter().any(|b| b.selected && overlaps(b, [30, 372, 509, 401]) && b.text.contains("Meeting")));
+    assert!(
+        !boxes
+            .iter()
+            .any(|b| b.selected && overlaps(b, [30, 372, 509, 401]) && b.text.contains("Meeting"))
+    );
     assert!(select_by_keyword(&mut boxes, "meeting") >= 1);
 
     let (out, n) = apply_redactions(&img, &boxes, RedactStyle::default(), 3);

@@ -21,7 +21,15 @@ pub struct RedactBox {
 
 impl RedactBox {
     pub fn manual(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height, text: String::new(), selected: true, kind: None }
+        Self {
+            x,
+            y,
+            width,
+            height,
+            text: String::new(),
+            selected: true,
+            kind: None,
+        }
     }
     pub fn contains(&self, px: f32, py: f32) -> bool {
         px >= self.x as f32
@@ -138,7 +146,12 @@ pub fn classify_sensitive(text: &str) -> Option<SensitiveKind> {
     {
         return Some(SensitiveKind::Phone);
     }
-    if re(&URL, r"(?i)\b(?:https?://|www\.)[^\s]+|\b[a-z0-9\-]+\.(?:com|net|org|tw|io|dev)(?:/[^\s]*)?\b").is_match(t) {
+    if re(
+        &URL,
+        r"(?i)\b(?:https?://|www\.)[^\s]+|\b[a-z0-9\-]+\.(?:com|net|org|tw|io|dev)(?:/[^\s]*)?\b",
+    )
+    .is_match(t)
+    {
         return Some(SensitiveKind::Url);
     }
     if re(&ADDR_ZH, r"[市縣區鄉鎮].{0,12}[路街道巷弄].{0,10}\d+\s*號|\d+\s*號\s*\d*\s*樓?").is_match(t)
@@ -267,15 +280,42 @@ mod tests {
 
     #[test]
     fn classifies_sensitive_strings() {
-        assert_eq!(classify_sensitive("mail: alice@example.com"), Some(SensitiveKind::Email));
-        assert_eq!(classify_sensitive("0912-345-678"), Some(SensitiveKind::Phone));
-        assert_eq!(classify_sensitive("+886 2 2345 6789"), Some(SensitiveKind::Phone));
-        assert_eq!(classify_sensitive("+1 (415) 555-0132"), Some(SensitiveKind::Phone));
-        assert_eq!(classify_sensitive("ID A123456789"), Some(SensitiveKind::TaiwanId));
-        assert_eq!(classify_sensitive("4111 1111 1111 1111"), Some(SensitiveKind::CreditCard));
-        assert_eq!(classify_sensitive("https://example.com/x"), Some(SensitiveKind::Url));
-        assert_eq!(classify_sensitive("台北市信義區信義路五段7號"), Some(SensitiveKind::Address));
-        assert_eq!(classify_sensitive("221 Baker Street"), Some(SensitiveKind::Address));
+        assert_eq!(
+            classify_sensitive("mail: alice@example.com"),
+            Some(SensitiveKind::Email)
+        );
+        assert_eq!(
+            classify_sensitive("0912-345-678"),
+            Some(SensitiveKind::Phone)
+        );
+        assert_eq!(
+            classify_sensitive("+886 2 2345 6789"),
+            Some(SensitiveKind::Phone)
+        );
+        assert_eq!(
+            classify_sensitive("+1 (415) 555-0132"),
+            Some(SensitiveKind::Phone)
+        );
+        assert_eq!(
+            classify_sensitive("ID A123456789"),
+            Some(SensitiveKind::TaiwanId)
+        );
+        assert_eq!(
+            classify_sensitive("4111 1111 1111 1111"),
+            Some(SensitiveKind::CreditCard)
+        );
+        assert_eq!(
+            classify_sensitive("https://example.com/x"),
+            Some(SensitiveKind::Url)
+        );
+        assert_eq!(
+            classify_sensitive("台北市信義區信義路五段7號"),
+            Some(SensitiveKind::Address)
+        );
+        assert_eq!(
+            classify_sensitive("221 Baker Street"),
+            Some(SensitiveKind::Address)
+        );
         assert_eq!(classify_sensitive("Hello world"), None);
         assert_eq!(classify_sensitive("Version 2026"), None);
     }
@@ -290,7 +330,8 @@ mod tests {
 
     #[test]
     fn solid_redaction_is_destructive_and_padded() {
-        let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(50, 50, Rgba([255, 255, 255, 255])));
+        let img =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(50, 50, Rgba([255, 255, 255, 255])));
         let boxes = vec![RedactBox::manual(10, 10, 10, 10)];
         let (out, n) = apply_redactions(&img, &boxes, RedactStyle::default(), 2);
         let out = out.to_rgba8();
@@ -304,8 +345,16 @@ mod tests {
     #[test]
     fn keyword_and_preselect() {
         let mut boxes = vec![
-            RedactBox { text: "Call 0912345678".into(), selected: false, ..RedactBox::manual(0, 0, 1, 1) },
-            RedactBox { text: "Project Alpha".into(), selected: false, ..RedactBox::manual(0, 0, 1, 1) },
+            RedactBox {
+                text: "Call 0912345678".into(),
+                selected: false,
+                ..RedactBox::manual(0, 0, 1, 1)
+            },
+            RedactBox {
+                text: "Project Alpha".into(),
+                selected: false,
+                ..RedactBox::manual(0, 0, 1, 1)
+            },
         ];
         assert_eq!(preselect_sensitive(&mut boxes), 1);
         assert!(!boxes[1].selected);
@@ -317,6 +366,9 @@ mod tests {
     fn padding_clamps_to_bounds() {
         let b = RedactBox::manual(-5, -5, 10, 10);
         assert_eq!(padded_rect(&b, 3, 20, 20), Some((0, 0, 8, 8)));
-        assert_eq!(padded_rect(&RedactBox::manual(30, 30, 5, 5), 0, 20, 20), None);
+        assert_eq!(
+            padded_rect(&RedactBox::manual(30, 30, 5, 5), 0, 20, 20),
+            None
+        );
     }
 }

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>Pixel Studio</string>
+	<key>CFBundleDisplayName</key><string>Pixel Studio</string>
+	<key>CFBundleIdentifier</key><string>io.github.stevenke1981.pixel-studio</string>
+	<key>CFBundleExecutable</key><string>pixel-studio</string>
+	<key>CFBundleIconFile</key><string>PixelStudio</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>__VERSION__</string>
+	<key>CFBundleVersion</key><string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key><string>11.0</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>Image</string>
+			<key>CFBundleTypeRole</key><string>Editor</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.png</string>
+				<string>public.jpeg</string>
+				<string>org.webmproject.webp</string>
+				<string>com.compuserve.gif</string>
+				<string>com.microsoft.bmp</string>
+				<string>com.microsoft.ico</string>
+				<string>public.tiff</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

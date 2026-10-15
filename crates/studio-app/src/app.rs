@@ -364,7 +364,11 @@ impl PixelStudioApp {
 /// zh-TW for Chinese (or unknown) system locales, English otherwise.
 fn detect_language() -> Language {
     if let Ok(l) = std::env::var("PIXEL_STUDIO_LANG") {
-        return if l.starts_with("en") { Language::En } else { Language::ZhTw };
+        return if l.starts_with("en") {
+            Language::En
+        } else {
+            Language::ZhTw
+        };
     }
     match sys_locale::get_locale() {
         Some(l) if !l.to_ascii_lowercase().starts_with("zh") => Language::En,
@@ -386,7 +390,10 @@ impl eframe::App for PixelStudioApp {
         self.open_dropped_files(ui.ctx());
         self.handle_keyboard_shortcuts(ui.ctx());
         self.extras_poll(ui.ctx());
-        if ui.ctx().input(|i| i.modifiers.command && i.key_pressed(egui::Key::G)) {
+        if ui
+            .ctx()
+            .input(|i| i.modifiers.command && i.key_pressed(egui::Key::G))
+        {
             self.ex.show_grid = !self.ex.show_grid;
         }
 
@@ -3348,7 +3355,7 @@ impl PixelStudioApp {
                 self.handle_canvas_interaction(ctx, response, image_rect, scale);
             }
             PaintTool::Shapes => {
-                let shape_kind = ShapeKind::Rectangle;
+                let shape_kind = self.paint_state.shape_kind;
                 if response.drag_started()
                     && let Some(pointer) = response.interact_pointer_pos()
                 {
@@ -3510,9 +3517,7 @@ impl PixelStudioApp {
                 studio_core::drawing::draw_pencil_line(rgba, x0, y0, x1, y1, draw_color);
             }
             PaintTool::Brush => {
-                studio_core::drawing::draw_brush_stroke(
-                    rgba, x0, y0, x1, y1, radius, draw_color,
-                );
+                studio_core::drawing::draw_brush_stroke(rgba, x0, y0, x1, y1, radius, draw_color);
             }
             PaintTool::Highlighter => {
                 studio_core::drawing::draw_highlighter_stroke(
@@ -3537,13 +3542,10 @@ impl PixelStudioApp {
                 let box_size = block * 3;
                 let rx = (x1.max(0) as u32).saturating_sub(box_size / 2);
                 let ry = (y1.max(0) as u32).saturating_sub(box_size / 2);
-                studio_core::drawing::apply_mosaic_region(
-                    rgba, rx, ry, box_size, box_size, block,
-                );
+                studio_core::drawing::apply_mosaic_region(rgba, rx, ry, box_size, box_size, block);
             }
             _ => {}
         }
-
     }
 
     fn handle_middle_pan(&mut self, ctx: &egui::Context, viewport_rect: Rect, current_scale: f32) {
@@ -5138,7 +5140,26 @@ impl PixelStudioApp {
             (Language::En, ShapeKind::Rectangle) => {
                 format!("Rectangle {}", self.compose_layers.len() + 1)
             }
+            (Language::ZhTw, ShapeKind::Ellipse) => {
+                format!("橢圓 {}", self.compose_layers.len() + 1)
+            }
+            (Language::En, ShapeKind::Ellipse) => {
+                format!("Ellipse {}", self.compose_layers.len() + 1)
+            }
+            (Language::ZhTw, ShapeKind::Triangle) => {
+                format!("三角形 {}", self.compose_layers.len() + 1)
+            }
+            (Language::En, ShapeKind::Triangle) => {
+                format!("Triangle {}", self.compose_layers.len() + 1)
+            }
         };
+        if self.paint_state.active_mode == AppMode::Paint {
+            // Paint mode: shapes use Color 1 for the outline and Color 2 for the optional fill.
+            layer.stroke_color = self.paint_state.color_1_foreground.to_srgba_unmultiplied();
+            layer.fill_color = self.paint_state.color_2_background.to_srgba_unmultiplied();
+            layer.stroke_width = self.paint_state.brush_stroke_width;
+            layer.filled = self.paint_state.shape_filled;
+        }
         self.compose_layers.push(ComposeLayer::Shape(layer));
         self.selected_layer = Some(self.compose_layers.len() - 1);
         self.update_texture(ctx);

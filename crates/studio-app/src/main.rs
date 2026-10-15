@@ -37,7 +37,9 @@ fn main() -> Result<()> {
     for a in std::env::args_os().skip(1) {
         match a.to_str() {
             Some("--register-shell") => {
-                let zh = std::env::var("PIXEL_STUDIO_LANG").map(|l| l != "en").unwrap_or(true);
+                let zh = std::env::var("PIXEL_STUDIO_LANG")
+                    .map(|l| l != "en")
+                    .unwrap_or(true);
                 let msg = shell::register(zh)?;
                 console_print(&msg);
                 return Ok(());
@@ -91,11 +93,19 @@ fn main() -> Result<()> {
             }
         }
     }
-    Err(anyhow::anyhow!(last_err.map(|e| e.to_string()).unwrap_or_default()))
+    Err(anyhow::anyhow!(
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    ))
 }
 
 fn app_icon() -> egui::IconData {
     let bytes = include_bytes!("../assets/icon-256.png");
-    let img = image::load_from_memory(bytes).map(|i| i.to_rgba8()).unwrap_or_default();
-    egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() }
+    let img = image::load_from_memory(bytes)
+        .map(|i| i.to_rgba8())
+        .unwrap_or_default();
+    egui::IconData {
+        width: img.width(),
+        height: img.height(),
+        rgba: img.into_raw(),
+    }
 }

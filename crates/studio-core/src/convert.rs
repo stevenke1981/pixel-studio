@@ -155,10 +155,12 @@ pub fn encode_image(
             } else {
                 image.clone()
             };
-            DynamicImage::ImageRgba8(img.to_rgba8()).write_to(&mut writer, format.image_format())?;
+            DynamicImage::ImageRgba8(img.to_rgba8())
+                .write_to(&mut writer, format.image_format())?;
         }
         SupportedFormat::Gif => {
-            DynamicImage::ImageRgba8(image.to_rgba8()).write_to(&mut writer, format.image_format())?;
+            DynamicImage::ImageRgba8(image.to_rgba8())
+                .write_to(&mut writer, format.image_format())?;
         }
         _ => image.write_to(&mut writer, format.image_format())?,
     }

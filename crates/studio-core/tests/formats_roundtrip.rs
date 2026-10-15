@@ -15,7 +15,16 @@ fn every_format_round_trips() {
     std::fs::create_dir_all(&dir).unwrap();
     for format in SupportedFormat::ALL {
         let path = dir.join(format!("t.{}", format.extension()));
-        save_dynamic_image(&sample(), &path, ConvertOptions { format, quality: 100, ..Default::default() }).unwrap();
+        save_dynamic_image(
+            &sample(),
+            &path,
+            ConvertOptions {
+                format,
+                quality: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let back = load_dynamic_image(&path).unwrap();
         if format == SupportedFormat::Ico {
             assert_eq!((back.width(), back.height()), (256, 171), "ico downscaled");
@@ -36,9 +45,31 @@ fn webp_lossless_vs_lossy() {
     let img = DynamicImage::ImageRgba8(noisy);
     let lossless = dir.join("a.webp");
     let lossy = dir.join("b.webp");
-    save_dynamic_image(&img, &lossless, ConvertOptions { format: SupportedFormat::Webp, quality: 100, ..Default::default() }).unwrap();
-    save_dynamic_image(&img, &lossy, ConvertOptions { format: SupportedFormat::Webp, quality: 50, ..Default::default() }).unwrap();
-    assert_eq!(load_dynamic_image(&lossless).unwrap().to_rgba8(), img.to_rgba8(), "lossless exact");
+    save_dynamic_image(
+        &img,
+        &lossless,
+        ConvertOptions {
+            format: SupportedFormat::Webp,
+            quality: 100,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    save_dynamic_image(
+        &img,
+        &lossy,
+        ConvertOptions {
+            format: SupportedFormat::Webp,
+            quality: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        load_dynamic_image(&lossless).unwrap().to_rgba8(),
+        img.to_rgba8(),
+        "lossless exact"
+    );
     let a = std::fs::metadata(&lossless).unwrap().len();
     let b = std::fs::metadata(&lossy).unwrap().len();
     assert!(b < a, "lossy {b} < lossless {a}");
@@ -50,7 +81,15 @@ fn export_strips_exif_unless_kept() {
     std::fs::create_dir_all(&dir).unwrap();
     // Build a JPEG carrying an EXIF block.
     let src = dir.join("src.jpg");
-    save_dynamic_image(&sample(), &src, ConvertOptions { format: SupportedFormat::Jpeg, ..Default::default() }).unwrap();
+    save_dynamic_image(
+        &sample(),
+        &src,
+        ConvertOptions {
+            format: SupportedFormat::Jpeg,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     {
         use img_parts::{Bytes, ImageEXIF, jpeg::Jpeg};
         let mut j = Jpeg::from_bytes(Bytes::from(std::fs::read(&src).unwrap())).unwrap();
@@ -62,7 +101,15 @@ fn export_strips_exif_unless_kept() {
     assert!(studio_core::metadata::has_exif(&src));
     let img = load_dynamic_image(&src).unwrap();
     let stripped = dir.join("out.jpg");
-    save_dynamic_image(&img, &stripped, ConvertOptions { format: SupportedFormat::Jpeg, ..Default::default() }).unwrap();
+    save_dynamic_image(
+        &img,
+        &stripped,
+        ConvertOptions {
+            format: SupportedFormat::Jpeg,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(!studio_core::metadata::has_exif(&stripped));
     studio_core::metadata::copy_metadata(&src, &stripped).unwrap();
     assert!(studio_core::metadata::has_exif(&stripped));
