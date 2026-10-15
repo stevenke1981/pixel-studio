@@ -85,7 +85,7 @@ pub fn is_valid_taiwan_id(id: &str) -> bool {
     for (i, w) in weights.iter().enumerate() {
         sum += b[i + 1].to_digit(10).unwrap() * w;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 pub fn luhn_valid(digits: &str) -> bool {

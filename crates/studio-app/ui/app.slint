@@ -46,6 +46,7 @@ component Swatch inherits Rectangle {
 // Toolbar button with hover tooltip (shown for disabled buttons too).
 component QBtn inherits Rectangle {
     in property <string> label;
+    in property <image> icon;
     in property <string> tip;
     in property <bool> enabled: true;
     in property <bool> active: false;
@@ -54,8 +55,16 @@ component QBtn inherits Rectangle {
     height: 28px;
     border-radius: 4px;
     background: root.active ? #d6e2fb : (!root.enabled ? transparent : (ta.pressed ? #c9d6f2 : (ta.has-hover ? #e3ebfb : transparent)));
+    if root.icon.width > 0: Image {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        opacity: root.enabled ? 1 : 0.35;
+    }
     lt := Text {
-        text: root.label;
+        text: root.icon.width > 0 ? "" : root.label;
         color: root.enabled ? #1d2a3a : #b4bac3;
         font-size: 12px;
         horizontal-alignment: center;
@@ -319,8 +328,8 @@ export component AppWindow inherits Window {
                 TB { text: "+"; clicked => { root.action("zoom-in"); } }
                 TB { text: T.t("符合", "Fit"); clicked => { root.action("zoom-fit"); } }
                 TB { text: "1:1"; clicked => { root.action("zoom-100"); } }
-                TB { text: "◀"; clicked => { root.action("prev"); } }
-                TB { text: "▶"; clicked => { root.action("next"); } }
+                TB { icon: @image-url("icons/prev.svg"); clicked => { root.action("prev"); } }
+                TB { icon: @image-url("icons/next.svg"); clicked => { root.action("next"); } }
                 Rectangle { horizontal-stretch: 1; }
                 TB { text: root.tb-mode == 2 ? T.t("顯示工具列", "Show toolbar") : T.t("隱藏工具列", "Hide toolbar"); clicked => { root.tb-mode = root.tb-mode == 2 ? 0 : 2; root.toolbar-moved(); } }
                 TB { text: root.view-mode ? T.t("檢視模式", "Viewer") : T.t("編輯模式", "Editor"); clicked => { root.action("toggle-mode"); } }
@@ -358,7 +367,7 @@ export component AppWindow inherits Window {
                             Rectangle {
                                 width: 28px; height: 32px; border-radius: 4px;
                                 background: swap-ta.has-hover ? #dde6f7 : #eceff4;
-                                Text { text: "⇄"; font-size: 16px; }
+                                Image { source: @image-url("icons/swap.svg"); width: 16px; height: 16px; }
                                 swap-ta := TouchArea { clicked => { root.action("swap-colors"); } }
                             }
                         }
@@ -495,7 +504,7 @@ export component AppWindow inherits Window {
                         alignment: start;
                         Rectangle {
                             width: 14px;
-                            Text { text: "⋮⋮"; color: #8a96a3; font-size: 11px; }
+                            Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; }
                             grip := TouchArea {
                                 mouse-cursor: MouseCursor.move;
                                 moved => {
@@ -514,12 +523,12 @@ export component AppWindow inherits Window {
                         QBtn { label: T.t("複製", "Copy"); tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
                         QBtn { label: T.t("貼上", "Paste"); tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
                         QBtn { label: T.t("裁切", "Crop"); tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
-                        QBtn { label: "⟳"; tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
+                        QBtn { icon: @image-url("icons/rot-right.svg"); tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
                         QBtn { label: T.t("符合", "Fit"); tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
                         QBtn { label: "1:1"; tip: T.t("實際大小 100% (1)", "Actual size 100% (1)"); clicked => { root.action("zoom-100"); } }
                         QBtn { label: T.t("格線", "Grid"); tip: T.t("切換像素格線 (Ctrl+G，放大 8 倍以上顯示)", "Toggle pixel grid (Ctrl+G, shown at 800%+)"); active: root.grid-on; clicked => { root.action("toggle-grid"); } }
-                        QBtn { label: root.tb-mode == 1 ? "⇱" : "⇲"; tip: root.tb-mode == 1 ? T.t("改為浮動", "Float toolbar") : T.t("停駐到上方", "Dock to top"); clicked => { root.tb-mode = root.tb-mode == 1 ? 0 : 1; root.toolbar-moved(); } }
-                        QBtn { label: "✕"; tip: T.t("隱藏工具列（上方「顯示工具列」可再開）", "Hide toolbar (use Show toolbar at the top)"); clicked => { root.tb-mode = 2; root.toolbar-moved(); } }
+                        QBtn { icon: root.tb-mode == 1 ? @image-url("icons/float.svg") : @image-url("icons/dock.svg"); tip: root.tb-mode == 1 ? T.t("改為浮動", "Float toolbar") : T.t("停駐到上方", "Dock to top"); clicked => { root.tb-mode = root.tb-mode == 1 ? 0 : 1; root.toolbar-moved(); } }
+                        QBtn { icon: @image-url("icons/close.svg"); tip: T.t("隱藏工具列（上方「顯示工具列」可再開）", "Hide toolbar (use Show toolbar at the top)"); clicked => { root.tb-mode = 2; root.toolbar-moved(); } }
                     }
                 }
                 // ---------------- canvas context menu
@@ -649,11 +658,17 @@ export component AppWindow inherits Window {
                                         padding-left: 6px;
                                         spacing: 6px;
                                         CheckBox { checked: l.visible; toggled => { root.toggle-layer(i); } }
+                                        Image {
+                                            width: 16px;
+                                            height: 16px;
+                                            y: (parent.height - self.height) / 2;
+                                            source: l.kind == 0 ? @image-url("icons/layer-text.svg") : l.kind == 1 ? @image-url("icons/layer-image.svg") : l.kind == 2 ? @image-url("icons/layer-shape.svg") : @image-url("icons/layer-sticker.svg");
+                                        }
                                         Text {
                                             vertical-alignment: center;
                                             overflow: elide;
                                             horizontal-stretch: 1;
-                                            text: (l.kind == 0 ? "T  " : l.kind == 1 ? "▣  " : l.kind == 2 ? "◇  " : "★  ") + l.name;
+                                            text: l.name;
                                         }
                                     }
                                 }
@@ -711,11 +726,11 @@ export component AppWindow inherits Window {
                                 Section { text: T.t("旋轉 / 翻轉", "Rotate / flip"); }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: "⟲ 90°"; clicked => { root.action("rot-left"); } }
-                                    Button { text: "⟳ 90°"; clicked => { root.action("rot-right"); } }
+                                    Button { icon: @image-url("icons/rot-left.svg"); text: "90°"; clicked => { root.action("rot-left"); } }
+                                    Button { icon: @image-url("icons/rot-right.svg"); text: "90°"; clicked => { root.action("rot-right"); } }
                                     Button { text: "180°"; clicked => { root.action("rot-180"); } }
-                                    Button { text: "⇋"; clicked => { root.action("flip-h"); } }
-                                    Button { text: "⇵"; clicked => { root.action("flip-v"); } }
+                                    Button { icon: @image-url("icons/flip-h.svg"); text: ""; clicked => { root.action("flip-h"); } }
+                                    Button { icon: @image-url("icons/flip-v.svg"); text: ""; clicked => { root.action("flip-v"); } }
                                 }
                                 Section { text: T.t("選取 / 裁切", "Select / crop"); }
                                 CheckBox { text: T.t("圓形選取", "Circular selection"); checked <=> root.select-circle; }

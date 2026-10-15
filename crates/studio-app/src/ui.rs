@@ -131,7 +131,8 @@ enum BatchMsg {
 struct Settings {
     lang: Option<String>,
     keep_metadata: bool,
-    hide_grid: bool,
+    #[serde(default)]
+    show_grid: bool,
     #[serde(default)]
     toolbar_mode: i32,
     #[serde(default)]
@@ -225,7 +226,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         buf: SharedPixelBuffer::new(1, 1),
         zh,
         view_mode: args.view,
-        show_grid: !settings.hide_grid,
+        show_grid: settings.show_grid,
         keep_metadata: settings.keep_metadata,
         folder: Vec::new(),
         folder_idx: None,
@@ -260,7 +261,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
     ui.set_language(if zh { 0 } else { 1 });
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_view_mode(args.view);
-    ui.set_show_grid(!settings.hide_grid);
+    ui.set_show_grid(settings.show_grid);
     ui.set_keep_metadata(settings.keep_metadata);
     if zh {
         ui.set_style_text("標題文字".into());
@@ -366,7 +367,7 @@ fn save_settings(s: &State) {
         let st = Settings {
             lang: Some(if s.zh { "zh-TW".into() } else { "en".into() }),
             keep_metadata: s.keep_metadata,
-            hide_grid: !s.show_grid,
+            show_grid: s.show_grid,
             toolbar_mode: s.toolbar.0,
             toolbar_x: Some(s.toolbar.1),
             toolbar_y: Some(s.toolbar.2),
@@ -1394,8 +1395,8 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         ui.set_status(
                             tl(
                                 s.zh,
-                                "按 Enter 或「調整 › 裁切」裁切選取區。",
-                                "Press Enter or Adjust › Crop to crop.",
+                                "按 Enter 或「調整 > 裁切」裁切選取區。",
+                                "Press Enter or Adjust > Crop to crop.",
                             )
                             .into(),
                         );
@@ -2194,13 +2195,6 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
                 _ => format!("\nSkipped {}", r.input.display()),
             };
         }
-        for r in summary.results.iter().filter(|_| false) {
-            msg += &format!(
-                "\n{}: {}",
-                r.input.display(),
-                r.error.as_deref().unwrap_or("")
-            );
-        }
         let _ = tx.send(BatchMsg::Done(msg, is_c2pa));
     });
     st.borrow_mut().batch_job = Some(Job::Batch(rx));
@@ -2279,7 +2273,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
     if std::env::var_os("PIXEL_STUDIO_DEBUG").is_some() {
         eprintln!("key {:?} ctrl={ctrl} shift={shift}", text);
     }
-    let is = |k: Key| text.chars().next() == Some(char::from(k)) && text.chars().count() == 1;
+    let is = |k: Key| text.starts_with(char::from(k)) && text.chars().count() == 1;
     let mut t = text.to_lowercase();
     // Some platforms deliver Ctrl+letter as the ASCII control character.
     if let Some(c) = t.chars().next()

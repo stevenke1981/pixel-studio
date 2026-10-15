@@ -185,7 +185,7 @@ pub fn library() -> Vec<Sticker> {
         // Social (generic, no trademarks)
         ("social-share".into(), Social, "share 分享", format!(r#"<path d="M30 50 L70 26 M30 50 L70 74" stroke="{{F}}" stroke-width="8"/>{}"#, p("M30 38 A12 12 0 1 1 29.9 38 Z M70 14 A12 12 0 1 1 69.9 14 Z M70 62 A12 12 0 1 1 69.9 62 Z")), BLUE),
         ("social-comment".into(), Social, "comment chat message 留言 訊息", p("M14 14 H86 Q92 14 92 20 V64 Q92 70 86 70 H40 L22 88 V70 H14 Q8 70 8 64 V20 Q8 14 14 14 Z"), BLUE),
-        ("social-play".into(), Social, "play video 播放 影片", format!(r#"<circle cx="50" cy="50" r="44" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}"/><path d="M40 30 L72 50 L40 70 Z" fill="white"/>"#), [55, 71, 79, 255]),
+        ("social-play".into(), Social, "play video 播放 影片", r#"<circle cx="50" cy="50" r="44" fill="{F}" stroke="{S}" stroke-width="{W}"/><path d="M40 30 L72 50 L40 70 Z" fill="white"/>"#.to_string(), [55, 71, 79, 255]),
         ("social-bell".into(), Social, "bell notification subscribe 鈴鐺 訂閱 通知", p("M50 8 C52 8 54 10 54 13 C68 16 76 28 76 44 V62 L86 74 H14 L24 62 V44 C24 28 32 16 46 13 C46 10 48 8 50 8 Z M40 80 H60 C60 86 56 92 50 92 C44 92 40 86 40 80 Z"), YELLOW),
         ("social-camera".into(), Social, "camera photo 相機 拍照", format!(r##"{}<circle cx="50" cy="54" r="16" fill="white"/><circle cx="50" cy="54" r="9" fill="{{F}}"/>"##, p("M10 30 H30 L38 18 H62 L70 30 H90 V82 H10 Z")), [156, 39, 176, 255]),
         ("social-at".into(), Social, "at mention 提及 標註", r#"<circle cx="50" cy="50" r="15" fill="none" stroke="{F}" stroke-width="10"/><path d="M65 36 V58 Q65 68 74 68 Q88 68 88 50 A38 38 0 1 0 70 82" fill="none" stroke="{F}" stroke-width="10" stroke-linecap="round"/>"#.into(), BLUE),
@@ -277,8 +277,8 @@ pub fn styled_svg(sticker: &Sticker, style: &StickerStyle) -> String {
         .replace("{FONT}", FONT_STACK);
     let fo = f32::from(style.fill[3]) / 255.0;
     let shadow = if style.shadow {
-        format!(
-            r#"<defs><filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="2.5" dy="3" stdDeviation="2.5" flood-color="black" flood-opacity="0.45"/></filter></defs>"#
+        String::from(
+            r#"<defs><filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="2.5" dy="3" stdDeviation="2.5" flood-color="black" flood-opacity="0.45"/></filter></defs>"#,
         )
     } else {
         String::new()
@@ -332,8 +332,10 @@ pub fn render_sticker(
     height: u32,
 ) -> DynamicImage {
     let svg = styled_svg(sticker, style);
-    let mut opt = resvg::usvg::Options::default();
-    opt.fontdb = std::sync::Arc::new(font_db().clone());
+    let opt = resvg::usvg::Options {
+        fontdb: std::sync::Arc::new(font_db().clone()),
+        ..Default::default()
+    };
     let (w, h) = (width.max(1), height.max(1));
     let mut out = RgbaImage::new(w, h);
     if let (Ok(tree), Some(mut pixmap)) = (
