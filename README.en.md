@@ -13,6 +13,17 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 ![Sticker library](docs/slint-stickers.png)
 ![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
 
+## v0.3.1: quick toolbar, C2PA dialog, timestamped names
+
+- **Floating quick toolbar**: undo, redo, quick save (Ctrl+S; asks for format/quality only the first time, then overwrites), save as, copy, paste, crop to selection, rotate, fit / 100%, grid (Ctrl+G). Drag the grip to move it; dock or hide it (top bar "Show/Hide toolbar"). Its position is remembered. Tooltips list the shortcuts, and buttons are disabled when unavailable.
+- **Canvas context menu**: right-click with the Select, Crop, Text or Shapes tool for undo/redo, copy/paste, select all, crop, delete layer, rotate, zoom, grid and save.
+- **C2PA content credentials dialog** (Info tab → "C2PA content credentials…"): shows validation state, manifest count, title/creator/action and the raw JSON. You can add credentials and save a copy of the current image, write C2PA on save, or strip C2PA to a copy (same extension; the source is never overwritten). Batch add/remove shows progress and results. When you open a file, the fields are pre-filled from its manifest (or the filename is used as the title).
+- **Default filenames**: Save, Save As, export, screenshot and paste-as-new default to `pixelstudio_YYYYMMDD_HHMMSS.<ext>` in local time, and you can still edit the name. The CLI `convert/redact/crop/blur-region/pano360` output argument is now optional and uses the same pattern.
+- Redaction boxes can be dragged to move them and resized from the bottom-right corner. With the Select tool, drag the canvas right, bottom or corner handle to resize the canvas.
+
+![Quick toolbar](docs/toolbar.png)
+![C2PA dialog](docs/c2pa-dialog.png)
+
 ## v0.3.0: Slint UI
 
 - The GUI moved from egui to Slint. Windows uses the Skia renderer (the software renderer's partial redraw left transparent areas on some systems) and falls back to the software renderer if Skia cannot start.
