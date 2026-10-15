@@ -79,6 +79,7 @@ jobs:
           path: |
             win-screenshot.png
             win-shots/*.png
+            win-shots/*.json
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
         shell: pwsh
