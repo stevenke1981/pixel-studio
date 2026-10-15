@@ -2,12 +2,23 @@
 
 English ｜ [繁體中文](README.md)
 
-A Rust + egui image editor that aims to **replace and surpass MS Paint**: painting, layers, stickers, social-media post images, offline auto-redaction and batch conversion, on Windows, Linux and macOS.
+A Rust + [Slint](https://slint.dev) image editor that aims to **replace and surpass MS Paint**: painting, layers, stickers, social-media post images, offline auto-redaction and batch conversion, on Windows, Linux and macOS.
 
 Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 - Windows: `pixel-studio-setup-windows-x64.exe` (installer) or `pixel-studio-windows-x64.zip` (portable)
 - Linux: `pixel-studio-linux-x64.tar.gz`
 - macOS (Intel + Apple silicon): `pixel-studio-macos-universal-app.zip`
+
+![Main window](docs/slint-main.png)
+![Sticker library](docs/slint-stickers.png)
+![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
+
+## v0.3.0: Slint UI
+
+- The GUI moved from egui to Slint. Windows uses the Skia renderer (the software renderer's partial redraw left transparent areas on some systems) and falls back to the software renderer if Skia cannot start.
+- The canvas is a pixel buffer; brush strokes recomposite only the dirty rectangle, and layers are re-rendered only when they change.
+- Document logic (painting, layers, undo, stickers, redaction, project files) lives in a UI-independent, unit-tested `doc.rs`.
+- Shortcuts: Ctrl+O/S/Z/Y/V/C/A/D/G, Ctrl+Shift+V paste as layer, Del delete layer, arrows nudge a layer (Shift ×10), Enter crop, Esc cancel, +/-/0/1 zoom, Ctrl+wheel zoom, middle-drag or the Pan tool to pan; drop image files onto the window to open them.
 
 ## Compared with Paint
 
@@ -15,7 +26,7 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 |---|---|---|
 | Pencil, brush, eraser, fill, colour picker, text | ✓ | ✓ (plus highlighter, airbrush, calligraphy, mosaic) |
 | Shapes: line, arrow, rectangle, ellipse, triangle | ✓ | ✓ (colour 1 outline, optional colour 2 fill; shapes stay editable layers) |
-| Select, crop, resize, rotate, flip | ✓ | ✓ (rectangle/circle selection, crop to selection, drag canvas edges) |
+| Select, crop, resize, rotate, flip | ✓ | ✓ (rectangle/circle selection, crop to selection, resize image and canvas size) |
 | Zoom, undo/redo | ✓ | ✓ (crisp pixels when zoomed + pixel grid, Ctrl+G) |
 | Layers, transparency | partial | ✓ text / image / shape / sticker layers: move, reorder, hide, opacity |
 | Brightness, contrast, saturation, hue, blur, sharpen | ✗ | ✓ plus exposure, temperature, tint, sepia, vignette, posterize, auto contrast, grayscale, invert |
@@ -28,13 +39,13 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 | Batch convert, animated GIF, 360° panorama, C2PA | ✗ | ✓ |
 | Right-click menu, Open With | built in | ✓ "Edit / Open with Pixel Studio", never hijacks your default app |
 
-## Auto Redact (▦ Auto Redact tab)
+## Auto Redact (Redact tab)
 
 1. Click **Detect text**. Text is detected locally with the [ocrs](https://github.com/robertknight/ocrs) models (bundled in the installer and archives, ~12 MB; downloaded once on first use when running from source).
 2. Boxes are drawn over the image. Lines recognised as phone numbers (TW + international), emails, Taiwan national IDs (checksum), credit cards (Luhn), URLs or addresses are pre-selected (red).
-3. Click a box to toggle, right-click to delete, drag to add, edit coordinates in the list, or select by keyword.
+3. Click a box to toggle, right-click to delete, drag with the Redact boxes tool to add, tick boxes in the list, or select by keyword.
 4. Pick a style: **solid box (default, any colour)**, mosaic or blur, plus padding. Mosaic and blur can sometimes be partially reversed; use a solid box for secrets.
-5. Applying flattens layers into the pixels (destructive). Exports strip EXIF/XMP by default; tick "Keep EXIF" in Properties to keep it.
+5. Applying flattens layers into the pixels (destructive). Exports strip EXIF/XMP by default; tick "Keep EXIF/ICC metadata" in the Tools or Redact tab to keep it.
 6. Manual **Boxes** and **Redact brush** tools are included.
 
 **Limitation:** detection is script-agnostic, so Chinese and English lines are both boxed, but *recognition* currently reads Latin letters, digits and symbols only. Chinese-only content (for example a Chinese street address) is not auto-selected and must be clicked manually.
@@ -50,7 +61,7 @@ CLI: `studio-cli redact in.png out.png [--style solid|mosaic|blur] [--keyword WO
 
 ## Languages
 
-Traditional Chinese (default on Chinese systems) and English (default elsewhere). Switch in the Language menu or set `PIXEL_STUDIO_LANG=en`.
+Traditional Chinese (default on Chinese systems) and English (default elsewhere). Switch in the Settings tab (remembered) or set `PIXEL_STUDIO_LANG=en`.
 
 ## Building
 

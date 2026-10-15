@@ -9,12 +9,14 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use image::DynamicImage;
-use slint::{Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{
+    Color, ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel,
+};
 use studio_core::redact::{RedactStyle, preselect_sensitive, select_by_keyword};
 use studio_core::stickers::{self, CANVAS_PRESETS, StickerCategory, StickerStyle};
 use studio_core::{
-    BatchOptions, C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ComposeLayer, ConvertOptions, GifOptions,
-    PanoramaMode, PanoramaOptions, ShapeKind, SupportedFormat,
+    BatchOptions, C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ComposeLayer,
+    ConvertOptions, GifOptions, PanoramaMode, PanoramaOptions, ShapeKind, SupportedFormat,
 };
 
 use crate::doc::{Doc, IRect, Selection, Tool, ToolSettings};
@@ -23,13 +25,34 @@ use crate::{Args, fonts, shell};
 slint::include_modules!();
 
 const PALETTE: [[u8; 3]; 28] = [
-    [0, 0, 0], [64, 64, 64], [128, 128, 128], [255, 255, 255],
-    [136, 0, 21], [237, 28, 36], [255, 127, 39], [255, 242, 0],
-    [34, 177, 76], [0, 162, 232], [63, 72, 204], [163, 73, 164],
-    [185, 122, 87], [255, 174, 201], [255, 201, 14], [239, 228, 176],
-    [181, 230, 29], [153, 217, 234], [112, 146, 190], [200, 191, 231],
-    [229, 57, 53], [30, 136, 229], [67, 160, 71], [251, 192, 45],
-    [142, 36, 170], [0, 137, 123], [255, 112, 67], [96, 125, 139],
+    [0, 0, 0],
+    [64, 64, 64],
+    [128, 128, 128],
+    [255, 255, 255],
+    [136, 0, 21],
+    [237, 28, 36],
+    [255, 127, 39],
+    [255, 242, 0],
+    [34, 177, 76],
+    [0, 162, 232],
+    [63, 72, 204],
+    [163, 73, 164],
+    [185, 122, 87],
+    [255, 174, 201],
+    [255, 201, 14],
+    [239, 228, 176],
+    [181, 230, 29],
+    [153, 217, 234],
+    [112, 146, 190],
+    [200, 191, 231],
+    [229, 57, 53],
+    [30, 136, 229],
+    [67, 160, 71],
+    [251, 192, 45],
+    [142, 36, 170],
+    [0, 137, 123],
+    [255, 112, 67],
+    [96, 125, 139],
 ];
 
 const TOOL_LABELS: [(&str, &str); 16] = [
@@ -134,7 +157,9 @@ fn detect_zh(settings: &Settings) -> bool {
     if let Some(l) = &settings.lang {
         return l != "en";
     }
-    sys_locale::get_locale().map(|l| l.to_lowercase().starts_with("zh")).unwrap_or(false)
+    sys_locale::get_locale()
+        .map(|l| l.to_lowercase().starts_with("zh"))
+        .unwrap_or(false)
 }
 
 const FORMATS: [SupportedFormat; 7] = SupportedFormat::ALL;
@@ -184,13 +209,29 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         ui.set_style_text("Title text".into());
     }
     ui.set_palette(ModelRc::new(VecModel::from(
-        PALETTE.iter().map(|c| Color::from_rgb_u8(c[0], c[1], c[2])).collect::<Vec<_>>(),
+        PALETTE
+            .iter()
+            .map(|c| Color::from_rgb_u8(c[0], c[1], c[2]))
+            .collect::<Vec<_>>(),
     )));
     ui.set_format_names(ModelRc::new(VecModel::from(
-        FORMATS.iter().map(|f| SharedString::from(f.label())).collect::<Vec<_>>(),
+        FORMATS
+            .iter()
+            .map(|f| SharedString::from(f.label()))
+            .collect::<Vec<_>>(),
     )));
-    ui.set_export_format(FORMATS.iter().position(|f| *f == SupportedFormat::Png).unwrap_or(0) as i32);
-    ui.set_batch_format(FORMATS.iter().position(|f| *f == SupportedFormat::Webp).unwrap_or(0) as i32);
+    ui.set_export_format(
+        FORMATS
+            .iter()
+            .position(|f| *f == SupportedFormat::Png)
+            .unwrap_or(0) as i32,
+    );
+    ui.set_batch_format(
+        FORMATS
+            .iter()
+            .position(|f| *f == SupportedFormat::Webp)
+            .unwrap_or(0) as i32,
+    );
     ui.set_rs_w(1080);
     ui.set_rs_h(720);
     set_language_models(&ui, &state.borrow());
@@ -223,11 +264,15 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
     {
         let weak = ui.as_weak();
         let st = state.clone();
-        poll.start(slint::TimerMode::Repeated, Duration::from_millis(120), move || {
-            if let Some(ui) = weak.upgrade() {
-                poll_jobs(&ui, &st);
-            }
-        });
+        poll.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(120),
+            move || {
+                if let Some(ui) = weak.upgrade() {
+                    poll_jobs(&ui, &st);
+                }
+            },
+        );
     }
     // Files dropped onto the window are opened.
     {
@@ -274,17 +319,32 @@ fn set_language_models(ui: &AppWindow, s: &State) {
         TOOL_LABELS
             .iter()
             .enumerate()
-            .map(|(i, (a, b))| ToolItem { zh: (*a).into(), en: (*b).into(), group: i as i32 })
+            .map(|(i, (a, b))| ToolItem {
+                zh: (*a).into(),
+                en: (*b).into(),
+                group: i as i32,
+            })
             .collect::<Vec<_>>(),
     )));
     let mut cats = vec![SharedString::from(tl(zh, "全部分類", "All categories"))];
-    cats.extend(StickerCategory::ALL.iter().map(|c| SharedString::from(c.label(zh))));
+    cats.extend(
+        StickerCategory::ALL
+            .iter()
+            .map(|c| SharedString::from(c.label(zh))),
+    );
     ui.set_sticker_categories(ModelRc::new(VecModel::from(cats)));
     ui.set_preset_names(ModelRc::new(VecModel::from(
-        CANVAS_PRESETS.iter().map(|(n, w, h)| SharedString::from(format!("{n}  {w}×{h}"))).collect::<Vec<_>>(),
+        CANVAS_PRESETS
+            .iter()
+            .map(|(n, w, h)| SharedString::from(format!("{n}  {w}×{h}")))
+            .collect::<Vec<_>>(),
     )));
     let mut fnames = vec![SharedString::from(tl(zh, "預設字型", "Default font"))];
-    fnames.extend(s.font_paths.iter().map(|p| SharedString::from(fonts::display_font_name(p))));
+    fnames.extend(
+        s.font_paths
+            .iter()
+            .map(|p| SharedString::from(fonts::display_font_name(p))),
+    );
     ui.set_font_names(ModelRc::new(VecModel::from(fnames)));
 }
 
@@ -350,7 +410,10 @@ fn sync_view(ui: &AppWindow, s: &State) {
             ui.set_lb_y(y);
             ui.set_lb_w(w);
             ui.set_lb_h(h);
-            ui.set_lb_handle(matches!(s.doc.selected.and_then(|i| s.doc.layers.get(i)), Some(ComposeLayer::Image(_))));
+            ui.set_lb_handle(matches!(
+                s.doc.selected.and_then(|i| s.doc.layers.get(i)),
+                Some(ComposeLayer::Image(_))
+            ));
         }
         None => ui.set_has_layer_box(false),
     }
@@ -374,7 +437,11 @@ fn sync_view(ui: &AppWindow, s: &State) {
         .boxes
         .iter()
         .map(|b| {
-            let t = if b.text.is_empty() { format!("({}×{})", b.width, b.height) } else { b.text.clone() };
+            let t = if b.text.is_empty() {
+                format!("({}×{})", b.width, b.height)
+            } else {
+                b.text.clone()
+            };
             BoxItem {
                 selected: b.selected,
                 label: match b.kind {
@@ -419,11 +486,22 @@ fn sync_view(ui: &AppWindow, s: &State) {
         .rev()
         .map(|i| {
             let l = &s.doc.layers[i];
-            LayerRow { name: l.name().into(), kind: layer_kind(l), visible: l.is_visible(), selected: s.doc.selected == Some(i) }
+            LayerRow {
+                name: l.name().into(),
+                kind: layer_kind(l),
+                visible: l.is_visible(),
+                selected: s.doc.selected == Some(i),
+            }
         })
         .collect();
     ui.set_layers(ModelRc::new(VecModel::from(rows)));
-    ui.set_sel_kind(s.doc.selected.and_then(|i| s.doc.layers.get(i)).map(layer_kind).unwrap_or(-1));
+    ui.set_sel_kind(
+        s.doc
+            .selected
+            .and_then(|i| s.doc.layers.get(i))
+            .map(layer_kind)
+            .unwrap_or(-1),
+    );
     let name = s
         .doc
         .path
@@ -433,7 +511,15 @@ fn sync_view(ui: &AppWindow, s: &State) {
         .unwrap_or_else(|| tl(s.zh, "未命名", "Untitled"));
     ui.set_title_file(name.clone().into());
     ui.set_doc_info(
-        format!("{}  {}×{}  {}{}", name, s.doc.width(), s.doc.height(), s.doc.layers.len(), tl(s.zh, " 圖層", " layers")).into(),
+        format!(
+            "{}  {}×{}  {}{}",
+            name,
+            s.doc.width(),
+            s.doc.height(),
+            s.doc.layers.len(),
+            tl(s.zh, " 圖層", " layers")
+        )
+        .into(),
     );
 }
 
@@ -466,18 +552,31 @@ fn zoom_at(st: &S, factor: f32, at: (f32, f32)) {
 // ------------------------------------------------------------------- file ops
 
 fn image_filter(d: rfd::FileDialog) -> rfd::FileDialog {
-    d.add_filter("Images", &["png", "jpg", "jpeg", "webp", "bmp", "gif", "ico", "tif", "tiff"])
+    d.add_filter(
+        "Images",
+        &[
+            "png", "jpg", "jpeg", "webp", "bmp", "gif", "ico", "tif", "tiff",
+        ],
+    )
 }
 
 fn open_path(ui: &AppWindow, st: &S, path: &Path) {
     let zh = st.borrow().zh;
     if path.extension().is_some_and(|e| e == "pixel-project") {
-        let r = std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|j| st.borrow_mut().doc.load_project_json(&j));
-        ui.set_status(match r {
-            Ok(()) => format!("{} {}", tl(zh, "已開啟專案：", "Project opened:"), path.display()),
-            Err(e) => format!("{} {e}", tl(zh, "專案開啟失敗：", "Project open failed:")),
-        }
-        .into());
+        let r = std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|j| st.borrow_mut().doc.load_project_json(&j));
+        ui.set_status(
+            match r {
+                Ok(()) => format!(
+                    "{} {}",
+                    tl(zh, "已開啟專案：", "Project opened:"),
+                    path.display()
+                ),
+                Err(e) => format!("{} {e}", tl(zh, "專案開啟失敗：", "Project open failed:")),
+            }
+            .into(),
+        );
         fit(ui, st);
         refresh(ui, st);
         return;
@@ -489,7 +588,11 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
                 s.doc.load(img, Some(path.to_path_buf()));
                 if let Some(dir) = path.parent() {
                     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-                        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| SupportedFormat::from_path(p).is_some()).collect())
+                        .map(|rd| {
+                            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                                .filter(|p| SupportedFormat::from_path(p).is_some())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     files.sort();
                     s.folder_idx = files.iter().position(|p| p == path);
@@ -517,15 +620,28 @@ fn convert_options(ui: &AppWindow, idx: i32) -> ConvertOptions {
 fn format_options(ui: &AppWindow, format: SupportedFormat) -> ConvertOptions {
     let mut q = ui.get_quality().round().clamp(1.0, 100.0) as u8;
     if format == SupportedFormat::Webp {
-        q = if ui.get_webp_lossless() { 100 } else { q.min(99) };
+        q = if ui.get_webp_lossless() {
+            100
+        } else {
+            q.min(99)
+        };
     }
-    ConvertOptions { format, quality: q, background: [255, 255, 255, 255] }
+    ConvertOptions {
+        format,
+        quality: q,
+        background: [255, 255, 255, 255],
+    }
 }
 
 fn save_to(ui: &AppWindow, st: &S, out: &Path) {
     let (img, src, keep, zh) = {
         let s = st.borrow();
-        (s.doc.flattened(), s.doc.path.clone(), ui.get_keep_metadata(), s.zh)
+        (
+            s.doc.flattened(),
+            s.doc.path.clone(),
+            ui.get_keep_metadata(),
+            s.zh,
+        )
     };
     st.borrow_mut().keep_metadata = keep;
     let format = SupportedFormat::from_path(out).unwrap_or(SupportedFormat::Png);
@@ -563,21 +679,43 @@ fn c2pa_draft(ui: &AppWindow) -> C2paManifestDraft {
     C2paManifestDraft {
         title: ui.get_c2pa_title().into(),
         creator: ui.get_c2pa_creator().into(),
-        action: if action.is_empty() { "c2pa.edited".into() } else { action },
+        action: if action.is_empty() {
+            "c2pa.edited".into()
+        } else {
+            action
+        },
     }
 }
 
 fn refresh_info(ui: &AppWindow, st: &S) {
     let s = st.borrow();
     let zh = s.zh;
-    let mut info = format!("{}×{} px, {} {}\n", s.doc.width(), s.doc.height(), s.doc.layers.len(), tl(zh, "圖層", "layers"));
+    let mut info = format!(
+        "{}×{} px, {} {}\n",
+        s.doc.width(),
+        s.doc.height(),
+        s.doc.layers.len(),
+        tl(zh, "圖層", "layers")
+    );
     let mut c2 = tl(zh, "（未從檔案開啟）", "(not opened from a file)");
     if let Some(p) = &s.doc.path {
         info += &format!("{}\n", p.display());
         if let Ok(i) = studio_core::inspect_image(p) {
-            info += &format!("{} · {} · {:.1} KB\n", i.format.label(), i.color_type, i.file_size as f64 / 1024.0);
+            info += &format!(
+                "{} · {} · {:.1} KB\n",
+                i.format.label(),
+                i.color_type,
+                i.file_size as f64 / 1024.0
+            );
         }
-        info += &format!("EXIF: {}\n", if studio_core::metadata::has_exif(p) { tl(zh, "有", "yes") } else { tl(zh, "無", "no") });
+        info += &format!(
+            "EXIF: {}\n",
+            if studio_core::metadata::has_exif(p) {
+                tl(zh, "有", "yes")
+            } else {
+                tl(zh, "無", "no")
+            }
+        );
         c2 = match studio_core::inspect_c2pa(p) {
             Ok(c) if c.present => format!(
                 "{}: {}\n{}: {}\n{}: {}\n{}: {}",
@@ -590,7 +728,11 @@ fn refresh_info(ui: &AppWindow, st: &S) {
                 tl(zh, "驗證", "Validation"),
                 c.validation_state.unwrap_or_default()
             ),
-            Ok(_) => tl(zh, "此檔案沒有 C2PA 資訊。", "No C2PA manifest in this file."),
+            Ok(_) => tl(
+                zh,
+                "此檔案沒有 C2PA 資訊。",
+                "No C2PA manifest in this file.",
+            ),
             Err(e) => format!("C2PA: {e}"),
         };
     }
@@ -606,11 +748,15 @@ fn thumb(s: &mut State, id: &str) -> Image {
     }
     let img = stickers::find(&s.doc.library, id)
         .map(|st| {
-            let style = StickerStyle { fill: st.default_fill, ..StickerStyle::default() };
+            let style = StickerStyle {
+                fill: st.default_fill,
+                ..StickerStyle::default()
+            };
             stickers::render_sticker(st, &style, 96, 96).to_rgba8()
         })
         .unwrap_or_else(|| image::RgbaImage::new(1, 1));
-    let buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(img.as_raw(), img.width(), img.height());
+    let buf =
+        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(img.as_raw(), img.width(), img.height());
     let i = Image::from_rgba8(buf);
     s.thumbs.insert(id.to_owned(), i.clone());
     i
@@ -621,8 +767,17 @@ fn update_stickers(ui: &AppWindow, st: &S) {
     let q: String = ui.get_sticker_query().into();
     let cat = ui.get_sticker_category();
     let category = (cat > 0).then(|| StickerCategory::ALL[(cat - 1) as usize]);
-    let ids: Vec<String> = stickers::search(&s.doc.library, &q, category).into_iter().map(|x| x.id.clone()).collect();
-    let items: Vec<StickerItem> = ids.iter().map(|id| StickerItem { id: id.into(), img: thumb(&mut s, id) }).collect();
+    let ids: Vec<String> = stickers::search(&s.doc.library, &q, category)
+        .into_iter()
+        .map(|x| x.id.clone())
+        .collect();
+    let items: Vec<StickerItem> = ids
+        .iter()
+        .map(|id| StickerItem {
+            id: id.into(),
+            img: thumb(&mut s, id),
+        })
+        .collect();
     ui.set_stickers(ModelRc::new(VecModel::from(items)));
 }
 
@@ -635,7 +790,10 @@ fn restyle_selected_sticker(st: &S, f: impl FnOnce(&mut StickerStyle)) {
     };
     let mut style = base.unwrap_or(s.sticker_style);
     f(&mut style);
-    s.sticker_style = StickerStyle { fill: s.sticker_style.fill, ..style };
+    s.sticker_style = StickerStyle {
+        fill: s.sticker_style.fill,
+        ..style
+    };
     if base.is_some() {
         s.doc.checkpoint();
         s.doc.with_selected(|l| {
@@ -651,7 +809,9 @@ fn restyle_selected_sticker(st: &S, f: impl FnOnce(&mut StickerStyle)) {
 // ------------------------------------------------------------------- layer editor
 
 fn sync_layer_fields(ui: &AppWindow, s: &State) {
-    let Some(l) = s.doc.selected.and_then(|i| s.doc.layers.get(i)) else { return };
+    let Some(l) = s.doc.selected.and_then(|i| s.doc.layers.get(i)) else {
+        return;
+    };
     ui.set_l_name(l.name().into());
     match l {
         ComposeLayer::Text(t) => {
@@ -661,7 +821,11 @@ fn sync_layer_fields(ui: &AppWindow, s: &State) {
             ui.set_l_stroke(t.stroke);
             ui.set_l_shadow(t.shadow);
             ui.set_l_font(
-                t.font_path.as_ref().and_then(|p| s.font_paths.iter().position(|q| q == p)).map(|i| i as i32 + 1).unwrap_or(0),
+                t.font_path
+                    .as_ref()
+                    .and_then(|p| s.font_paths.iter().position(|q| q == p))
+                    .map(|i| i as i32 + 1)
+                    .unwrap_or(0),
             );
         }
         ComposeLayer::Image(i) => {
@@ -695,7 +859,11 @@ fn layer_edited(ui: &AppWindow, st: &S, field: &str) {
     let (c1, c2) = (s.tools.color1, s.tools.color2);
     let font = {
         let i = ui.get_l_font();
-        if i > 0 { s.font_paths.get((i - 1) as usize).cloned() } else { None }
+        if i > 0 {
+            s.font_paths.get((i - 1) as usize).cloned()
+        } else {
+            None
+        }
     };
     let opacity = (ui.get_l_opacity() / 100.0).clamp(0.0, 1.0);
     s.doc.with_selected(|l| match (field, l) {
@@ -732,11 +900,16 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
     let s = &mut *guard;
     let p = to_img(s, mx, my);
     if kind == 2 || kind == 0 {
-        ui.set_cursor_info(match s.doc.sample(p.0, p.1) {
-            Some(c) => format!("{}, {}  #{:02X}{:02X}{:02X}{:02X}", p.0 as i32, p.1 as i32, c[0], c[1], c[2], c[3]),
-            None => String::new(),
-        }
-        .into());
+        ui.set_cursor_info(
+            match s.doc.sample(p.0, p.1) {
+                Some(c) => format!(
+                    "{}, {}  #{:02X}{:02X}{:02X}{:02X}",
+                    p.0 as i32, p.1 as i32, c[0], c[1], c[2], c[3]
+                ),
+                None => String::new(),
+            }
+            .into(),
+        );
         if kind == 2 && matches!(s.drag, Drag::None) {
             return; // hover only
         }
@@ -747,12 +920,20 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
     s.tools.fill_tolerance = ui.get_fill_tolerance() as u8;
     s.tools.redact_brush_radius = ui.get_redact_radius();
     s.tools.redact_color = s.tools.color1;
-    s.tools.shape = [ShapeKind::Line, ShapeKind::Arrow, ShapeKind::Rectangle, ShapeKind::Ellipse, ShapeKind::Triangle]
-        [ui.get_shape_kind().clamp(0, 4) as usize];
+    s.tools.shape = [
+        ShapeKind::Line,
+        ShapeKind::Arrow,
+        ShapeKind::Rectangle,
+        ShapeKind::Ellipse,
+        ShapeKind::Triangle,
+    ][ui.get_shape_kind().clamp(0, 4) as usize];
     match kind {
         0 => {
             if button == 2 || tool == Tool::Hand {
-                s.drag = Drag::Pan { mouse: (mx, my), pan: s.pan };
+                s.drag = Drag::Pan {
+                    mouse: (mx, my),
+                    pan: s.pan,
+                };
                 return;
             }
             let secondary = button == 1;
@@ -763,7 +944,11 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     s.drag = Drag::Paint { last: p, secondary };
                 }
                 Tool::Fill => {
-                    let c = if secondary { s.tools.color2 } else { s.tools.color1 };
+                    let c = if secondary {
+                        s.tools.color2
+                    } else {
+                        s.tools.color1
+                    };
                     s.doc.flood_fill(p.0, p.1, c, s.tools.fill_tolerance);
                 }
                 Tool::Picker => {
@@ -782,7 +967,14 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     s.doc.add_text(p.0, p.1, name);
                     sync_layer_fields(ui, s);
                     ui.set_tab(1);
-                    ui.set_status(tl(s.zh, "已新增文字，請在右側「圖層」編輯內容。", "Text added; edit it in the Layers tab.").into());
+                    ui.set_status(
+                        tl(
+                            s.zh,
+                            "已新增文字，請在右側「圖層」編輯內容。",
+                            "Text added; edit it in the Layers tab.",
+                        )
+                        .into(),
+                    );
                 }
                 Tool::Shapes => s.drag = Drag::Shape { start: p, now: p },
                 Tool::RedactBox => {
@@ -796,7 +988,11 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 }
                 Tool::Select | Tool::Crop => {
                     let tol = 8.0 / s.zoom;
-                    let hit = if tool == Tool::Select { s.doc.hit_test(p.0, p.1) } else { None };
+                    let hit = if tool == Tool::Select {
+                        s.doc.hit_test(p.0, p.1)
+                    } else {
+                        None
+                    };
                     if tool == Tool::Select && s.doc.on_resize_handle(p.0, p.1, tol) {
                         let aspect = match s.doc.selected.and_then(|i| s.doc.layers.get(i)) {
                             Some(ComposeLayer::Image(l)) => l.height as f32 / l.width.max(1) as f32,
@@ -827,13 +1023,22 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
             Drag::Pan { mouse, pan } => s.pan = (pan.0 + mx - mouse.0, pan.1 + my - mouse.1),
             Drag::Select { start } => {
                 let circle = ui.get_select_circle() && tool == Tool::Select;
-                s.doc.selection = Some(Selection::from_points(start, p, circle, s.doc.width(), s.doc.height()));
+                s.doc.selection = Some(Selection::from_points(
+                    start,
+                    p,
+                    circle,
+                    s.doc.width(),
+                    s.doc.height(),
+                ));
             }
             Drag::Shape { start, .. } => {
                 let mut now = p;
                 if shift {
                     let d = (p.0 - start.0).abs().max((p.1 - start.1).abs());
-                    now = (start.0 + d * (p.0 - start.0).signum(), start.1 + d * (p.1 - start.1).signum());
+                    now = (
+                        start.0 + d * (p.0 - start.0).signum(),
+                        start.1 + d * (p.1 - start.1).signum(),
+                    );
                 }
                 s.drag = Drag::Shape { start, now };
             }
@@ -842,7 +1047,9 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 let (dx, dy) = ((p.0 - last.0).round() as i32, (p.1 - last.1).round() as i32);
                 if dx != 0 || dy != 0 {
                     s.doc.move_selected(dx, dy);
-                    s.drag = Drag::Move { last: (last.0 + dx as f32, last.1 + dy as f32) };
+                    s.drag = Drag::Move {
+                        last: (last.0 + dx as f32, last.1 + dy as f32),
+                    };
                 }
             }
             Drag::Resize { aspect } => s.doc.resize_selected_to(p.0, aspect),
@@ -850,7 +1057,9 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
         },
         1 | 3 => {
             match s.drag {
-                Drag::Shape { start, now } if (start.0 - now.0).abs() + (start.1 - now.1).abs() > 2.0 => {
+                Drag::Shape { start, now }
+                    if (start.0 - now.0).abs() + (start.1 - now.1).abs() > 2.0 =>
+                {
                     let t = s.tools.clone();
                     s.doc.add_shape(t.shape, start, now, &t);
                     sync_layer_fields(ui, s);
@@ -859,17 +1068,29 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     let (x0, y0) = (start.0.min(now.0), start.1.min(now.1));
                     let (w, h) = ((start.0 - now.0).abs(), (start.1 - now.1).abs());
                     if w >= 3.0 && h >= 3.0 {
-                        s.doc.boxes.push(studio_core::redact::RedactBox::manual(x0 as i32, y0 as i32, w as u32, h as u32));
+                        s.doc.boxes.push(studio_core::redact::RedactBox::manual(
+                            x0 as i32, y0 as i32, w as u32, h as u32,
+                        ));
                     } else if let Some(i) = s.doc.box_at(start.0, start.1) {
                         s.doc.boxes[i].selected = !s.doc.boxes[i].selected;
                     }
                 }
                 Drag::Select { .. } => {
-                    if s.doc.selection.is_some_and(|sel| sel.w < 2.0 || sel.h < 2.0) {
+                    if s.doc
+                        .selection
+                        .is_some_and(|sel| sel.w < 2.0 || sel.h < 2.0)
+                    {
                         s.doc.selection = None;
                     }
                     if tool == Tool::Crop && s.doc.selection.is_some() {
-                        ui.set_status(tl(s.zh, "按 Enter 或「調整 › 裁切」裁切選取區。", "Press Enter or Adjust › Crop to crop.").into());
+                        ui.set_status(
+                            tl(
+                                s.zh,
+                                "按 Enter 或「調整 › 裁切」裁切選取區。",
+                                "Press Enter or Adjust › Crop to crop.",
+                            )
+                            .into(),
+                        );
                     }
                 }
                 Drag::Move { .. } | Drag::Resize { .. } => sync_layer_fields(ui, s),
@@ -900,7 +1121,10 @@ fn centre(ui: &AppWindow) -> (f32, f32) {
 
 fn new_doc(ui: &AppWindow, st: &S, img: DynamicImage) {
     st.borrow_mut().doc.load(img, None);
-    let (w, h) = { let s = st.borrow(); (s.doc.width(), s.doc.height()) };
+    let (w, h) = {
+        let s = st.borrow();
+        (s.doc.width(), s.doc.height())
+    };
     ui.set_rs_w(w as i32);
     ui.set_rs_h(h as i32);
     fit(ui, st);
@@ -911,9 +1135,16 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
     let zh = st.borrow().zh;
     match a {
         "new" => new_doc(ui, st, blank(1080, 720)),
-        "new-custom" => new_doc(ui, st, blank(ui.get_new_w().max(1) as u32, ui.get_new_h().max(1) as u32)),
+        "new-custom" => new_doc(
+            ui,
+            st,
+            blank(ui.get_new_w().max(1) as u32, ui.get_new_h().max(1) as u32),
+        ),
         "open" => {
-            if let Some(p) = image_filter(rfd::FileDialog::new()).add_filter("Pixel Studio Project", &["pixel-project"]).pick_file() {
+            if let Some(p) = image_filter(rfd::FileDialog::new())
+                .add_filter("Pixel Studio Project", &["pixel-project"])
+                .pick_file()
+            {
                 open_path(ui, st, &p);
             }
             return;
@@ -922,13 +1153,23 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 match studio_core::collect_supported_files(&dir).first() {
                     Some(first) => open_path(ui, st, first),
-                    None => ui.set_status(tl(zh, "資料夾中沒有支援的影像。", "No supported images in that folder.").into()),
+                    None => ui.set_status(
+                        tl(
+                            zh,
+                            "資料夾中沒有支援的影像。",
+                            "No supported images in that folder.",
+                        )
+                        .into(),
+                    ),
                 }
             }
             return;
         }
         "open-project" => {
-            if let Some(p) = rfd::FileDialog::new().add_filter("Pixel Studio Project", &["pixel-project"]).pick_file() {
+            if let Some(p) = rfd::FileDialog::new()
+                .add_filter("Pixel Studio Project", &["pixel-project"])
+                .pick_file()
+            {
                 open_path(ui, st, &p);
             }
             return;
@@ -939,11 +1180,21 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 .set_file_name("project.pixel-project")
                 .save_file()
             {
-                let r = st.borrow().doc.to_project_json().and_then(|j| std::fs::write(&p, j).map_err(|e| e.to_string()));
+                let r = st
+                    .borrow()
+                    .doc
+                    .to_project_json()
+                    .and_then(|j| std::fs::write(&p, j).map_err(|e| e.to_string()));
                 ui.set_status(
                     match r {
-                        Ok(()) => format!("{} {}", tl(zh, "專案已儲存：", "Project saved:"), p.display()),
-                        Err(e) => format!("{} {e}", tl(zh, "專案儲存失敗：", "Project save failed:")),
+                        Ok(()) => format!(
+                            "{} {}",
+                            tl(zh, "專案已儲存：", "Project saved:"),
+                            p.display()
+                        ),
+                        Err(e) => {
+                            format!("{} {e}", tl(zh, "專案儲存失敗：", "Project save failed:"))
+                        }
                     }
                     .into(),
                 );
@@ -983,15 +1234,30 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "paste" | "paste-layer" => {
             match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
                 Ok(img) => {
-                    let Some(rgba) = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned()) else {
+                    let Some(rgba) = image::RgbaImage::from_raw(
+                        img.width as u32,
+                        img.height as u32,
+                        img.bytes.into_owned(),
+                    ) else {
                         return;
                     };
                     let dynimg = DynamicImage::ImageRgba8(rgba);
                     if a == "paste" {
                         new_doc(ui, st, dynimg);
-                        ui.set_status(tl(zh, "已將剪貼簿影像貼為新影像。", "Pasted clipboard image as a new image.").into());
+                        ui.set_status(
+                            tl(
+                                zh,
+                                "已將剪貼簿影像貼為新影像。",
+                                "Pasted clipboard image as a new image.",
+                            )
+                            .into(),
+                        );
                     } else {
-                        let n = format!("{} {}", tl(zh, "貼上", "Pasted"), st.borrow().doc.layers.len() + 1);
+                        let n = format!(
+                            "{} {}",
+                            tl(zh, "貼上", "Pasted"),
+                            st.borrow().doc.layers.len() + 1
+                        );
                         st.borrow_mut().doc.add_image_layer(n, dynimg);
                     }
                 }
@@ -1006,19 +1272,36 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                             }
                         });
                     }
-                    _ => ui.set_status(tl(zh, "剪貼簿沒有影像。", "No image on the clipboard.").into()),
+                    _ => ui.set_status(
+                        tl(zh, "剪貼簿沒有影像。", "No image on the clipboard.").into(),
+                    ),
                 },
             }
         }
         "copy" => {
             let s = st.borrow();
             let flat = s.doc.flattened().to_rgba8();
-            let img = match s.doc.selection.and_then(|sel| Selection { circle: false, ..sel }.mask(s.doc.width(), s.doc.height())) {
-                Some(tr::SelectionMask::Rectangle { x, y, width, height }) => image::imageops::crop_imm(&flat, x, y, width, height).to_image(),
+            let img = match s.doc.selection.and_then(|sel| {
+                Selection {
+                    circle: false,
+                    ..sel
+                }
+                .mask(s.doc.width(), s.doc.height())
+            }) {
+                Some(tr::SelectionMask::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                }) => image::imageops::crop_imm(&flat, x, y, width, height).to_image(),
                 _ => flat,
             };
             let r = arboard::Clipboard::new().and_then(|mut c| {
-                c.set_image(arboard::ImageData { width: img.width() as usize, height: img.height() as usize, bytes: img.into_raw().into() })
+                c.set_image(arboard::ImageData {
+                    width: img.width() as usize,
+                    height: img.height() as usize,
+                    bytes: img.into_raw().into(),
+                })
             });
             ui.set_status(
                 match r {
@@ -1039,9 +1322,18 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 match r {
                     Ok(img) => {
                         new_doc(&ui, &st, img);
-                        ui.set_status(tl(zh, "已擷取螢幕，可用「裁切」工具保留範圍。", "Screen captured; use Crop to keep a region.").into());
+                        ui.set_status(
+                            tl(
+                                zh,
+                                "已擷取螢幕，可用「裁切」工具保留範圍。",
+                                "Screen captured; use Crop to keep a region.",
+                            )
+                            .into(),
+                        );
                     }
-                    Err(e) => ui.set_status(format!("{} {e}", tl(zh, "截圖失敗：", "Screenshot failed:")).into()),
+                    Err(e) => ui.set_status(
+                        format!("{} {e}", tl(zh, "截圖失敗：", "Screenshot failed:")).into(),
+                    ),
                 }
                 refresh(&ui, &st);
             });
@@ -1058,7 +1350,14 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             let next = {
                 let s = st.borrow();
                 let n = s.folder.len();
-                s.folder_idx.filter(|_| n > 1).map(|i| s.folder[if a == "next" { (i + 1) % n } else { (i + n - 1) % n }].clone())
+                s.folder_idx.filter(|_| n > 1).map(|i| {
+                    s.folder[if a == "next" {
+                        (i + 1) % n
+                    } else {
+                        (i + n - 1) % n
+                    }]
+                    .clone()
+                })
             };
             if let Some(p) = next {
                 open_path(ui, st, &p);
@@ -1094,15 +1393,24 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }),
         "flatten" => with_doc(ui, st, |d| d.flatten()),
         "add-text" => {
-            let n = format!("{} {}", tl(zh, "文字", "Text"), st.borrow().doc.layers.len() + 1);
-            with_doc(ui, st, |d| d.add_text(d.width() as f32 * 0.1, d.height() as f32 * 0.1, n));
+            let n = format!(
+                "{} {}",
+                tl(zh, "文字", "Text"),
+                st.borrow().doc.layers.len() + 1
+            );
+            with_doc(ui, st, |d| {
+                d.add_text(d.width() as f32 * 0.1, d.height() as f32 * 0.1, n)
+            });
             sync_layer_fields(ui, &st.borrow());
         }
         "add-image" => {
             if let Some(p) = image_filter(rfd::FileDialog::new()).pick_file() {
                 match studio_core::load_dynamic_image(&p) {
                     Ok(img) => {
-                        let n = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let n = p
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
                         with_doc(ui, st, |d| d.add_image_layer(n, img));
                     }
                     Err(e) => ui.set_status(e.to_string().into()),
@@ -1115,19 +1423,35 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "flip-h" => with_doc(ui, st, |d| d.apply_transform(tr::flip_horizontal)),
         "flip-v" => with_doc(ui, st, |d| d.apply_transform(tr::flip_vertical)),
         "select-all" => with_doc(ui, st, |d| {
-            d.selection = Some(Selection { x: 0.0, y: 0.0, w: d.width() as f32, h: d.height() as f32, circle: false })
+            d.selection = Some(Selection {
+                x: 0.0,
+                y: 0.0,
+                w: d.width() as f32,
+                h: d.height() as f32,
+                circle: false,
+            })
         }),
         "deselect" => with_doc(ui, st, |d| d.selection = None),
         "crop" => {
             let ok = st.borrow_mut().doc.crop_to_selection();
             if !ok {
-                ui.set_status(tl(zh, "請先用「選取」或「裁切」工具拖曳出範圍。", "Drag a selection with Select or Crop first.").into());
+                ui.set_status(
+                    tl(
+                        zh,
+                        "請先用「選取」或「裁切」工具拖曳出範圍。",
+                        "Drag a selection with Select or Crop first.",
+                    )
+                    .into(),
+                );
             }
             fit(ui, st);
         }
         "rs-w" | "rs-h" => {
             if ui.get_rs_keep() {
-                let (w, h) = { let s = st.borrow(); (s.doc.width() as f32, s.doc.height() as f32) };
+                let (w, h) = {
+                    let s = st.borrow();
+                    (s.doc.width() as f32, s.doc.height() as f32)
+                };
                 if a == "rs-w" {
                     ui.set_rs_h((ui.get_rs_w() as f32 * h / w).round().max(1.0) as i32);
                 } else {
@@ -1138,7 +1462,9 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }
         "resize" => {
             let (w, h) = (ui.get_rs_w().max(1) as u32, ui.get_rs_h().max(1) as u32);
-            with_doc(ui, st, |d| d.apply_transform(|i| studio_core::resize_exact(i, w, h)));
+            with_doc(ui, st, |d| {
+                d.apply_transform(|i| studio_core::resize_exact(i, w, h))
+            });
             fit(ui, st);
         }
         "canvas-size" => {
@@ -1219,7 +1545,11 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }
         "tab-redact" => {}
         "tool-redact-box" | "tool-redact-brush" => {
-            let t = if a == "tool-redact-box" { Tool::RedactBox } else { Tool::RedactBrush };
+            let t = if a == "tool-redact-box" {
+                Tool::RedactBox
+            } else {
+                Tool::RedactBrush
+            };
             st.borrow_mut().tool = t;
             ui.set_tool(t.index());
         }
@@ -1227,8 +1557,12 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "sel-sensitive" => with_doc(ui, st, |d| {
             preselect_sensitive(&mut d.boxes);
         }),
-        "sel-all-boxes" => with_doc(ui, st, |d| d.boxes.iter_mut().for_each(|b| b.selected = true)),
-        "sel-no-boxes" => with_doc(ui, st, |d| d.boxes.iter_mut().for_each(|b| b.selected = false)),
+        "sel-all-boxes" => with_doc(ui, st, |d| {
+            d.boxes.iter_mut().for_each(|b| b.selected = true)
+        }),
+        "sel-no-boxes" => with_doc(ui, st, |d| {
+            d.boxes.iter_mut().for_each(|b| b.selected = false)
+        }),
         "clear-boxes" => with_doc(ui, st, |d| d.boxes.clear()),
         "sel-keyword" => {
             let k: String = ui.get_redact_keyword().into();
@@ -1260,10 +1594,15 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "refresh-info" => refresh_info(ui, st),
         "c2pa-write" | "c2pa-remove" => {
             let Some(src) = st.borrow().doc.path.clone() else {
-                ui.set_status(tl(zh, "請先儲存或開啟一個檔案。", "Open or save a file first.").into());
+                ui.set_status(
+                    tl(zh, "請先儲存或開啟一個檔案。", "Open or save a file first.").into(),
+                );
                 return;
             };
-            let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = src
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if let Some(dst) = rfd::FileDialog::new().set_file_name(name).save_file() {
                 let r = if a == "c2pa-write" {
                     studio_core::write_c2pa_manifest(&src, &dst, &c2pa_draft(ui))
@@ -1283,7 +1622,11 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "batch-in" | "batch-out" => {
             if let Some(d) = rfd::FileDialog::new().pick_folder() {
                 let s = SharedString::from(d.display().to_string());
-                if a == "batch-in" { ui.set_batch_in(s) } else { ui.set_batch_out(s) }
+                if a == "batch-in" {
+                    ui.set_batch_in(s)
+                } else {
+                    ui.set_batch_out(s)
+                }
             }
             return;
         }
@@ -1305,7 +1648,11 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 ui.set_status(tl(zh, "請至少選擇 2 張影格。", "Pick at least 2 frames.").into());
                 return;
             }
-            if let Some(out) = rfd::FileDialog::new().add_filter("GIF", &["gif"]).set_file_name("animation.gif").save_file() {
+            if let Some(out) = rfd::FileDialog::new()
+                .add_filter("GIF", &["gif"])
+                .set_file_name("animation.gif")
+                .save_file()
+            {
                 let m = ui.get_gif_max();
                 let opts = GifOptions {
                     delay_ms: ui.get_gif_delay() as u32,
@@ -1316,7 +1663,13 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 };
                 ui.set_status(
                     match studio_core::write_animated_gif(&frames, &out, opts) {
-                        Ok(r) => format!("GIF: {} ({} frames, {}×{})", r.output.display(), r.frame_count, r.width, r.height),
+                        Ok(r) => format!(
+                            "GIF: {} ({} frames, {}×{})",
+                            r.output.display(),
+                            r.frame_count,
+                            r.width,
+                            r.height
+                        ),
                         Err(e) => format!("GIF: {e}"),
                     }
                     .into(),
@@ -1325,18 +1678,30 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             return;
         }
         "pano-run" => {
-            if let Some(out) = rfd::FileDialog::new().add_filter("JPEG", &["jpg"]).set_file_name("panorama-360.jpg").save_file() {
+            if let Some(out) = rfd::FileDialog::new()
+                .add_filter("JPEG", &["jpg"])
+                .set_file_name("panorama-360.jpg")
+                .save_file()
+            {
                 let w = ui.get_pano_width();
                 let opts = PanoramaOptions {
-                    mode: [PanoramaMode::Pad, PanoramaMode::Stretch, PanoramaMode::Crop][ui.get_pano_mode().clamp(0, 2) as usize],
+                    mode: [PanoramaMode::Pad, PanoramaMode::Stretch, PanoramaMode::Crop]
+                        [ui.get_pano_mode().clamp(0, 2) as usize],
                     target_width: (w > 0).then_some(w as u32),
                     quality: ui.get_quality() as u8,
                     background: [0, 0, 0, 255],
                 };
-                let (img, input) = { let s = st.borrow(); (s.doc.flattened(), s.doc.path.clone().unwrap_or_default()) };
+                let (img, input) = {
+                    let s = st.borrow();
+                    (s.doc.flattened(), s.doc.path.clone().unwrap_or_default())
+                };
                 ui.set_status(
                     match studio_core::write_panorama_dynamic_jpeg(&img, &out, opts, input) {
-                        Ok(_) => format!("{} {}", tl(zh, "全景已輸出：", "Panorama written:"), out.display()),
+                        Ok(_) => format!(
+                            "{} {}",
+                            tl(zh, "全景已輸出：", "Panorama written:"),
+                            out.display()
+                        ),
                         Err(e) => format!("Panorama: {e}"),
                     }
                     .into(),
@@ -1347,16 +1712,28 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "refresh-shell" => {
             ui.set_shell_state(
                 if shell::is_registered() {
-                    tl(zh, "已註冊右鍵選單（以 Pixel Studio 編輯／開啟）。", "Right-click menu is registered.")
+                    tl(
+                        zh,
+                        "已註冊右鍵選單（以 Pixel Studio 編輯／開啟）。",
+                        "Right-click menu is registered.",
+                    )
                 } else {
-                    tl(zh, "尚未註冊右鍵選單。", "Right-click menu is not registered.")
+                    tl(
+                        zh,
+                        "尚未註冊右鍵選單。",
+                        "Right-click menu is not registered.",
+                    )
                 }
                 .into(),
             );
             return;
         }
         "shell-register" | "shell-unregister" => {
-            let r = if a == "shell-register" { shell::register(zh) } else { shell::unregister() };
+            let r = if a == "shell-register" {
+                shell::register(zh)
+            } else {
+                shell::unregister()
+            };
             ui.set_status(r.unwrap_or_else(|e| e.to_string()).into());
             action(ui, st, "refresh-shell");
             return;
@@ -1380,7 +1757,14 @@ fn start_detection(ui: &AppWindow, st: &S) {
     });
     st.borrow_mut().job = Some(Job::Detect(rx));
     ui.set_detecting(true);
-    ui.set_redact_info(tl(zh, "偵測中…（首次使用會下載約 12 MB 離線模型）", "Detecting… (first use downloads ~12 MB of offline models)").into());
+    ui.set_redact_info(
+        tl(
+            zh,
+            "偵測中…（首次使用會下載約 12 MB 離線模型）",
+            "Detecting… (first use downloads ~12 MB of offline models)",
+        )
+        .into(),
+    );
 }
 
 fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
@@ -1388,7 +1772,14 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
     let input: String = ui.get_batch_in().into();
     let output: String = ui.get_batch_out().into();
     if input.is_empty() || output.is_empty() {
-        ui.set_batch_progress(tl(zh, "請選擇來源與輸出資料夾。", "Choose input and output folders.").into());
+        ui.set_batch_progress(
+            tl(
+                zh,
+                "請選擇來源與輸出資料夾。",
+                "Choose input and output folders.",
+            )
+            .into(),
+        );
         return;
     }
     let files = studio_core::collect_supported_files(&input);
@@ -1414,15 +1805,31 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
             }
         };
         let summary = match kind.as_str() {
-            "batch-c2pa-add" => studio_core::process_c2pa_add_batch_with_progress(&files, &C2paAddOptions { output_dir: out, draft }, progress),
-            "batch-c2pa-remove" => {
-                studio_core::process_c2pa_removal_batch_with_progress(&files, &C2paRemovalOptions { output_dir: out }, progress)
-            }
+            "batch-c2pa-add" => studio_core::process_c2pa_add_batch_with_progress(
+                &files,
+                &C2paAddOptions {
+                    output_dir: out,
+                    draft,
+                },
+                progress,
+            ),
+            "batch-c2pa-remove" => studio_core::process_c2pa_removal_batch_with_progress(
+                &files,
+                &C2paRemovalOptions { output_dir: out },
+                progress,
+            ),
             _ => studio_core::process_batch_with_progress(&files, &opts, progress),
         };
-        let mut msg = format!("{} / {} OK, {} failed", summary.succeeded, summary.total, summary.failed);
+        let mut msg = format!(
+            "{} / {} OK, {} failed",
+            summary.succeeded, summary.total, summary.failed
+        );
         for r in summary.results.iter().filter(|r| r.error.is_some()).take(5) {
-            msg += &format!("\n{}: {}", r.input.display(), r.error.as_deref().unwrap_or(""));
+            msg += &format!(
+                "\n{}: {}",
+                r.input.display(),
+                r.error.as_deref().unwrap_or("")
+            );
         }
         let _ = tx.send(BatchMsg::Done(msg));
     });
@@ -1459,7 +1866,9 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
                     s.doc.boxes = boxes;
                     changed = true;
                 }
-                Err(e) => ui.set_redact_info(format!("{} {e}", tl(zh, "偵測失敗：", "Detection failed:")).into()),
+                Err(e) => ui.set_redact_info(
+                    format!("{} {e}", tl(zh, "偵測失敗：", "Detection failed:")).into(),
+                ),
             }
         }
         let mut batch_done = false;
@@ -1486,8 +1895,20 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
 
 fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
     use slint::platform::Key;
+    if std::env::var_os("PIXEL_STUDIO_DEBUG").is_some() {
+        eprintln!("key {:?} ctrl={ctrl} shift={shift}", text);
+    }
     let is = |k: Key| text.chars().next() == Some(char::from(k)) && text.chars().count() == 1;
-    let t = text.to_lowercase();
+    let mut t = text.to_lowercase();
+    // Some platforms deliver Ctrl+letter as the ASCII control character.
+    if let Some(c) = t.chars().next()
+        && t.chars().count() == 1
+        && (c as u32) >= 1
+        && (c as u32) <= 26
+        && ctrl
+    {
+        t = ((b'a' + c as u8 - 1) as char).to_string();
+    }
     if ctrl {
         let a = match t.as_str() {
             "z" if shift => "redo",
@@ -1502,6 +1923,11 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             "c" => "copy",
             "a" => "select-all",
             "d" => "deselect",
+            "g" => {
+                let on = !ui.get_show_grid();
+                ui.set_show_grid(on);
+                "grid"
+            }
             "=" | "+" => "zoom-in",
             "-" => "zoom-out",
             "0" => "zoom-fit",
@@ -1577,10 +2003,22 @@ fn wire(ui: &AppWindow, st: &S) {
         }};
     }
     cb!(on_action, |ui, st, a: SharedString| action(&ui, &st, &a));
-    cb!(on_canvas_pointer, |ui, st, kind: i32, button: i32, x: f32, y: f32, shift: bool, _ctrl: bool| pointer(
-        &ui, &st, kind, button, x, y, shift
-    ));
-    cb!(on_canvas_scroll, |ui, st, x: f32, y: f32, dy: f32, ctrl: bool| {
+    cb!(on_canvas_pointer, |ui,
+                            st,
+                            kind: i32,
+                            button: i32,
+                            x: f32,
+                            y: f32,
+                            shift: bool,
+                            _ctrl: bool| {
+        pointer(&ui, &st, kind, button, x, y, shift)
+    });
+    cb!(on_canvas_scroll, |ui,
+                           st,
+                           x: f32,
+                           y: f32,
+                           dy: f32,
+                           ctrl: bool| {
         if ctrl {
             zoom_at(&st, if dy > 0.0 { 1.15 } else { 1.0 / 1.15 }, (x, y));
         } else {
@@ -1589,7 +2027,13 @@ fn wire(ui: &AppWindow, st: &S) {
         refresh(&ui, &st)
     });
     cb!(on_canvas_resized, |ui, st| sync_view(&ui, &st.borrow()));
-    cb!(on_key, |ui, st, text: SharedString, ctrl: bool, shift: bool| key(&ui, &st, &text, ctrl, shift));
+    cb!(on_key, |ui,
+                 st,
+                 text: SharedString,
+                 ctrl: bool,
+                 shift: bool| key(
+        &ui, &st, &text, ctrl, shift
+    ));
     cb!(on_pick_color, |ui, st, c: Color, right: bool| {
         let mut s = st.borrow_mut();
         if right {
@@ -1631,8 +2075,14 @@ fn wire(ui: &AppWindow, st: &S) {
         layer_edited(&ui, &st, &field);
         refresh(&ui, &st)
     });
-    cb!(on_sticker_click, |ui, st, id: SharedString| sticker_insert(&ui, &st, &id, None));
-    cb!(on_sticker_drop, |ui, st, id: SharedString, x: f32, y: f32| {
+    cb!(on_sticker_click, |ui, st, id: SharedString| sticker_insert(
+        &ui, &st, &id, None
+    ));
+    cb!(on_sticker_drop, |ui,
+                          st,
+                          id: SharedString,
+                          x: f32,
+                          y: f32| {
         let p = to_img(&st.borrow(), x, y);
         sticker_insert(&ui, &st, &id, Some(p))
     });
@@ -1677,7 +2127,11 @@ fn wire(ui: &AppWindow, st: &S) {
 fn sticker_insert(ui: &AppWindow, st: &S, id: &str, at: Option<(f32, f32)>) {
     {
         let mut s = st.borrow_mut();
-        let style = StickerStyle { stroke_width: ui.get_st_stroke(), shadow: ui.get_st_shadow(), ..s.sticker_style };
+        let style = StickerStyle {
+            stroke_width: ui.get_st_stroke(),
+            shadow: ui.get_st_shadow(),
+            ..s.sticker_style
+        };
         s.doc.insert_sticker(id, at, style);
         s.tool = Tool::Select;
         ui.set_tool(Tool::Select.index());

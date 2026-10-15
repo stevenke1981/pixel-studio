@@ -61,12 +61,21 @@ impl Tool {
         Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as i32
     }
     pub fn from_index(i: i32) -> Self {
-        Self::ALL.get(i.max(0) as usize).copied().unwrap_or_default()
+        Self::ALL
+            .get(i.max(0) as usize)
+            .copied()
+            .unwrap_or_default()
     }
     pub fn is_raster(self) -> bool {
         matches!(
             self,
-            Tool::Pencil | Tool::Brush | Tool::Highlighter | Tool::Airbrush | Tool::Calligraphy | Tool::Eraser | Tool::Mosaic
+            Tool::Pencil
+                | Tool::Brush
+                | Tool::Highlighter
+                | Tool::Airbrush
+                | Tool::Calligraphy
+                | Tool::Eraser
+                | Tool::Mosaic
         )
     }
 }
@@ -89,10 +98,20 @@ impl IRect {
         (x1 > x0 && y1 > y0).then_some(Self { x0, y0, x1, y1 })
     }
     pub fn union(self, o: Self) -> Self {
-        Self { x0: self.x0.min(o.x0), y0: self.y0.min(o.y0), x1: self.x1.max(o.x1), y1: self.y1.max(o.y1) }
+        Self {
+            x0: self.x0.min(o.x0),
+            y0: self.y0.min(o.y0),
+            x1: self.x1.max(o.x1),
+            y1: self.y1.max(o.y1),
+        }
     }
     pub fn full(w: u32, h: u32) -> Self {
-        Self { x0: 0, y0: 0, x1: w, y1: h }
+        Self {
+            x0: 0,
+            y0: 0,
+            x1: w,
+            y1: h,
+        }
     }
 }
 
@@ -117,7 +136,13 @@ impl Selection {
             w = d;
             h = d;
         }
-        Self { x: x0, y: y0, w, h, circle }
+        Self {
+            x: x0,
+            y: y0,
+            w,
+            h,
+            circle,
+        }
     }
     pub fn mask(&self, iw: u32, ih: u32) -> Option<SelectionMask> {
         let x = (self.x.floor().max(0.0) as u32).min(iw.saturating_sub(1));
@@ -128,9 +153,18 @@ impl Selection {
             return None;
         }
         Some(if self.circle {
-            SelectionMask::Circle { x, y, diameter: w.min(h) }
+            SelectionMask::Circle {
+                x,
+                y,
+                diameter: w.min(h),
+            }
         } else {
-            SelectionMask::Rectangle { x, y, width: w, height: h }
+            SelectionMask::Rectangle {
+                x,
+                y,
+                width: w,
+                height: h,
+            }
         })
     }
 }
@@ -255,7 +289,11 @@ impl Doc {
     // ------------------------------------------------------------ history
 
     fn snapshot(&self) -> Snapshot {
-        Snapshot { image: self.image.clone(), layers: self.layers.clone(), selected: self.selected }
+        Snapshot {
+            image: self.image.clone(),
+            layers: self.layers.clone(),
+            selected: self.selected,
+        }
     }
 
     /// Record the current state before a modification.
@@ -285,14 +323,18 @@ impl Doc {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(s) = self.undo.pop() else { return false };
+        let Some(s) = self.undo.pop() else {
+            return false;
+        };
         self.redo.push(self.snapshot());
         self.restore(s);
         true
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(s) = self.redo.pop() else { return false };
+        let Some(s) = self.redo.pop() else {
+            return false;
+        };
         self.undo.push(self.snapshot());
         self.restore(s);
         true
@@ -301,13 +343,21 @@ impl Doc {
     // ------------------------------------------------------------ compositing
 
     fn ensure_overlay(&mut self) {
-        if !self.overlay_dirty && self.overlay.as_ref().is_some_and(|o| o.dimensions() == self.image.dimensions()) {
+        if !self.overlay_dirty
+            && self
+                .overlay
+                .as_ref()
+                .is_some_and(|o| o.dimensions() == self.image.dimensions())
+        {
             return;
         }
         self.refresh_stickers();
         self.overlay = if self.layers.iter().any(|l| l.is_visible()) {
             let transparent = DynamicImage::ImageRgba8(RgbaImage::new(self.width(), self.height()));
-            let doc = ComposeDocument { background: transparent, layers: self.layers.clone() };
+            let doc = ComposeDocument {
+                background: transparent,
+                layers: self.layers.clone(),
+            };
             Some(render_composition(&doc, self.font_bytes.as_deref()).to_rgba8())
         } else {
             None
@@ -363,10 +413,17 @@ impl Doc {
                 && let Some(s) = stickers::find(&self.library, &inst.id)
                 && inst.rendered != Some((img.width, img.height, inst.style))
             {
-                img.image = stickers::render_sticker(s, &inst.style, img.width.max(1), img.height.max(1));
+                img.image =
+                    stickers::render_sticker(s, &inst.style, img.width.max(1), img.height.max(1));
             }
         }
-        render_composition(&ComposeDocument { background: bg, layers }, self.font_bytes.as_deref())
+        render_composition(
+            &ComposeDocument {
+                background: bg,
+                layers,
+            },
+            self.font_bytes.as_deref(),
+        )
     }
 
     pub fn sample(&self, x: f32, y: f32) -> Option<[u8; 4]> {
@@ -378,10 +435,26 @@ impl Doc {
     // ------------------------------------------------------------ painting
 
     /// Apply one raster stroke segment. Returns false for non-raster tools.
-    pub fn stroke(&mut self, tool: Tool, from: (f32, f32), to: (f32, f32), secondary: bool, s: &ToolSettings) -> bool {
+    pub fn stroke(
+        &mut self,
+        tool: Tool,
+        from: (f32, f32),
+        to: (f32, f32),
+        secondary: bool,
+        s: &ToolSettings,
+    ) -> bool {
         use studio_core::drawing as d;
-        let (x0, y0, x1, y1) = (from.0.round() as i32, from.1.round() as i32, to.0.round() as i32, to.1.round() as i32);
-        let color = Rgba(if secondary || tool == Tool::Eraser { s.color2 } else { s.color1 });
+        let (x0, y0, x1, y1) = (
+            from.0.round() as i32,
+            from.1.round() as i32,
+            to.0.round() as i32,
+            to.1.round() as i32,
+        );
+        let color = Rgba(if secondary || tool == Tool::Eraser {
+            s.color2
+        } else {
+            s.color1
+        });
         let r = (s.stroke_width / 2.0).max(0.5);
         let img = &mut self.image;
         let pad = match tool {
@@ -418,23 +491,41 @@ impl Doc {
                 let ry = (y1.max(0) as u32).saturating_sub(bs / 2);
                 d::apply_mosaic_region(img, rx, ry, bs, bs, block);
                 // mosaic snaps to the box it touched
-                if let Some(rect) = IRect::around(rx as f32, ry as f32, (rx + bs) as f32, (ry + bs) as f32, 1.0, self.image.width(), self.image.height()) {
+                if let Some(rect) = IRect::around(
+                    rx as f32,
+                    ry as f32,
+                    (rx + bs) as f32,
+                    (ry + bs) as f32,
+                    1.0,
+                    self.image.width(),
+                    self.image.height(),
+                ) {
                     self.mark(rect);
                 }
                 return true;
             }
             Tool::RedactBrush => {
                 let rr = s.redact_brush_radius;
-                let steps = (((to.0 - from.0).hypot(to.1 - from.1)) / (rr * 0.4).max(1.0)).ceil().max(1.0) as usize;
+                let steps = (((to.0 - from.0).hypot(to.1 - from.1)) / (rr * 0.4).max(1.0))
+                    .ceil()
+                    .max(1.0) as usize;
                 for i in 0..=steps {
                     let t = i as f32 / steps as f32;
-                    redact_brush_dab(img, from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t, rr, s.redact_color);
+                    redact_brush_dab(
+                        img,
+                        from.0 + (to.0 - from.0) * t,
+                        from.1 + (to.1 - from.1) * t,
+                        rr,
+                        s.redact_color,
+                    );
                 }
                 rr + 2.0
             }
             _ => return false,
         };
-        if let Some(rect) = IRect::around(from.0, from.1, to.0, to.1, pad, self.width(), self.height()) {
+        if let Some(rect) =
+            IRect::around(from.0, from.1, to.0, to.1, pad, self.width(), self.height())
+        {
             self.mark(rect);
         }
         true
@@ -445,7 +536,13 @@ impl Doc {
             return false;
         }
         self.checkpoint();
-        studio_core::drawing::flood_fill(&mut self.image, x as u32, y as u32, Rgba(color), tolerance);
+        studio_core::drawing::flood_fill(
+            &mut self.image,
+            x as u32,
+            y as u32,
+            Rgba(color),
+            tolerance,
+        );
         self.mark(IRect::full(self.width(), self.height()));
         true
     }
@@ -457,7 +554,10 @@ impl Doc {
         self.checkpoint();
         let src = DynamicImage::ImageRgba8(self.image.clone());
         let edited = f(&src);
-        let out = match self.selection.and_then(|s| s.mask(self.width(), self.height())) {
+        let out = match self
+            .selection
+            .and_then(|s| s.mask(self.width(), self.height()))
+        {
             Some(m) if edited.width() == src.width() && edited.height() == src.height() => {
                 studio_core::transform::apply_selection_mask(&src, &edited, m)
             }
@@ -484,9 +584,26 @@ impl Doc {
     }
 
     pub fn crop_to_selection(&mut self) -> bool {
-        let Some(sel) = self.selection else { return false };
-        let Some(SelectionMask::Rectangle { x, y, width, height } | SelectionMask::Circle { x, y, diameter: width @ height }) =
-            Selection { circle: false, ..sel }.mask(self.width(), self.height())
+        let Some(sel) = self.selection else {
+            return false;
+        };
+        let Some(
+            SelectionMask::Rectangle {
+                x,
+                y,
+                width,
+                height,
+            }
+            | SelectionMask::Circle {
+                x,
+                y,
+                diameter: width @ height,
+            },
+        ) = Selection {
+            circle: false,
+            ..sel
+        }
+        .mask(self.width(), self.height())
         else {
             return false;
         };
@@ -543,15 +660,22 @@ impl Doc {
     pub fn hit_test(&self, x: f32, y: f32) -> Option<usize> {
         (0..self.layers.len()).rev().find(|&i| {
             self.layers[i].is_visible()
-                && self.layer_bounds(i).is_some_and(|(bx, by, bw, bh)| x >= bx && y >= by && x < bx + bw && y < by + bh)
+                && self.layer_bounds(i).is_some_and(|(bx, by, bw, bh)| {
+                    x >= bx && y >= by && x < bx + bw && y < by + bh
+                })
         })
     }
 
     /// Is (x, y) on the bottom-right resize handle of the selected image/sticker layer?
     pub fn on_resize_handle(&self, x: f32, y: f32, tolerance: f32) -> bool {
         let Some(i) = self.selected else { return false };
-        let Some(ComposeLayer::Image(l)) = self.layers.get(i) else { return false };
-        let (cx, cy) = ((l.x + l.width as i32) as f32, (l.y + l.height as i32) as f32);
+        let Some(ComposeLayer::Image(l)) = self.layers.get(i) else {
+            return false;
+        };
+        let (cx, cy) = (
+            (l.x + l.width as i32) as f32,
+            (l.y + l.height as i32) as f32,
+        );
         (x - cx).abs() <= tolerance && (y - cy).abs() <= tolerance
     }
 
@@ -617,7 +741,13 @@ impl Doc {
     }
 
     pub fn add_shape(&mut self, kind: ShapeKind, a: (f32, f32), b: (f32, f32), s: &ToolSettings) {
-        let mut layer = ShapeLayer::new(kind, a.0.round() as i32, a.1.round() as i32, b.0.round() as i32, b.1.round() as i32);
+        let mut layer = ShapeLayer::new(
+            kind,
+            a.0.round() as i32,
+            a.1.round() as i32,
+            b.0.round() as i32,
+            b.1.round() as i32,
+        );
         layer.stroke_color = s.color1;
         layer.fill_color = s.color2;
         layer.stroke_width = s.stroke_width;
@@ -629,14 +759,18 @@ impl Doc {
         let mut l = ImageLayer::new(name, img);
         // fit inside the canvas
         let (cw, ch) = (self.width() as f32, self.height() as f32);
-        let k = (cw * 0.8 / l.width as f32).min(ch * 0.8 / l.height as f32).min(1.0);
+        let k = (cw * 0.8 / l.width as f32)
+            .min(ch * 0.8 / l.height as f32)
+            .min(1.0);
         l.width = ((l.width as f32 * k).round() as u32).max(1);
         l.height = ((l.height as f32 * k).round() as u32).max(1);
         self.push_layer(ComposeLayer::Image(l));
     }
 
     pub fn insert_sticker(&mut self, id: &str, at: Option<(f32, f32)>, base: StickerStyle) -> bool {
-        let Some(s) = stickers::find(&self.library, id).cloned() else { return false };
+        let Some(s) = stickers::find(&self.library, id).cloned() else {
+            return false;
+        };
         let side = ((self.width().min(self.height()) as f32) * 0.22).clamp(48.0, 480.0) as u32;
         let mut style = base;
         style.fill = s.default_fill;
@@ -644,16 +778,25 @@ impl Doc {
             style.stroke = [40, 40, 40, 255];
         }
         let (cx, cy) = at.unwrap_or((self.width() as f32 / 2.0, self.height() as f32 / 2.0));
-        let mut layer = ImageLayer::new(s.id.clone(), stickers::render_sticker(&s, &style, side, side));
+        let mut layer = ImageLayer::new(
+            s.id.clone(),
+            stickers::render_sticker(&s, &style, side, side),
+        );
         layer.x = (cx - side as f32 / 2.0) as i32;
         layer.y = (cy - side as f32 / 2.0) as i32;
-        layer.sticker = Some(StickerInstance { id: s.id.clone(), style, rendered: Some((side, side, style)) });
+        layer.sticker = Some(StickerInstance {
+            id: s.id.clone(),
+            style,
+            rendered: Some((side, side, style)),
+        });
         self.push_layer(ComposeLayer::Image(layer));
         true
     }
 
     pub fn delete_selected(&mut self) -> bool {
-        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else { return false };
+        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return false;
+        };
         self.checkpoint();
         self.layers.remove(i);
         self.selected = None;
@@ -767,7 +910,11 @@ impl Doc {
                 },
             });
         }
-        let p = ProjectFile { version: 2, background_png: png_b64(&DynamicImage::ImageRgba8(self.image.clone()))?, layers };
+        let p = ProjectFile {
+            version: 2,
+            background_png: png_b64(&DynamicImage::ImageRgba8(self.image.clone()))?,
+            layers,
+        };
         serde_json::to_string_pretty(&p).map_err(|e| e.to_string())
     }
 
@@ -777,21 +924,31 @@ impl Doc {
         let mut layers = Vec::new();
         for l in p.layers {
             layers.push(match l {
-                ProjectLayer::Text { name, text, font_path, x, y, font_size, color, opacity, stroke, shadow, visible } => {
-                    ComposeLayer::Text(TextLayer {
-                        name,
-                        text,
-                        font_path: font_path.map(PathBuf::from),
-                        x,
-                        y,
-                        font_size,
-                        color,
-                        opacity,
-                        stroke,
-                        shadow,
-                        visible,
-                    })
-                }
+                ProjectLayer::Text {
+                    name,
+                    text,
+                    font_path,
+                    x,
+                    y,
+                    font_size,
+                    color,
+                    opacity,
+                    stroke,
+                    shadow,
+                    visible,
+                } => ComposeLayer::Text(TextLayer {
+                    name,
+                    text,
+                    font_path: font_path.map(PathBuf::from),
+                    x,
+                    y,
+                    font_size,
+                    color,
+                    opacity,
+                    stroke,
+                    shadow,
+                    visible,
+                }),
                 ProjectLayer::Image {
                     name,
                     image_png,
@@ -908,12 +1065,18 @@ fn over(dst: [u8; 4], src: [u8; 4]) -> [u8; 4] {
 
 fn png_b64(img: &DynamicImage) -> Result<String, String> {
     let mut bytes = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    img.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(general_purpose::STANDARD.encode(bytes))
 }
 
 fn png_decode(s: &str) -> Result<DynamicImage, String> {
-    let bytes = general_purpose::STANDARD.decode(s).map_err(|e| e.to_string())?;
+    let bytes = general_purpose::STANDARD
+        .decode(s)
+        .map_err(|e| e.to_string())?;
     image::load_from_memory(&bytes).map_err(|e| e.to_string())
 }
 
@@ -1001,7 +1164,13 @@ mod tests {
     fn undo_redo_roundtrip_including_layers() {
         let mut d = Doc::new(50, 50);
         d.checkpoint();
-        d.stroke(Tool::Pencil, (0.0, 0.0), (10.0, 0.0), false, &ToolSettings::default());
+        d.stroke(
+            Tool::Pencil,
+            (0.0, 0.0),
+            (10.0, 0.0),
+            false,
+            &ToolSettings::default(),
+        );
         d.add_text(5.0, 5.0, "t".into());
         assert_eq!(d.layers.len(), 1);
         assert!(d.undo());
@@ -1016,7 +1185,16 @@ mod tests {
     #[test]
     fn composite_blends_layers_and_matches_flatten_for_opaque_layers() {
         let mut d = Doc::new(40, 40);
-        d.add_shape(ShapeKind::Rectangle, (5.0, 5.0), (30.0, 30.0), &ToolSettings { shape_filled: true, color2: [0, 0, 255, 255], ..Default::default() });
+        d.add_shape(
+            ShapeKind::Rectangle,
+            (5.0, 5.0),
+            (30.0, 30.0),
+            &ToolSettings {
+                shape_filled: true,
+                color2: [0, 0, 255, 255],
+                ..Default::default()
+            },
+        );
         let b = buf(&mut d);
         let i = ((20 * 40 + 20) * 4) as usize;
         assert_eq!(&b[i..i + 4], &[0, 0, 255, 255]);
@@ -1046,12 +1224,24 @@ mod tests {
     #[test]
     fn filter_respects_selection_and_crop_shifts_layers() {
         let mut d = Doc::new(20, 20);
-        d.selection = Some(Selection { x: 0.0, y: 0.0, w: 10.0, h: 20.0, circle: false });
+        d.selection = Some(Selection {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 20.0,
+            circle: false,
+        });
         d.apply_filter(studio_core::transform::invert);
         assert_eq!(d.image.get_pixel(2, 2).0, [0, 0, 0, 255]);
         assert_eq!(d.image.get_pixel(15, 2).0, [255, 255, 255, 255]);
         d.add_text(12.0, 12.0, "t".into());
-        d.selection = Some(Selection { x: 10.0, y: 10.0, w: 10.0, h: 10.0, circle: false });
+        d.selection = Some(Selection {
+            x: 10.0,
+            y: 10.0,
+            w: 10.0,
+            h: 10.0,
+            circle: false,
+        });
         assert!(d.crop_to_selection());
         assert_eq!(d.image.dimensions(), (10, 10));
         if let ComposeLayer::Text(t) = &d.layers[0] {
@@ -1080,13 +1270,18 @@ mod tests {
         let mut e = Doc::new(1, 1);
         e.load_project_json(&json).unwrap();
         assert_eq!(e.layers.len(), 2);
-        assert!(matches!(&e.layers[0], ComposeLayer::Image(l) if l.sticker.as_ref().is_some_and(|s| s.id == "star")));
+        assert!(
+            matches!(&e.layers[0], ComposeLayer::Image(l) if l.sticker.as_ref().is_some_and(|s| s.id == "star"))
+        );
         assert_eq!(e.image.dimensions(), (100, 100));
     }
 
     #[test]
     fn over_blend() {
-        assert_eq!(over([255, 255, 255, 255], [0, 0, 0, 0]), [255, 255, 255, 255]);
+        assert_eq!(
+            over([255, 255, 255, 255], [0, 0, 0, 0]),
+            [255, 255, 255, 255]
+        );
         assert_eq!(over([255, 255, 255, 255], [0, 0, 0, 255]), [0, 0, 0, 255]);
         let m = over([255, 255, 255, 255], [0, 0, 0, 128]);
         assert!(m[0] > 120 && m[0] < 135 && m[3] == 255);

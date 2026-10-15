@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 pub fn load_system_font_bytes() -> Option<Vec<u8>> {
@@ -66,4 +64,3 @@ pub fn display_font_name(path: &Path) -> String {
         .unwrap_or("Font")
         .to_owned()
 }
-

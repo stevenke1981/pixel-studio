@@ -3,6 +3,7 @@ param([string]$Exe = 'target\release\pixel-studio.exe', [string]$Out = 'win-scre
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $env:PIXEL_STUDIO_LANG = 'zh-TW'
+$env:PIXEL_STUDIO_TAB = '3'
 $p = Start-Process $Exe -PassThru -ArgumentList "`"$((Resolve-Path $Image).Path)`""
 Start-Sleep -Seconds 12
 if ($p.HasExited) { throw "GUI exited early with code $($p.ExitCode)" }

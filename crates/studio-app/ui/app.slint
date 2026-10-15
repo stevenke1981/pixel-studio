@@ -60,7 +60,7 @@ component LabeledSlider inherits HorizontalLayout {
 
 export component AppWindow inherits Window {
     title: "Pixel Studio 像素工作室";
-    preferred-width: 1360px;
+    preferred-width: 1400px;
     preferred-height: 860px;
     min-width: 900px;
     min-height: 600px;
@@ -262,7 +262,7 @@ export component AppWindow inherits Window {
             vertical-stretch: 1;
             // -------------------------------------------------------- tool column
             if !root.view-mode: Rectangle {
-                width: 112px;
+                width: 128px;
                 background: #f8f9fb;
                 ScrollView {
                     VerticalLayout {
@@ -287,7 +287,12 @@ export component AppWindow inherits Window {
                             spacing: 4px;
                             Rectangle { width: 32px; height: 32px; background: root.color1; border-width: 2px; border-color: #333; border-radius: 4px; }
                             Rectangle { width: 32px; height: 32px; background: root.color2; border-width: 1px; border-color: #999; border-radius: 4px; }
-                            Button { text: "⇄"; clicked => { root.action("swap-colors"); } }
+                            Rectangle {
+                                width: 28px; height: 32px; border-radius: 4px;
+                                background: swap-ta.has-hover ? #dde6f7 : #eceff4;
+                                Text { text: "⇄"; font-size: 16px; }
+                                swap-ta := TouchArea { clicked => { root.action("swap-colors"); } }
+                            }
                         }
                         Text { text: T.t("左鍵=色1 右鍵=色2", "L=colour 1  R=colour 2"); font-size: 10px; color: #666; wrap: word-wrap; }
                         GridLayout {
@@ -398,7 +403,7 @@ export component AppWindow inherits Window {
             }
             // -------------------------------------------------------- inspector
             if !root.view-mode: Rectangle {
-                width: 340px;
+                width: 372px;
                 background: #ffffff;
                 VerticalLayout {
                     padding: 6px;
