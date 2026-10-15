@@ -6,11 +6,24 @@ license.workspace = true
 
 [dependencies]
 ab_glyph.workspace = true
+anyhow.workspace = true
 c2pa.workspace = true
+dirs = "7.0.0"
 image.workspace = true
 imageproc.workspace = true
+img-parts = "0.4"
+ocrs = "0.13"
 rayon.workspace = true
+regex = "1.13.1"
+resvg = "0.48"
+rten = "0.26"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ureq = "3"
 walkdir.workspace = true
+webp = "0.3"
+
+[dev-dependencies]
+image = "0.25"
+img-parts = "0.4"

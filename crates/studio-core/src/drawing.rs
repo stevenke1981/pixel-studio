@@ -510,6 +510,7 @@ pub fn apply_mosaic_region(
                 }
             }
 
+            #[allow(clippy::manual_checked_ops)]
             if count > 0 {
                 let avg = Rgba([
                     ((sum_r + count / 2) / count) as u8,

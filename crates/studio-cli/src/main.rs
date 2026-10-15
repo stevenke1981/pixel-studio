@@ -12,7 +12,7 @@ use studio_core::{
 
 #[derive(Debug, Parser)]
 #[command(name = "studio-cli")]
-#[command(about = "Pixel Studio command-line utilities")]
+#[command(about = "Pixel Studio command-line utilities", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -20,6 +20,27 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Detect text offline and redact sensitive data (solid box by default).
+    Redact {
+        input: PathBuf,
+        output: PathBuf,
+        /// solid | mosaic | blur
+        #[arg(long, default_value = "solid")]
+        style: String,
+        #[arg(long, default_value_t = 4)]
+        padding: u32,
+        /// Also redact every box containing this keyword.
+        #[arg(long)]
+        keyword: Vec<String>,
+        /// Redact all detected text, not only sensitive matches.
+        #[arg(long)]
+        all: bool,
+        /// Keep EXIF/ICC metadata from the source (stripped by default).
+        #[arg(long)]
+        keep_metadata: bool,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+    },
     Info {
         input: PathBuf,
     },
@@ -125,6 +146,40 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Redact { input, output, style, padding, keyword, all, keep_metadata, quality } => {
+            use studio_core::redact::{RedactStyle, apply_redactions, select_by_keyword};
+            let image = load_dynamic_image(&input)?;
+            let dir = studio_core::ocr::ensure_models()?;
+            let detector = studio_core::ocr::TextDetector::load(&dir)?;
+            let mut boxes = detector.detect(&image)?;
+            for k in &keyword {
+                select_by_keyword(&mut boxes, k);
+            }
+            if all {
+                boxes.iter_mut().for_each(|b| b.selected = true);
+            }
+            for b in &boxes {
+                println!(
+                    "{} {:>4},{:<4} {:>4}x{:<3} {:<8} {}",
+                    if b.selected { "[x]" } else { "[ ]" },
+                    b.x, b.y, b.width, b.height,
+                    b.kind.map(|k| k.label()).unwrap_or("-"),
+                    b.text
+                );
+            }
+            let style = match style.as_str() {
+                "mosaic" => RedactStyle::Mosaic(12),
+                "blur" => RedactStyle::Blur(10.0),
+                _ => RedactStyle::default(),
+            };
+            let (out, n) = apply_redactions(&image, &boxes, style, padding);
+            let format = studio_core::convert::require_output_format(&output)?;
+            save_dynamic_image(&out, &output, ConvertOptions { format, quality, ..Default::default() })?;
+            if keep_metadata {
+                studio_core::metadata::copy_metadata(&input, &output)?;
+            }
+            println!("detected {} text lines, redacted {n}", boxes.len());
+        }
         Command::Info { input } => {
             let info = inspect_image(input)?;
             println!(

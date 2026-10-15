@@ -140,7 +140,28 @@ pub fn encode_image(
     }
 
     let mut writer = BufWriter::new(file);
-    image.write_to(&mut writer, format.image_format())?;
+    match format {
+        SupportedFormat::Webp if quality < 100 => {
+            use std::io::Write;
+            let rgba = image.to_rgba8();
+            let encoded = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height())
+                .encode(f32::from(quality.clamp(1, 99)));
+            writer.write_all(&encoded)?;
+        }
+        SupportedFormat::Ico => {
+            // ICO frames are limited to 256x256.
+            let img = if image.width() > 256 || image.height() > 256 {
+                image.resize(256, 256, image::imageops::FilterType::Lanczos3)
+            } else {
+                image.clone()
+            };
+            DynamicImage::ImageRgba8(img.to_rgba8()).write_to(&mut writer, format.image_format())?;
+        }
+        SupportedFormat::Gif => {
+            DynamicImage::ImageRgba8(image.to_rgba8()).write_to(&mut writer, format.image_format())?;
+        }
+        _ => image.write_to(&mut writer, format.image_format())?,
+    }
     Ok(())
 }
 

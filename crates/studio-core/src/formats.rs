@@ -7,15 +7,19 @@ pub enum SupportedFormat {
     Webp,
     Bmp,
     Tiff,
+    Gif,
+    Ico,
 }
 
 impl SupportedFormat {
-    pub const ALL: [SupportedFormat; 5] = [
+    pub const ALL: [SupportedFormat; 7] = [
         SupportedFormat::Jpeg,
         SupportedFormat::Png,
         SupportedFormat::Webp,
         SupportedFormat::Bmp,
         SupportedFormat::Tiff,
+        SupportedFormat::Gif,
+        SupportedFormat::Ico,
     ];
 
     pub fn from_extension(extension: &str) -> Option<Self> {
@@ -29,6 +33,8 @@ impl SupportedFormat {
             "webp" => Some(Self::Webp),
             "bmp" => Some(Self::Bmp),
             "tif" | "tiff" => Some(Self::Tiff),
+            "gif" => Some(Self::Gif),
+            "ico" => Some(Self::Ico),
             _ => None,
         }
     }
@@ -47,6 +53,8 @@ impl SupportedFormat {
             Self::Webp => image::ImageFormat::WebP,
             Self::Bmp => image::ImageFormat::Bmp,
             Self::Tiff => image::ImageFormat::Tiff,
+            Self::Gif => image::ImageFormat::Gif,
+            Self::Ico => image::ImageFormat::Ico,
         }
     }
 
@@ -57,6 +65,8 @@ impl SupportedFormat {
             Self::Webp => "WEBP",
             Self::Bmp => "BMP",
             Self::Tiff => "TIFF",
+            Self::Gif => "GIF",
+            Self::Ico => "ICO",
         }
     }
 
@@ -67,11 +77,13 @@ impl SupportedFormat {
             Self::Webp => "webp",
             Self::Bmp => "bmp",
             Self::Tiff => "tiff",
+            Self::Gif => "gif",
+            Self::Ico => "ico",
         }
     }
 
     pub fn supports_alpha(self) -> bool {
-        matches!(self, Self::Png | Self::Webp | Self::Tiff)
+        matches!(self, Self::Png | Self::Webp | Self::Tiff | Self::Gif | Self::Ico)
     }
 }
 
