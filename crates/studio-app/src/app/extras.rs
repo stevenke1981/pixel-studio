@@ -332,7 +332,7 @@ impl PixelStudioApp {
 
     pub(super) fn stickers_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading(tl(self.language, "貼圖與圖示庫", "Stickers & icons"));
-        ui.small(tl(self.language, 
+        ui.small(tl(self.language,
             "點一下插入，或拖曳到畫布上。插入後可移動、縮放、換色。",
             "Click to insert or drag onto the canvas. Inserted stickers are movable, resizable and recolorable.",
         ));
@@ -420,7 +420,7 @@ impl PixelStudioApp {
         ui.add_space(6.0);
         self.text_styles_ui(ui, ctx);
         ui.add_space(6.0);
-        ui.small(tl(self.language, 
+        ui.small(tl(self.language,
             "所有圖示皆為 Pixel Studio 原創（MIT）。不含任何平台商標；社群類為通用圖示。",
             "All icons are original Pixel Studio artwork (MIT). No platform trademarks; social icons are generic.",
         ));
@@ -487,7 +487,7 @@ impl PixelStudioApp {
 
     pub(super) fn redact_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading(tl(self.language, "自動打碼", "Auto Redact"));
-        ui.small(tl(self.language, 
+        ui.small(tl(self.language,
             "完全離線：在本機偵測文字（中文、英文），自動預選電話、Email、身分證、信用卡、網址、地址。",
             "Fully offline: detects text locally (Chinese & English) and pre-selects phones, emails, TW IDs, cards, URLs and addresses.",
         ));
@@ -672,7 +672,7 @@ impl PixelStudioApp {
         if self.ex.redact_style != RedactStyleKind::Solid {
             ui.colored_label(
                 Color32::from_rgb(200, 90, 0),
-                tl(self.language, 
+                tl(self.language,
                     "⚠ 馬賽克和模糊有時可被部分還原（尤其是短文字、數字）。機密資料請用實心色塊。",
                     "⚠ Mosaic and blur can sometimes be partially reversed (especially short text and digits). Use a solid box for secrets.",
                 ),
@@ -699,7 +699,7 @@ impl PixelStudioApp {
         if apply.clicked() {
             self.apply_redaction(ctx);
         }
-        ui.small(tl(self.language, 
+        ui.small(tl(self.language,
             "套用後會把圖層合併進像素，並在匯出時移除 EXIF／XMP（可在「屬性」中選擇保留）。",
             "Applying flattens layers into the pixels; EXIF/XMP is stripped on export (opt-in keep in Properties).",
         ));
