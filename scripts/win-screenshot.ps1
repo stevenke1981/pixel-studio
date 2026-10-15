@@ -56,6 +56,9 @@ function Shot([string]$name, [hashtable]$envs, [scriptblock]$interact) {
   foreach ($k in @('PIXEL_STUDIO_TAB', 'PIXEL_STUDIO_MENU', 'PIXEL_STUDIO_DIALOG', 'PIXEL_STUDIO_C2PA_DIALOG')) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   $env:PIXEL_STUDIO_LANG = 'zh-TW'
   foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
+  # Do not let the previous scene's hover switch a startup menu during resize.
+  $workArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  if (-not [W32]::SetCursorPos($workArea.Right - 2, $workArea.Bottom - 2)) { throw 'Cannot park the capture cursor.' }
   $p = Start-Process $Exe -PassThru -ArgumentList "`"$img`""
   try {
   Start-Sleep -Seconds 9
