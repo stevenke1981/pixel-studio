@@ -7,7 +7,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 
@@ -29,11 +29,67 @@ thiserror = "2.0.17"
 walkdir = "2.5.0"
 
 # Size-focused release profile (see README "Binary size").
+# Everything is size-optimised ("s") except the pixel/OCR hot paths, which stay at 3.
+# panic stays "unwind": a panicking worker thread (OCR, batch) must not kill the GUI.
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+[profile.release.package.studio-core]
+opt-level = 3
+
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.imageproc]
+opt-level = 3
+
+[profile.release.package.rten]
+opt-level = 3
+
+[profile.release.package.rten-tensor]
+opt-level = 3
+
+[profile.release.package.rten-gemm]
+opt-level = 3
+
+[profile.release.package.rten-vecmath]
+opt-level = 3
+
+[profile.release.package.rten-simd]
+opt-level = 3
+
+[profile.release.package.ocrs]
+opt-level = 3
+
+[profile.release.package.resvg]
+opt-level = 3
+
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
+opt-level = 3
+
+[profile.release.package.image-webp]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.fdeflate]
+opt-level = 3
+
+[profile.release.package.tiff]
+opt-level = 3
+
+[profile.release.package.gif]
+opt-level = 3
+
+[profile.release.package.rayon-core]
+opt-level = 3
 
 # Optimised but quick-to-link profile for CI test runs.
 [profile.ci]

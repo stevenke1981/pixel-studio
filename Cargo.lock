@@ -6797,7 +6797,7 @@ dependencies = [
 
 [[package]]
 name = "studio-app"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6819,7 +6819,7 @@ dependencies = [
 
 [[package]]
 name = "studio-cli"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -6828,7 +6828,7 @@ dependencies = [
 
 [[package]]
 name = "studio-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "ab_glyph",
  "anyhow",

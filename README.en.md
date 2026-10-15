@@ -13,6 +13,18 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 ![Sticker library](docs/slint-stickers.png)
 ![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
 
+## v0.4.0: icon buttons, menu bar, Windows CJK font, smaller binaries
+
+- **All function buttons are now SVG icons** (top bar, tool palette, floating toolbar, Adjust, Layers, Stickers, Redact, Batch). Hovering shows the name and shortcut. Buttons have hover, pressed, disabled and active states, plus screen-reader labels. The icon set is original (`scripts/gen-icons.py`, 115 icons).
+- **Windows-style menu bar**: File, Edit, View, Image, Layer, Tools, Help. Open a menu with Alt+letter, move with the arrow keys, run with Enter, close with Esc; shortcuts are shown in the menus. It includes recent files, print, properties, cut/delete, rulers, status bar, full screen, an image/canvas size dialog, a shortcuts list (F1) and About.
+- **New shortcuts**: single-key tools (S P B L A K E F I T M C H U R, Shift+R), X to swap colours, Ctrl+X/E/P/R/W/J/]/[, F11.
+- **Windows CJK font**: the UI font is set to Microsoft JhengHei UI, falling back to YaHei UI, PMingLiU, then SimSun. Characters like 啟 now display correctly.
+- **Binary size**: Linux pixel-studio went from 80.5 MB to 33.7 MB, and studio-cli from 45.0 MB to 17.7 MB.
+
+![Menu bar](docs/menu-bar.png)
+![Tooltip](docs/tooltip.png)
+![Icons](docs/icons.png)
+
 ## v0.3.1: quick toolbar, C2PA dialog, timestamped names
 
 - **Floating quick toolbar**: undo, redo, quick save (Ctrl+S; asks for format/quality only the first time, then overwrites), save as, copy, paste, crop to selection, rotate, fit / 100%, grid (Ctrl+G). Drag the grip to move it; dock or hide it (top bar "Show/Hide toolbar"). Its position is remembered. Tooltips list the shortcuts, and buttons are disabled when unavailable.
