@@ -150,13 +150,20 @@ enum Command {
 /// Resolve an optional output path to a timestamped default next to the input.
 fn resolve_output(output: Option<PathBuf>, input: &std::path::Path, ext: &str) -> PathBuf {
     output.unwrap_or_else(|| {
-        let dir = input.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+        let dir = input
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
         studio_core::naming::timestamp_path_in(dir, ext)
     })
 }
 
 fn input_ext(input: &std::path::Path) -> String {
-    input.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase()
+    input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase()
 }
 
 fn main() -> Result<()> {

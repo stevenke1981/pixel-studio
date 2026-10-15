@@ -77,13 +77,44 @@ const TOOL_LABELS: [(&str, &str); 16] = [
 #[derive(Debug, Clone, Copy)]
 enum Drag {
     None,
-    Paint { last: (f32, f32), secondary: bool },
-    Select { start: (f32, f32) },
-    Shape { start: (f32, f32), now: (f32, f32) },
-    Move { last: (f32, f32) },
-    Resize { aspect: f32 },
-    Pan { mouse: (f32, f32), pan: (f32, f32) },
-    RedactBox { start: (f32, f32), now: (f32, f32) },
+    Paint {
+        last: (f32, f32),
+        secondary: bool,
+    },
+    Select {
+        start: (f32, f32),
+    },
+    Shape {
+        start: (f32, f32),
+        now: (f32, f32),
+    },
+    Move {
+        last: (f32, f32),
+    },
+    Resize {
+        aspect: f32,
+    },
+    Pan {
+        mouse: (f32, f32),
+        pan: (f32, f32),
+    },
+    RedactBox {
+        start: (f32, f32),
+        now: (f32, f32),
+    },
+    BoxMove {
+        i: usize,
+        last: (f32, f32),
+        moved: bool,
+    },
+    BoxResize {
+        i: usize,
+    },
+    /// Canvas edge handle: 0 = right edge, 1 = bottom edge, 2 = corner.
+    CanvasEdge {
+        kind: u8,
+        now: (f32, f32),
+    },
 }
 
 enum Job {
@@ -92,8 +123,8 @@ enum Job {
 }
 
 enum BatchMsg {
-    Progress(usize, usize),
-    Done(String),
+    Progress(usize, usize, bool),
+    Done(String, bool),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -101,6 +132,12 @@ struct Settings {
     lang: Option<String>,
     keep_metadata: bool,
     hide_grid: bool,
+    #[serde(default)]
+    toolbar_mode: i32,
+    #[serde(default)]
+    toolbar_x: Option<f32>,
+    #[serde(default)]
+    toolbar_y: Option<f32>,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -135,6 +172,11 @@ pub struct State {
     gif_frames: Vec<PathBuf>,
     edit_session: Option<(usize, String)>,
     font_paths: Vec<PathBuf>,
+    c2pa_info: studio_core::C2paInfo,
+    /// Format/quality were confirmed for quick save of this document.
+    quick_ok: bool,
+    /// (mode, x, y) of the quick-action toolbar.
+    toolbar: (i32, f32, f32),
 }
 
 type S = Rc<RefCell<State>>;
@@ -195,7 +237,24 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         gif_frames: Vec::new(),
         edit_session: None,
         font_paths: fonts::list_system_font_paths(),
+        c2pa_info: Default::default(),
+        quick_ok: false,
+        toolbar: (
+            settings.toolbar_mode.clamp(0, 2),
+            settings.toolbar_x.unwrap_or(12.0),
+            settings.toolbar_y.unwrap_or(12.0),
+        ),
     }));
+    {
+        let s = state.borrow();
+        ui.set_tb_mode(s.toolbar.0);
+        ui.set_tb_x(s.toolbar.1);
+        ui.set_tb_y(s.toolbar.2);
+        ui.set_c2pa_action("".into());
+    }
+    if let Ok(m) = std::env::var("PIXEL_STUDIO_C2PA_DIALOG") {
+        ui.set_c2pa_open(m == "1");
+    }
 
     T::get(&ui).set_zh(zh);
     ui.set_language(if zh { 0 } else { 1 });
@@ -308,6 +367,9 @@ fn save_settings(s: &State) {
             lang: Some(if s.zh { "zh-TW".into() } else { "en".into() }),
             keep_metadata: s.keep_metadata,
             hide_grid: !s.show_grid,
+            toolbar_mode: s.toolbar.0,
+            toolbar_x: Some(s.toolbar.1),
+            toolbar_y: Some(s.toolbar.2),
         };
         let _ = std::fs::write(p, serde_json::to_string_pretty(&st).unwrap_or_default());
     }
@@ -381,6 +443,9 @@ fn sync_view(ui: &AppWindow, s: &State) {
     ui.set_can_undo(s.doc.can_undo());
     ui.set_can_redo(s.doc.can_redo());
     ui.set_view_mode(s.view_mode);
+    ui.set_grid_on(s.show_grid);
+    ui.set_has_layer(s.doc.selected.is_some());
+    ui.set_show_edge_handles(s.tool == Tool::Select && !s.view_mode);
     match s.doc.selection {
         Some(sel) => {
             ui.set_has_selection(true);
@@ -394,6 +459,7 @@ fn sync_view(ui: &AppWindow, s: &State) {
     }
     let pv = match s.drag {
         Drag::Shape { start, now } | Drag::RedactBox { start, now } => Some((start, now)),
+        Drag::CanvasEdge { now, .. } => Some(((0.0, 0.0), now)),
         _ => None,
     };
     ui.set_has_preview(pv.is_some());
@@ -604,9 +670,10 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
                 ui.set_rs_w(s.doc.width() as i32);
                 ui.set_rs_h(s.doc.height() as i32);
             }
+            st.borrow_mut().quick_ok = false;
+            load_c2pa_state(ui, st, Some(path));
             fit(ui, st);
             refresh(ui, st);
-            refresh_info(ui, st);
         }
         Err(e) => ui.set_status(format!("{} {e}", tl(zh, "無法開啟：", "Cannot open:")).into()),
     }
@@ -648,11 +715,7 @@ fn save_to(ui: &AppWindow, st: &S, out: &Path) {
     let opts = format_options(ui, format);
     let r = (|| -> anyhow::Result<()> {
         if ui.get_c2pa_on_save() {
-            let tmp = out.with_extension(format!("tmp.{}", format.extension()));
-            studio_core::save_dynamic_image(&img, &tmp, opts)?;
-            let res = studio_core::write_c2pa_manifest(&tmp, out, &c2pa_draft(ui));
-            let _ = std::fs::remove_file(&tmp);
-            res?;
+            save_with_c2pa(&img, out, opts, &c2pa_draft(ui))?;
         } else {
             studio_core::save_dynamic_image(&img, out, opts)?;
         }
@@ -679,12 +742,192 @@ fn c2pa_draft(ui: &AppWindow) -> C2paManifestDraft {
     C2paManifestDraft {
         title: ui.get_c2pa_title().into(),
         creator: ui.get_c2pa_creator().into(),
-        action: if action.is_empty() {
-            "c2pa.edited".into()
-        } else {
-            action
-        },
+        action,
     }
+}
+
+/// Inspect C2PA of a freshly opened file and pre-fill the manifest draft (as in v0.2).
+fn load_c2pa_state(ui: &AppWindow, st: &S, path: Option<&Path>) {
+    let info = path
+        .and_then(|p| studio_core::inspect_c2pa(p).ok())
+        .unwrap_or_default();
+    let default_title = path
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(str::to_owned)
+        .unwrap_or_default();
+    ui.set_c2pa_title(info.title.clone().unwrap_or(default_title).into());
+    ui.set_c2pa_creator(info.creator.clone().unwrap_or_default().into());
+    ui.set_c2pa_action(info.action.clone().unwrap_or_default().into());
+    ui.set_c2pa_on_save(info.present);
+    ui.set_c2pa_present(info.present);
+    ui.set_c2pa_raw(info.raw_json.clone().unwrap_or_default().into());
+    ui.set_has_source(path.is_some());
+    st.borrow_mut().c2pa_info = info;
+    refresh_info(ui, st);
+}
+
+fn c2pa_summary(zh: bool, c: &studio_core::C2paInfo) -> String {
+    if !c.present {
+        return tl(
+            zh,
+            "此檔案沒有 C2PA 內容憑證。",
+            "No C2PA manifest in this file.",
+        );
+    }
+    format!(
+        "{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
+        tl(zh, "狀態", "Status"),
+        c.validation_state.as_deref().unwrap_or("Unknown"),
+        tl(zh, "Manifest 數量", "Manifests"),
+        c.manifest_count,
+        tl(zh, "標題", "Title"),
+        c.title.clone().unwrap_or_default(),
+        tl(zh, "作者", "Creator"),
+        c.creator.clone().unwrap_or_default(),
+        tl(zh, "動作", "Action"),
+        c.action.clone().unwrap_or_default()
+    )
+}
+
+/// Encode to a temporary sibling file, then sign it into `out` with the manifest.
+fn save_with_c2pa(
+    img: &DynamicImage,
+    out: &Path,
+    opts: ConvertOptions,
+    draft: &C2paManifestDraft,
+) -> anyhow::Result<()> {
+    let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
+    let stamp = chrono::Local::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_default();
+    let name = format!(".studio-app-c2pa-{stamp}.{ext}");
+    let tmp = out
+        .parent()
+        .map(|d| d.join(&name))
+        .unwrap_or_else(|| std::env::temp_dir().join(&name));
+    studio_core::save_dynamic_image(img, &tmp, opts)?;
+    if out.exists() {
+        std::fs::remove_file(out)?;
+    }
+    let r = studio_core::write_c2pa_manifest(&tmp, out, draft);
+    let _ = std::fs::remove_file(&tmp);
+    r?;
+    Ok(())
+}
+
+fn name_with_suffix(path: &Path, suffix: &str) -> String {
+    let stem = path.file_stem().and_then(|v| v.to_str()).unwrap_or("image");
+    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("jpg");
+    format!("{stem}{suffix}.{ext}")
+}
+
+fn same_existing_path(a: &Path, b: &Path) -> bool {
+    matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// "Add C2PA": render the current (edited) image and save a signed copy.
+fn c2pa_save_copy(ui: &AppWindow, st: &S) {
+    let (img, src, zh) = {
+        let s = st.borrow();
+        (s.doc.flattened(), s.doc.path.clone(), s.zh)
+    };
+    let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
+    let name = match &src {
+        Some(p) => name_with_suffix(p, "_c2pa"),
+        None => studio_core::naming::timestamp_name(fmt.extension()),
+    };
+    let Some(mut out) = rfd::FileDialog::new()
+        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "tif", "tiff"])
+        .set_file_name(name)
+        .save_file()
+    else {
+        return;
+    };
+    if out.extension().is_none() {
+        out.set_extension(fmt.extension());
+    }
+    let format = SupportedFormat::from_path(&out).unwrap_or(fmt);
+    let r = save_with_c2pa(&img, &out, format_options(ui, format), &c2pa_draft(ui));
+    ui.set_status(
+        match r {
+            Ok(()) => format!(
+                "{} {} ({}×{})",
+                tl(zh, "已添加 C2PA 並另存：", "Added C2PA and saved"),
+                out.display(),
+                img.width(),
+                img.height()
+            ),
+            Err(e) => format!("{} {e}", tl(zh, "添加 C2PA 失敗：", "Adding C2PA failed:")),
+        }
+        .into(),
+    );
+}
+
+/// "Remove C2PA": copy the source bytes without the manifest (same extension, new file).
+fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
+    let (src, zh) = {
+        let s = st.borrow();
+        (s.doc.path.clone(), s.zh)
+    };
+    let Some(src) = src else {
+        ui.set_status(
+            tl(
+                zh,
+                "尚未開啟可移除 C2PA 的來源檔。",
+                "No source file loaded for C2PA removal.",
+            )
+            .into(),
+        );
+        return;
+    };
+    let Some(mut out) = rfd::FileDialog::new()
+        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "tif", "tiff"])
+        .set_file_name(name_with_suffix(&src, "_no_c2pa"))
+        .save_file()
+    else {
+        return;
+    };
+    if let Some(ext) = src.extension() {
+        out.set_extension(ext);
+    }
+    if same_existing_path(&src, &out) {
+        ui.set_status(
+            tl(
+                zh,
+                "移除 C2PA 請另存為不同檔案。",
+                "Choose a different file when removing C2PA.",
+            )
+            .into(),
+        );
+        return;
+    }
+    if out.exists()
+        && let Err(e) = std::fs::remove_file(&out)
+    {
+        ui.set_status(
+            format!(
+                "{} {e}",
+                tl(zh, "無法覆寫輸出檔：", "Could not overwrite output file:")
+            )
+            .into(),
+        );
+        return;
+    }
+    ui.set_status(
+        match studio_core::remove_c2pa_manifest(&src, &out) {
+            Ok(()) => format!(
+                "{} {}",
+                tl(zh, "已移除 C2PA 並另存：", "Removed C2PA and saved"),
+                out.display()
+            ),
+            Err(e) => format!(
+                "{} {e}",
+                tl(zh, "移除 C2PA 失敗：", "Removing C2PA failed:")
+            ),
+        }
+        .into(),
+    );
 }
 
 fn refresh_info(ui: &AppWindow, st: &S) {
@@ -716,25 +959,7 @@ fn refresh_info(ui: &AppWindow, st: &S) {
                 tl(zh, "無", "no")
             }
         );
-        c2 = match studio_core::inspect_c2pa(p) {
-            Ok(c) if c.present => format!(
-                "{}: {}\n{}: {}\n{}: {}\n{}: {}",
-                tl(zh, "標題", "Title"),
-                c.title.unwrap_or_default(),
-                tl(zh, "作者", "Creator"),
-                c.creator.unwrap_or_default(),
-                tl(zh, "動作", "Action"),
-                c.action.unwrap_or_default(),
-                tl(zh, "驗證", "Validation"),
-                c.validation_state.unwrap_or_default()
-            ),
-            Ok(_) => tl(
-                zh,
-                "此檔案沒有 C2PA 資訊。",
-                "No C2PA manifest in this file.",
-            ),
-            Err(e) => format!("C2PA: {e}"),
-        };
+        c2 = c2pa_summary(zh, &s.c2pa_info);
     }
     ui.set_info_text(info.into());
     ui.set_c2pa_text(c2.into());
@@ -937,6 +1162,37 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 return;
             }
             let secondary = button == 1;
+            // Right-click opens the context menu for non-painting tools.
+            if secondary && matches!(tool, Tool::Select | Tool::Crop | Tool::Text | Tool::Shapes) {
+                ui.set_ctx_x(mx);
+                ui.set_ctx_y(my);
+                ui.set_ctx_open(true);
+                return;
+            }
+            // Canvas edge handles (Select tool): drag to resize the canvas.
+            if tool == Tool::Select && !secondary {
+                let (ex, ey) = (
+                    s.pan.0 + s.doc.width() as f32 * s.zoom,
+                    s.pan.1 + s.doc.height() as f32 * s.zoom,
+                );
+                let near = |ax: f32, ay: f32| (mx - ax).abs() <= 9.0 && (my - ay).abs() <= 9.0;
+                let kind = if near(ex + 4.0, ey + 4.0) {
+                    Some(2)
+                } else if near(ex + 3.0, s.pan.1 + (ey - s.pan.1) / 2.0) {
+                    Some(0)
+                } else if near(s.pan.0 + (ex - s.pan.0) / 2.0, ey + 3.0) {
+                    Some(1)
+                } else {
+                    None
+                };
+                if let Some(kind) = kind {
+                    s.drag = Drag::CanvasEdge {
+                        kind,
+                        now: (s.doc.width() as f32, s.doc.height() as f32),
+                    };
+                    return;
+                }
+            }
             match tool {
                 t if t.is_raster() || t == Tool::RedactBrush => {
                     s.doc.checkpoint();
@@ -983,7 +1239,20 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                             s.doc.boxes.remove(i);
                         }
                     } else {
-                        s.drag = Drag::RedactBox { start: p, now: p };
+                        let tol = 8.0 / s.zoom;
+                        let corner = s.doc.boxes.iter().rposition(|b| {
+                            (p.0 - (b.x as f32 + b.width as f32)).abs() <= tol
+                                && (p.1 - (b.y as f32 + b.height as f32)).abs() <= tol
+                        });
+                        s.drag = match (corner, s.doc.box_at(p.0, p.1)) {
+                            (Some(i), _) => Drag::BoxResize { i },
+                            (None, Some(i)) => Drag::BoxMove {
+                                i,
+                                last: p,
+                                moved: false,
+                            },
+                            _ => Drag::RedactBox { start: p, now: p },
+                        };
                     }
                 }
                 Tool::Select | Tool::Crop => {
@@ -1053,6 +1322,45 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 }
             }
             Drag::Resize { aspect } => s.doc.resize_selected_to(p.0, aspect),
+            Drag::BoxMove { i, last, moved } => {
+                let (dx, dy) = ((p.0 - last.0).round() as i32, (p.1 - last.1).round() as i32);
+                if let Some(b) = s.doc.boxes.get_mut(i)
+                    && (dx != 0 || dy != 0)
+                {
+                    b.x += dx;
+                    b.y += dy;
+                    s.drag = Drag::BoxMove {
+                        i,
+                        last: (last.0 + dx as f32, last.1 + dy as f32),
+                        moved: true,
+                    };
+                } else {
+                    s.drag = Drag::BoxMove { i, last, moved };
+                }
+            }
+            Drag::BoxResize { i } => {
+                if let Some(b) = s.doc.boxes.get_mut(i) {
+                    b.width = (p.0 - b.x as f32).round().max(3.0) as u32;
+                    b.height = (p.1 - b.y as f32).round().max(3.0) as u32;
+                }
+            }
+            Drag::CanvasEdge { kind, .. } => {
+                let (w, h) = (s.doc.width() as f32, s.doc.height() as f32);
+                let nw = if kind == 1 {
+                    w
+                } else {
+                    p.0.round().clamp(1.0, 20000.0)
+                };
+                let nh = if kind == 0 {
+                    h
+                } else {
+                    p.1.round().clamp(1.0, 20000.0)
+                };
+                s.drag = Drag::CanvasEdge {
+                    kind,
+                    now: (nw, nh),
+                };
+            }
             Drag::None => {}
         },
         1 | 3 => {
@@ -1094,6 +1402,19 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     }
                 }
                 Drag::Move { .. } | Drag::Resize { .. } => sync_layer_fields(ui, s),
+                Drag::BoxMove {
+                    i, moved: false, ..
+                } => {
+                    if let Some(b) = s.doc.boxes.get_mut(i) {
+                        b.selected = !b.selected;
+                    }
+                }
+                Drag::CanvasEdge { now, .. } => {
+                    let bg = s.tools.color2;
+                    s.doc.resize_canvas(now.0 as u32, now.1 as u32, bg);
+                    ui.set_rs_w(s.doc.width() as i32);
+                    ui.set_rs_h(s.doc.height() as i32);
+                }
                 _ => {}
             }
             s.drag = Drag::None;
@@ -1121,6 +1442,8 @@ fn centre(ui: &AppWindow) -> (f32, f32) {
 
 fn new_doc(ui: &AppWindow, st: &S, img: DynamicImage) {
     st.borrow_mut().doc.load(img, None);
+    st.borrow_mut().quick_ok = false;
+    load_c2pa_state(ui, st, None);
     let (w, h) = {
         let s = st.borrow();
         (s.doc.width(), s.doc.height())
@@ -1177,7 +1500,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "save-project" => {
             if let Some(p) = rfd::FileDialog::new()
                 .add_filter("Pixel Studio Project", &["pixel-project"])
-                .set_file_name("project.pixel-project")
+                .set_file_name(studio_core::naming::timestamp_name("pixel-project"))
                 .save_file()
             {
                 let r = st
@@ -1201,25 +1524,69 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             }
             return;
         }
-        "save" => {
-            let path = st.borrow().doc.path.clone();
+        "save" | "quick-save" => {
+            let (ok, path) = {
+                let s = st.borrow();
+                (s.quick_ok, s.doc.path.clone())
+            };
             match path {
-                Some(p) if SupportedFormat::from_path(&p).is_some() => save_to(ui, st, &p),
-                _ => action(ui, st, "save-as"),
+                Some(p) if ok && SupportedFormat::from_path(&p).is_some() => save_to(ui, st, &p),
+                _ => {
+                    if let Some(f) = path.as_deref().and_then(SupportedFormat::from_path)
+                        && let Some(i) = FORMATS.iter().position(|x| *x == f)
+                    {
+                        ui.set_export_format(i as i32);
+                    }
+                    ui.set_qs_target(
+                        match &path {
+                            Some(p) => {
+                                format!("{} {}", tl(zh, "覆寫：", "Overwrite:"), p.display())
+                            }
+                            None => format!(
+                                "{} {}",
+                                tl(zh, "新檔名：", "New file:"),
+                                studio_core::naming::timestamp_name("…")
+                            ),
+                        }
+                        .into(),
+                    );
+                    ui.set_qs_open(true);
+                }
             }
             return;
         }
+        "quick-save-confirm" => {
+            let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
+            let path = st.borrow().doc.path.clone();
+            let target = match path {
+                Some(p) if SupportedFormat::from_path(&p) == Some(fmt) => Some(p),
+                other => {
+                    let dir = other
+                        .as_ref()
+                        .and_then(|p| p.parent().map(Path::to_path_buf));
+                    let mut d = rfd::FileDialog::new()
+                        .set_file_name(studio_core::naming::timestamp_name(fmt.extension()));
+                    if let Some(dir) = dir {
+                        d = d.set_directory(dir);
+                    }
+                    image_filter(d).save_file()
+                }
+            };
+            if let Some(p) = target {
+                save_to(ui, st, &p);
+                st.borrow_mut().quick_ok = true;
+            }
+            return;
+        }
+        "toggle-grid" => {
+            let on = !ui.get_show_grid();
+            ui.set_show_grid(on);
+            st.borrow_mut().show_grid = on;
+        }
         "save-as" | "export" => {
             let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
-            let stem = st
-                .borrow()
-                .doc
-                .path
-                .as_ref()
-                .and_then(|p| p.file_stem())
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "image".into());
-            let d = rfd::FileDialog::new().set_file_name(format!("{stem}.{}", fmt.extension()));
+            let d = rfd::FileDialog::new()
+                .set_file_name(studio_core::naming::timestamp_name(fmt.extension()));
             if let Some(p) = image_filter(d).save_file() {
                 save_to(ui, st, &p);
             }
@@ -1592,30 +1959,22 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             );
         }
         "refresh-info" => refresh_info(ui, st),
-        "c2pa-write" | "c2pa-remove" => {
-            let Some(src) = st.borrow().doc.path.clone() else {
-                ui.set_status(
-                    tl(zh, "請先儲存或開啟一個檔案。", "Open or save a file first.").into(),
-                );
-                return;
-            };
-            let name = src
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if let Some(dst) = rfd::FileDialog::new().set_file_name(name).save_file() {
-                let r = if a == "c2pa-write" {
-                    studio_core::write_c2pa_manifest(&src, &dst, &c2pa_draft(ui))
+        "c2pa-write" => {
+            c2pa_save_copy(ui, st);
+            return;
+        }
+        "c2pa-remove" => {
+            c2pa_remove_copy(ui, st);
+            return;
+        }
+        "c2pa-in" | "c2pa-out" => {
+            if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                let v = SharedString::from(d.display().to_string());
+                if a == "c2pa-in" {
+                    ui.set_c2pa_in(v)
                 } else {
-                    studio_core::remove_c2pa_manifest(&src, &dst)
-                };
-                ui.set_status(
-                    match r {
-                        Ok(()) => format!("{} {}", tl(zh, "已輸出：", "Written:"), dst.display()),
-                        Err(e) => format!("C2PA: {e}"),
-                    }
-                    .into(),
-                );
+                    ui.set_c2pa_out(v)
+                }
             }
             return;
         }
@@ -1650,7 +2009,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             }
             if let Some(out) = rfd::FileDialog::new()
                 .add_filter("GIF", &["gif"])
-                .set_file_name("animation.gif")
+                .set_file_name(studio_core::naming::timestamp_name("gif"))
                 .save_file()
             {
                 let m = ui.get_gif_max();
@@ -1680,7 +2039,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "pano-run" => {
             if let Some(out) = rfd::FileDialog::new()
                 .add_filter("JPEG", &["jpg"])
-                .set_file_name("panorama-360.jpg")
+                .set_file_name(studio_core::naming::timestamp_name("jpg"))
                 .save_file()
             {
                 let w = ui.get_pano_width();
@@ -1769,8 +2128,12 @@ fn start_detection(ui: &AppWindow, st: &S) {
 
 fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
     let zh = st.borrow().zh;
-    let input: String = ui.get_batch_in().into();
-    let output: String = ui.get_batch_out().into();
+    let is_c2pa = kind.starts_with("batch-c2pa");
+    let (input, output): (String, String) = if is_c2pa {
+        (ui.get_c2pa_in().into(), ui.get_c2pa_out().into())
+    } else {
+        (ui.get_batch_in().into(), ui.get_batch_out().into())
+    };
     if input.is_empty() || output.is_empty() {
         ui.set_batch_progress(
             tl(
@@ -1801,7 +2164,7 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
         let ptx = std::sync::Mutex::new(tx.clone());
         let progress = |c: usize, t: usize| {
             if let Ok(tx) = ptx.lock() {
-                let _ = tx.send(BatchMsg::Progress(c, t));
+                let _ = tx.send(BatchMsg::Progress(c, t, is_c2pa));
             }
         };
         let summary = match kind.as_str() {
@@ -1824,14 +2187,21 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
             "{} / {} OK, {} failed",
             summary.succeeded, summary.total, summary.failed
         );
-        for r in summary.results.iter().filter(|r| r.error.is_some()).take(5) {
+        for r in summary.results.iter().take(8) {
+            msg += &match (&r.output, &r.error) {
+                (Some(o), None) => format!("\nOK {}", o.display()),
+                (_, Some(e)) => format!("\nFailed {}: {e}", r.input.display()),
+                _ => format!("\nSkipped {}", r.input.display()),
+            };
+        }
+        for r in summary.results.iter().filter(|_| false) {
             msg += &format!(
                 "\n{}: {}",
                 r.input.display(),
                 r.error.as_deref().unwrap_or("")
             );
         }
-        let _ = tx.send(BatchMsg::Done(msg));
+        let _ = tx.send(BatchMsg::Done(msg, is_c2pa));
     });
     st.borrow_mut().batch_job = Some(Job::Batch(rx));
     ui.set_batch_running(true);
@@ -1875,9 +2245,20 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
         if let Some(Job::Batch(rx)) = &s.batch_job {
             while let Ok(m) = rx.try_recv() {
                 match m {
-                    BatchMsg::Progress(c, t) => ui.set_batch_progress(format!("{c} / {t}").into()),
-                    BatchMsg::Done(msg) => {
-                        ui.set_batch_progress(msg.into());
+                    BatchMsg::Progress(c, t, c2) => {
+                        let m = SharedString::from(format!("{c} / {t}"));
+                        if c2 {
+                            ui.set_c2pa_batch_text(m)
+                        } else {
+                            ui.set_batch_progress(m)
+                        }
+                    }
+                    BatchMsg::Done(msg, c2) => {
+                        if c2 {
+                            ui.set_c2pa_batch_text(msg.into())
+                        } else {
+                            ui.set_batch_progress(msg.into())
+                        }
                         ui.set_batch_running(false);
                         batch_done = true;
                     }
@@ -1915,7 +2296,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             "z" => "undo",
             "y" => "redo",
             "s" if shift => "save-as",
-            "s" => "save",
+            "s" => "quick-save",
             "o" => "open",
             "n" => "new",
             "v" if shift => "paste-layer",
@@ -1923,11 +2304,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             "c" => "copy",
             "a" => "select-all",
             "d" => "deselect",
-            "g" => {
-                let on = !ui.get_show_grid();
-                ui.set_show_grid(on);
-                "grid"
-            }
+            "g" => "toggle-grid",
             "=" | "+" => "zoom-in",
             "-" => "zoom-out",
             "0" => "zoom-fit",
@@ -2087,6 +2464,11 @@ fn wire(ui: &AppWindow, st: &S) {
         sticker_insert(&ui, &st, &id, Some(p))
     });
     cb!(on_sticker_search, |ui, st| update_stickers(&ui, &st));
+    cb!(on_toolbar_moved, |ui, st| {
+        let mut s = st.borrow_mut();
+        s.toolbar = (ui.get_tb_mode(), ui.get_tb_x(), ui.get_tb_y());
+        save_settings(&s);
+    });
     cb!(on_toggle_box, |ui, st, i: i32| {
         if let Some(b) = st.borrow_mut().doc.boxes.get_mut(i as usize) {
             b.selected = !b.selected;
@@ -2114,6 +2496,7 @@ fn wire(ui: &AppWindow, st: &S) {
         if matches!(t, Tool::RedactBox | Tool::RedactBrush) {
             ui.set_tab(4);
         }
+        refresh(&ui, &st);
     });
     cb!(on_language_changed, |ui, st, i: i32| {
         let mut s = st.borrow_mut();

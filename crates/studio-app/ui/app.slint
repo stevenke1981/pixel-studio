@@ -43,6 +43,53 @@ component Swatch inherits Rectangle {
     }
 }
 
+// Toolbar button with hover tooltip (shown for disabled buttons too).
+component QBtn inherits Rectangle {
+    in property <string> label;
+    in property <string> tip;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    callback clicked();
+    width: max(30px, lt.preferred-width + 14px);
+    height: 28px;
+    border-radius: 4px;
+    background: root.active ? #d6e2fb : (!root.enabled ? transparent : (ta.pressed ? #c9d6f2 : (ta.has-hover ? #e3ebfb : transparent)));
+    lt := Text {
+        text: root.label;
+        color: root.enabled ? #1d2a3a : #b4bac3;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+    ta := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+    if ta.has-hover && root.tip != "": Rectangle {
+        y: root.height + 4px;
+        x: 0;
+        width: tt.preferred-width + 12px;
+        height: 22px;
+        border-radius: 3px;
+        background: #263238e8;
+        tt := Text { text: root.tip; color: white; font-size: 11px; }
+    }
+}
+
+component MenuRow inherits Rectangle {
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 26px;
+    background: ma.has-hover && root.enabled ? #e3ebfb : transparent;
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px;
+        Text { text: root.label; vertical-alignment: center; color: root.enabled ? #1d2a3a : #b4bac3; horizontal-stretch: 1; }
+        Text { text: root.shortcut; vertical-alignment: center; color: #7a8590; font-size: 11px; }
+    }
+    ma := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+}
+
 component LabeledSlider inherits HorizontalLayout {
     in property <string> label;
     in-out property <float> value;
@@ -198,7 +245,27 @@ export component AppWindow inherits Window {
     in property <string> shell-state;
     in property <string> version;
 
+    // quick toolbar / context menu / dialogs
+    in-out property <int> tb-mode: 0; // 0 floating, 1 docked, 2 hidden
+    in-out property <length> tb-x: 12px;
+    in-out property <length> tb-y: 12px;
+    in property <bool> grid-on;
+    in-out property <bool> ctx-open;
+    in-out property <length> ctx-x;
+    in-out property <length> ctx-y;
+    in property <bool> has-layer;
+    in-out property <bool> qs-open;
+    in property <string> qs-target;
+    in-out property <bool> c2pa-open;
+    in property <bool> c2pa-present;
+    in property <string> c2pa-raw;
+    in property <bool> has-source;
+    in-out property <string> c2pa-in; in-out property <string> c2pa-out;
+    in property <string> c2pa-batch-text;
+    in property <bool> show-edge-handles;
+
     // ---------------------------------------------------------------- callbacks
+    callback toolbar-moved();
     callback action(string);
     callback canvas-pointer(int, int, length, length, bool, bool); // kind 0 down 1 up 2 move 3 leave, button 0 left 1 right 2 middle
     callback canvas-scroll(length, length, length, bool);
@@ -255,6 +322,7 @@ export component AppWindow inherits Window {
                 TB { text: "◀"; clicked => { root.action("prev"); } }
                 TB { text: "▶"; clicked => { root.action("next"); } }
                 Rectangle { horizontal-stretch: 1; }
+                TB { text: root.tb-mode == 2 ? T.t("顯示工具列", "Show toolbar") : T.t("隱藏工具列", "Hide toolbar"); clicked => { root.tb-mode = root.tb-mode == 2 ? 0 : 2; root.toolbar-moved(); } }
                 TB { text: root.view-mode ? T.t("檢視模式", "Viewer") : T.t("編輯模式", "Editor"); clicked => { root.action("toggle-mode"); } }
             }
         }
@@ -372,7 +440,18 @@ export component AppWindow inherits Window {
                             background: b.selected ? #e53935 : #1e88e5;
                             lbl := Text { text: b.label; color: white; font-size: 10px; }
                         }
+                        if root.tool == 14: Rectangle {
+                            x: parent.width - 5px; y: parent.height - 5px; width: 10px; height: 10px;
+                            background: b.selected ? #e53935 : #1e88e5; border-width: 1px; border-color: white;
+                        }
                     }
+                }
+                if root.show-edge-handles: Rectangle {
+                    property <length> iw: root.img-w * root.zoom * 1px;
+                    property <length> ih: root.img-h * root.zoom * 1px;
+                    Rectangle { x: root.pan-x + iw; y: root.pan-y + ih / 2 - 6px; width: 7px; height: 12px; background: #607d8b; border-radius: 2px; }
+                    Rectangle { x: root.pan-x + iw / 2 - 6px; y: root.pan-y + ih; width: 12px; height: 7px; background: #607d8b; border-radius: 2px; }
+                    Rectangle { x: root.pan-x + iw; y: root.pan-y + ih; width: 9px; height: 9px; background: #607d8b; border-radius: 2px; }
                 }
                 if root.has-layer-box: Rectangle {
                     x: root.pan-x + root.lb-x * root.zoom * 1px - 2px;
@@ -398,6 +477,89 @@ export component AppWindow inherits Window {
                     scroll-event(e) => {
                         root.canvas-scroll(self.mouse-x, self.mouse-y, e.delta-y, e.modifiers.control);
                         return accept;
+                    }
+                }
+                // ---------------- floating / docked quick-action toolbar
+                if root.tb-mode != 2: Rectangle {
+                    x: root.tb-mode == 1 ? 0 : clamp(root.tb-x, 0, max(0px, canvas-area.width - self.width));
+                    y: root.tb-mode == 1 ? 0 : clamp(root.tb-y, 0, max(0px, canvas-area.height - self.height));
+                    width: root.tb-mode == 1 ? canvas-area.width : tbl.preferred-width;
+                    height: 36px;
+                    background: #ffffffee;
+                    border-radius: root.tb-mode == 1 ? 0 : 6px;
+                    drop-shadow-blur: root.tb-mode == 1 ? 0 : 6px;
+                    drop-shadow-color: #0003;
+                    tbl := HorizontalLayout {
+                        padding: 4px;
+                        spacing: 2px;
+                        alignment: start;
+                        Rectangle {
+                            width: 14px;
+                            Text { text: "⋮⋮"; color: #8a96a3; font-size: 11px; }
+                            grip := TouchArea {
+                                mouse-cursor: MouseCursor.move;
+                                moved => {
+                                    if (root.tb-mode == 0) {
+                                        root.tb-x = clamp(root.tb-x + self.mouse-x - self.pressed-x, 0, canvas-area.width - 60px);
+                                        root.tb-y = clamp(root.tb-y + self.mouse-y - self.pressed-y, 0, canvas-area.height - 30px);
+                                    }
+                                }
+                                pointer-event(e) => { if (e.kind == PointerEventKind.up) { root.toolbar-moved(); } }
+                            }
+                        }
+                        QBtn { label: T.t("復原", "Undo"); tip: T.t("復原 (Ctrl+Z)", "Undo (Ctrl+Z)"); enabled: root.can-undo; clicked => { root.action("undo"); } }
+                        QBtn { label: T.t("重做", "Redo"); tip: T.t("重做 (Ctrl+Y)", "Redo (Ctrl+Y)"); enabled: root.can-redo; clicked => { root.action("redo"); } }
+                        QBtn { label: T.t("快存", "Save"); tip: T.t("快速儲存 (Ctrl+S)", "Quick save (Ctrl+S)"); clicked => { root.action("quick-save"); } }
+                        QBtn { label: T.t("另存", "Save as"); tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
+                        QBtn { label: T.t("複製", "Copy"); tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
+                        QBtn { label: T.t("貼上", "Paste"); tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
+                        QBtn { label: T.t("裁切", "Crop"); tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
+                        QBtn { label: "⟳"; tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
+                        QBtn { label: T.t("符合", "Fit"); tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
+                        QBtn { label: "1:1"; tip: T.t("實際大小 100% (1)", "Actual size 100% (1)"); clicked => { root.action("zoom-100"); } }
+                        QBtn { label: T.t("格線", "Grid"); tip: T.t("切換像素格線 (Ctrl+G，放大 8 倍以上顯示)", "Toggle pixel grid (Ctrl+G, shown at 800%+)"); active: root.grid-on; clicked => { root.action("toggle-grid"); } }
+                        QBtn { label: root.tb-mode == 1 ? "⇱" : "⇲"; tip: root.tb-mode == 1 ? T.t("改為浮動", "Float toolbar") : T.t("停駐到上方", "Dock to top"); clicked => { root.tb-mode = root.tb-mode == 1 ? 0 : 1; root.toolbar-moved(); } }
+                        QBtn { label: "✕"; tip: T.t("隱藏工具列（上方「顯示工具列」可再開）", "Hide toolbar (use Show toolbar at the top)"); clicked => { root.tb-mode = 2; root.toolbar-moved(); } }
+                    }
+                }
+                // ---------------- canvas context menu
+                if root.ctx-open: TouchArea {
+                    clicked => { root.ctx-open = false; }
+                    pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.ctx-open = false; } }
+                }
+                if root.ctx-open: Rectangle {
+                    x: min(root.ctx-x, canvas-area.width - self.width - 4px);
+                    y: min(root.ctx-y, canvas-area.height - self.height - 4px);
+                    width: 230px;
+                    height: ctxl.preferred-height;
+                    background: white;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: #d0d6de;
+                    drop-shadow-blur: 8px;
+                    drop-shadow-color: #0004;
+                    ctxl := VerticalLayout {
+                        padding-top: 4px; padding-bottom: 4px;
+                        MenuRow { label: T.t("復原", "Undo"); shortcut: "Ctrl+Z"; enabled: root.can-undo; clicked => { root.ctx-open = false; root.action("undo"); } }
+                        MenuRow { label: T.t("重做", "Redo"); shortcut: "Ctrl+Y"; enabled: root.can-redo; clicked => { root.ctx-open = false; root.action("redo"); } }
+                        Rectangle { height: 1px; background: #e4e8ee; }
+                        MenuRow { label: T.t("複製", "Copy"); shortcut: "Ctrl+C"; clicked => { root.ctx-open = false; root.action("copy"); } }
+                        MenuRow { label: T.t("貼上為新影像", "Paste as new image"); shortcut: "Ctrl+V"; clicked => { root.ctx-open = false; root.action("paste"); } }
+                        MenuRow { label: T.t("貼上為圖層", "Paste as layer"); shortcut: "Ctrl+Shift+V"; clicked => { root.ctx-open = false; root.action("paste-layer"); } }
+                        Rectangle { height: 1px; background: #e4e8ee; }
+                        MenuRow { label: T.t("全選", "Select all"); shortcut: "Ctrl+A"; clicked => { root.ctx-open = false; root.action("select-all"); } }
+                        MenuRow { label: T.t("取消選取", "Deselect"); shortcut: "Ctrl+D"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("deselect"); } }
+                        MenuRow { label: T.t("裁切到選取區", "Crop to selection"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
+                        MenuRow { label: T.t("刪除圖層", "Delete layer"); shortcut: "Del"; enabled: root.has-layer; clicked => { root.ctx-open = false; root.action("layer-delete"); } }
+                        Rectangle { height: 1px; background: #e4e8ee; }
+                        MenuRow { label: T.t("順時針旋轉 90°", "Rotate 90° right"); clicked => { root.ctx-open = false; root.action("rot-right"); } }
+                        MenuRow { label: T.t("逆時針旋轉 90°", "Rotate 90° left"); clicked => { root.ctx-open = false; root.action("rot-left"); } }
+                        MenuRow { label: T.t("符合視窗", "Zoom to fit"); shortcut: "0"; clicked => { root.ctx-open = false; root.action("zoom-fit"); } }
+                        MenuRow { label: T.t("實際大小", "Actual size"); shortcut: "1"; clicked => { root.ctx-open = false; root.action("zoom-100"); } }
+                        MenuRow { label: root.grid-on ? T.t("隱藏像素格線", "Hide pixel grid") : T.t("顯示像素格線", "Show pixel grid"); shortcut: "Ctrl+G"; clicked => { root.ctx-open = false; root.action("toggle-grid"); } }
+                        Rectangle { height: 1px; background: #e4e8ee; }
+                        MenuRow { label: T.t("快速儲存", "Quick save"); shortcut: "Ctrl+S"; clicked => { root.ctx-open = false; root.action("quick-save"); } }
+                        MenuRow { label: T.t("另存新檔…", "Save as…"); shortcut: "Ctrl+Shift+S"; clicked => { root.ctx-open = false; root.action("save-as"); } }
                     }
                 }
             }
@@ -699,17 +861,10 @@ export component AppWindow inherits Window {
                                 spacing: 6px;
                                 Section { text: T.t("影像資訊", "Image info"); }
                                 Text { text: root.info-text; wrap: word-wrap; }
-                                Section { text: "C2PA"; }
+                                Section { text: T.t("C2PA 內容憑證", "C2PA content credentials"); }
                                 Text { text: root.c2pa-text; wrap: word-wrap; font-size: 11px; }
-                                LineEdit { placeholder-text: T.t("標題", "Title"); text <=> root.c2pa-title; }
-                                LineEdit { placeholder-text: T.t("作者", "Creator"); text <=> root.c2pa-creator; }
-                                LineEdit { placeholder-text: "c2pa.edited"; text <=> root.c2pa-action; }
                                 CheckBox { text: T.t("儲存時寫入 C2PA", "Write C2PA on save"); checked <=> root.c2pa-on-save; }
-                                HorizontalLayout {
-                                    spacing: 3px;
-                                    Button { text: T.t("另存含 C2PA", "Save copy + C2PA"); clicked => { root.action("c2pa-write"); } }
-                                    Button { text: T.t("另存移除 C2PA", "Save copy − C2PA"); clicked => { root.action("c2pa-remove"); } }
-                                }
+                                Button { text: T.t("C2PA 內容憑證…", "C2PA content credentials…"); primary: true; clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
                             }
                             // ===== Batch
                             if root.tab == 6: VerticalLayout {
@@ -728,8 +883,7 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 3px;
                                     Button { text: T.t("執行批次", "Run batch"); enabled: !root.batch-running; primary: true; clicked => { root.action("batch-run"); } }
-                                    Button { text: T.t("批次加 C2PA", "Batch add C2PA"); enabled: !root.batch-running; clicked => { root.action("batch-c2pa-add"); } }
-                                    Button { text: T.t("批次移除", "Batch strip"); enabled: !root.batch-running; clicked => { root.action("batch-c2pa-remove"); } }
+                                    Button { text: T.t("C2PA 批次…", "C2PA batch…"); clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
                                 }
                                 Text { text: root.batch-progress; wrap: word-wrap; font-size: 11px; }
                                 Section { text: T.t("GIF 動畫", "Animated GIF"); }
@@ -784,6 +938,92 @@ export component AppWindow inherits Window {
             }
         }
     }
+    }
+    // ---------------- quick-save prompt (first quick save of a document)
+    if root.qs-open: Rectangle {
+        background: #0006;
+        TouchArea { }
+        Rectangle {
+            width: 380px;
+            height: qsl.preferred-height;
+            background: white;
+            border-radius: 8px;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #0006;
+            qsl := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Section { text: T.t("快速儲存設定", "Quick save settings"); }
+                Text { text: T.t("只會在第一次快速儲存時詢問；之後 Ctrl+S 直接覆寫。", "Asked only on the first quick save; after that Ctrl+S overwrites directly."); wrap: word-wrap; font-size: 11px; color: #555; }
+                Text { text: root.qs-target; wrap: word-wrap; font-size: 11px; }
+                HorizontalLayout { spacing: 6px; Text { text: T.t("格式", "Format"); width: 78px; vertical-alignment: center; } ComboBox { model: root.format-names; current-index <=> root.export-format; } }
+                LabeledSlider { label: T.t("品質", "Quality"); minimum: 1; maximum: 100; value <=> root.quality; has-apply: false; }
+                CheckBox { text: T.t("WebP 無損", "WebP lossless"); checked <=> root.webp-lossless; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+                    Button { text: T.t("取消", "Cancel"); clicked => { root.qs-open = false; } }
+                    Button { text: T.t("儲存", "Save"); primary: true; clicked => { root.qs-open = false; root.action("quick-save-confirm"); } }
+                }
+            }
+        }
+    }
+    // ---------------- C2PA dialog
+    if root.c2pa-open: Rectangle {
+        background: #0006;
+        TouchArea { }
+        Rectangle {
+            width: min(620px, root.width - 40px);
+            height: min(c2l.preferred-height, root.height - 40px);
+            background: white;
+            border-radius: 8px;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #0006;
+            ScrollView {
+                c2l := VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Section { text: T.t("C2PA 內容憑證", "C2PA content credentials"); font-size: 16px; horizontal-stretch: 1; }
+                        Button { text: T.t("關閉", "Close"); clicked => { root.c2pa-open = false; } }
+                    }
+                    Rectangle {
+                        background: root.c2pa-present ? #e8f5e9 : #f4f6f9;
+                        border-radius: 6px;
+                        height: c2t.preferred-height + 16px;
+                        c2t := Text { x: 8px; width: parent.width - 16px; text: root.c2pa-text; wrap: word-wrap; }
+                    }
+                    if root.c2pa-raw != "": VerticalLayout {
+                        spacing: 4px;
+                        Text { text: T.t("原始 manifest JSON", "Raw manifest JSON"); font-size: 11px; color: #555; }
+                        TextEdit { height: 140px; read-only: true; font-size: 10px; text: root.c2pa-raw; }
+                    }
+                    Section { text: T.t("單張：加入／移除", "Single image: add / remove"); }
+                    GridLayout {
+                        spacing: 6px;
+                        Row { Text { text: T.t("標題", "Title"); vertical-alignment: center; } LineEdit { text <=> root.c2pa-title; } }
+                        Row { Text { text: T.t("作者", "Creator"); vertical-alignment: center; } LineEdit { text <=> root.c2pa-creator; } }
+                        Row { Text { text: T.t("動作說明", "Action note"); vertical-alignment: center; } TextEdit { height: 56px; text <=> root.c2pa-action; } }
+                    }
+                    CheckBox { text: T.t("儲存時寫入 C2PA（使用上方資料）", "Write C2PA on save (using the fields above)"); checked <=> root.c2pa-on-save; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: T.t("加入 C2PA 並另存目前影像…", "Add C2PA & save current image as…"); primary: true; clicked => { root.action("c2pa-write"); } }
+                        Button { text: T.t("移除 C2PA 另存…", "Strip C2PA to a copy…"); enabled: root.has-source; clicked => { root.action("c2pa-remove"); } }
+                    }
+                    Text { text: T.t("移除 C2PA 會複製來源檔並只拿掉 manifest（副檔名與來源相同，不能覆寫來源）。", "Stripping copies the source file bytes and removes only the manifest (same extension, cannot overwrite the source)."); wrap: word-wrap; font-size: 11px; color: #666; }
+                    Section { text: T.t("批次 C2PA", "Batch C2PA"); }
+                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-in; placeholder-text: T.t("來源資料夾", "Input folder"); } Button { text: "…"; clicked => { root.action("c2pa-in"); } } }
+                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } Button { text: "…"; clicked => { root.action("c2pa-out"); } } }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: T.t("批次加入（使用上方資料）", "Batch add (fields above)"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-add"); } }
+                        Button { text: T.t("批次移除", "Batch remove"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-remove"); } }
+                    }
+                    Text { text: root.c2pa-batch-text; wrap: word-wrap; font-size: 11px; }
+                }
+            }
+        }
     }
     if root.dragging-sticker: Image {
         x: root.drag-x - 28px; y: root.drag-y - 28px;
