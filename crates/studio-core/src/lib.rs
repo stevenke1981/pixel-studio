@@ -49,6 +49,7 @@ pub use panorama360::{
 pub use resize::{canvas_resize, resize_exact, resize_to_fit};
 pub use transform::{blur_region, crop_region};
 pub mod metadata;
+pub mod naming;
 pub mod ocr;
 pub mod redact;
 pub mod stickers;

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono.workspace = true
 ab_glyph.workspace = true
 anyhow.workspace = true
 c2pa.workspace = true

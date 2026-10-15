@@ -23,7 +23,8 @@ enum Command {
     /// Detect text offline and redact sensitive data (solid box by default).
     Redact {
         input: PathBuf,
-        output: PathBuf,
+        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+        output: Option<PathBuf>,
         /// solid | mosaic | blur
         #[arg(long, default_value = "solid")]
         style: String,
@@ -46,7 +47,8 @@ enum Command {
     },
     Convert {
         input: PathBuf,
-        output: PathBuf,
+        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+        output: Option<PathBuf>,
         #[arg(long)]
         format: SupportedFormat,
         #[arg(long, default_value_t = 92)]
@@ -54,7 +56,8 @@ enum Command {
     },
     Crop {
         input: PathBuf,
-        output: PathBuf,
+        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+        output: Option<PathBuf>,
         #[arg(long)]
         x: u32,
         #[arg(long)]
@@ -68,7 +71,8 @@ enum Command {
     },
     BlurRegion {
         input: PathBuf,
-        output: PathBuf,
+        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+        output: Option<PathBuf>,
         #[arg(long)]
         x: u32,
         #[arg(long)]
@@ -84,7 +88,8 @@ enum Command {
     },
     Pano360 {
         input: PathBuf,
-        output: PathBuf,
+        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+        output: Option<PathBuf>,
         #[arg(long, default_value = "pad")]
         mode: PanoramaMode,
         #[arg(long)]
@@ -142,6 +147,18 @@ enum Command {
     },
 }
 
+/// Resolve an optional output path to a timestamped default next to the input.
+fn resolve_output(output: Option<PathBuf>, input: &std::path::Path, ext: &str) -> PathBuf {
+    output.unwrap_or_else(|| {
+        let dir = input.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+        studio_core::naming::timestamp_path_in(dir, ext)
+    })
+}
+
+fn input_ext(input: &std::path::Path) -> String {
+    input.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase()
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -156,6 +173,7 @@ fn main() -> Result<()> {
             keep_metadata,
             quality,
         } => {
+            let output = resolve_output(output, &input, &input_ext(&input));
             use studio_core::redact::{RedactStyle, apply_redactions, select_by_keyword};
             let image = load_dynamic_image(&input)?;
             let dir = studio_core::ocr::ensure_models()?;
@@ -217,6 +235,7 @@ fn main() -> Result<()> {
             format,
             quality,
         } => {
+            let output = resolve_output(output, &input, format.extension());
             let result = convert_image(
                 input,
                 output,
@@ -244,6 +263,7 @@ fn main() -> Result<()> {
             height,
             quality,
         } => {
+            let output = resolve_output(output, &input, &input_ext(&input));
             let image = load_dynamic_image(&input)?;
             let cropped = crop_region(&image, x, y, width, height)?;
             let format = output_format(&output)?;
@@ -275,6 +295,7 @@ fn main() -> Result<()> {
             sigma,
             quality,
         } => {
+            let output = resolve_output(output, &input, &input_ext(&input));
             let image = load_dynamic_image(&input)?;
             let blurred = blur_region(&image, x, y, width, height, sigma)?;
             let format = output_format(&output)?;
@@ -303,6 +324,7 @@ fn main() -> Result<()> {
             width,
             quality,
         } => {
+            let output = resolve_output(output, &input, "jpg");
             let result = write_panorama_jpeg(
                 input,
                 output,

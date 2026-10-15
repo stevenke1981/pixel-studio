@@ -6872,6 +6872,7 @@ dependencies = [
  "ab_glyph",
  "anyhow",
  "c2pa",
+ "chrono",
  "dirs",
  "image",
  "imageproc",
