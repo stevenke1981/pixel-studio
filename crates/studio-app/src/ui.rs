@@ -139,6 +139,12 @@ struct Settings {
     toolbar_x: Option<f32>,
     #[serde(default)]
     toolbar_y: Option<f32>,
+    #[serde(default)]
+    recent: Vec<PathBuf>,
+    #[serde(default)]
+    show_rulers: bool,
+    #[serde(default)]
+    hide_status: bool,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -178,6 +184,9 @@ pub struct State {
     quick_ok: bool,
     /// (mode, x, y) of the quick-action toolbar.
     toolbar: (i32, f32, f32),
+    recent: Vec<PathBuf>,
+    rulers: bool,
+    status_bar: bool,
 }
 
 type S = Rc<RefCell<State>>;
@@ -245,6 +254,15 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             settings.toolbar_x.unwrap_or(12.0),
             settings.toolbar_y.unwrap_or(12.0),
         ),
+        recent: settings
+            .recent
+            .iter()
+            .filter(|p| p.exists())
+            .take(MAX_RECENT)
+            .cloned()
+            .collect(),
+        rulers: settings.show_rulers,
+        status_bar: !settings.hide_status,
     }));
     {
         let s = state.borrow();
@@ -252,6 +270,22 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         ui.set_tb_x(s.toolbar.1);
         ui.set_tb_y(s.toolbar.2);
         ui.set_c2pa_action("".into());
+        ui.set_show_rulers(s.rulers);
+        ui.set_show_status(s.status_bar);
+        set_recent_model(&ui, &s);
+    }
+    ui.set_ui_font(fonts::ui_font_family().into());
+    if let Ok(m) = std::env::var("PIXEL_STUDIO_MENU") {
+        ui.set_menu_open(m.parse().unwrap_or(-1));
+    }
+    if let Ok(d) = std::env::var("PIXEL_STUDIO_DIALOG") {
+        match d.as_str() {
+            "about" => ui.set_about_open(true),
+            "keys" => ui.set_keys_open(true),
+            "resize" => ui.set_rs_open(true),
+            "quicksave" => ui.set_qs_open(true),
+            _ => {}
+        }
     }
     if let Ok(m) = std::env::var("PIXEL_STUDIO_C2PA_DIALOG") {
         ui.set_c2pa_open(m == "1");
@@ -317,6 +351,9 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                 if std::env::var_os("PIXEL_STUDIO_AUTODETECT").is_some() {
                     action(&ui, &st, "detect");
                 }
+                if std::env::var("PIXEL_STUDIO_DIALOG").is_ok_and(|d| d == "props") {
+                    action(&ui, &st, "properties");
+                }
             }
         });
     }
@@ -371,9 +408,68 @@ fn save_settings(s: &State) {
             toolbar_mode: s.toolbar.0,
             toolbar_x: Some(s.toolbar.1),
             toolbar_y: Some(s.toolbar.2),
+            recent: s.recent.clone(),
+            show_rulers: s.rulers,
+            hide_status: !s.status_bar,
         };
         let _ = std::fs::write(p, serde_json::to_string_pretty(&st).unwrap_or_default());
     }
+}
+
+const MAX_RECENT: usize = 8;
+
+fn set_recent_model(ui: &AppWindow, s: &State) {
+    ui.set_recent_files(ModelRc::new(VecModel::from(
+        s.recent
+            .iter()
+            .map(|p| SharedString::from(p.display().to_string()))
+            .collect::<Vec<_>>(),
+    )));
+}
+
+/// Move `path` to the front of the recent-files list (deduplicated, capped).
+fn push_recent(ui: &AppWindow, st: &S, path: &Path) {
+    let mut s = st.borrow_mut();
+    let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    s.recent.retain(|r| r != &p);
+    s.recent.insert(0, p);
+    s.recent.truncate(MAX_RECENT);
+    set_recent_model(ui, &s);
+    save_settings(&s);
+}
+
+/// Ruler ticks for one axis: (screen offset, label, major) every "nice" step.
+fn ruler_ticks(pan: f32, zoom: f32, extent: f32, start: f32) -> Vec<Tick> {
+    let steps = [
+        1.0f32, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0,
+    ];
+    let major = steps
+        .iter()
+        .copied()
+        .find(|s| s * zoom >= 64.0)
+        .unwrap_or(10000.0);
+    let minor = if major >= 5.0 { major / 5.0 } else { major };
+    let first = ((start - pan) / zoom / minor).floor() as i64;
+    let last = ((extent - pan) / zoom / minor).ceil() as i64;
+    let mut out = Vec::new();
+    for k in first..=last {
+        let v = k as f32 * minor;
+        let pos = pan + v * zoom;
+        if pos < start || pos > extent || out.len() > 600 {
+            continue;
+        }
+        let is_major = (v / major).fract().abs() < 1e-4;
+        out.push(Tick {
+            pos,
+            label: if is_major {
+                format!("{}", v as i64).into()
+            } else {
+                SharedString::new()
+            },
+            major: is_major,
+        });
+    }
+    out
 }
 
 fn set_language_models(ui: &AppWindow, s: &State) {
@@ -447,6 +543,15 @@ fn sync_view(ui: &AppWindow, s: &State) {
     ui.set_grid_on(s.show_grid);
     ui.set_has_layer(s.doc.selected.is_some());
     ui.set_show_edge_handles(s.tool == Tool::Select && !s.view_mode);
+    if s.rulers {
+        let (cw, ch) = (ui.get_canvas_w(), ui.get_canvas_h());
+        ui.set_ruler_x(ModelRc::new(VecModel::from(ruler_ticks(
+            s.pan.0, s.zoom, cw, 18.0,
+        ))));
+        ui.set_ruler_y(ModelRc::new(VecModel::from(ruler_ticks(
+            s.pan.1, s.zoom, ch, 18.0,
+        ))));
+    }
     match s.doc.selection {
         Some(sel) => {
             ui.set_has_selection(true);
@@ -644,6 +749,7 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
             }
             .into(),
         );
+        push_recent(ui, st, path);
         fit(ui, st);
         refresh(ui, st);
         return;
@@ -672,6 +778,7 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
                 ui.set_rs_h(s.doc.height() as i32);
             }
             st.borrow_mut().quick_ok = false;
+            push_recent(ui, st, path);
             load_c2pa_state(ui, st, Some(path));
             fit(ui, st);
             refresh(ui, st);
@@ -732,6 +839,7 @@ fn save_to(ui: &AppWindow, st: &S, out: &Path) {
     match r {
         Ok(()) => {
             ui.set_status(format!("{} {}", tl(zh, "已儲存：", "Saved:"), out.display()).into());
+            push_recent(ui, st, out);
             st.borrow_mut().doc.path = Some(out.to_path_buf());
         }
         Err(e) => ui.set_status(format!("{} {e}", tl(zh, "儲存失敗：", "Save failed:")).into()),
@@ -1912,6 +2020,147 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             });
         }
         "tab-redact" => {}
+        "cut" => {
+            action(ui, st, "copy");
+            action(ui, st, "delete");
+            return;
+        }
+        "delete" => {
+            let (has_layer, has_sel, bg) = {
+                let s = st.borrow();
+                (
+                    s.doc.selected.is_some(),
+                    s.doc.selection.is_some(),
+                    s.tools.color2,
+                )
+            };
+            if has_layer {
+                action(ui, st, "layer-delete");
+                return;
+            }
+            if has_sel {
+                // Paint-style: clear the selected pixels to colour 2.
+                with_doc(ui, st, |d| {
+                    d.apply_filter(|i| {
+                        DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                            i.width(),
+                            i.height(),
+                            image::Rgba(bg),
+                        ))
+                    })
+                });
+            }
+        }
+        "print" => {
+            let img = st.borrow().doc.flattened();
+            let path = std::env::temp_dir().join(studio_core::naming::timestamp_name("png"));
+            let r = img
+                .save(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|_| print_file(&path));
+            ui.set_status(
+                match r {
+                    Ok(()) => tl(
+                        zh,
+                        "已送出列印（系統列印對話框）。",
+                        "Sent to the system print dialog.",
+                    ),
+                    Err(e) => format!("{} {e}", tl(zh, "列印失敗：", "Print failed:")),
+                }
+                .into(),
+            );
+            return;
+        }
+        "properties" => {
+            refresh_info(ui, st);
+            ui.set_props_text(format!("{}\n{}", ui.get_info_text(), ui.get_c2pa_text()).into());
+            ui.set_props_open(true);
+            return;
+        }
+        "exit" => {
+            let dirty = st.borrow().doc.can_undo();
+            let ok = !dirty
+                || rfd::MessageDialog::new()
+                    .set_title("Pixel Studio")
+                    .set_description(tl(
+                        zh,
+                        "結束而不儲存目前的變更？",
+                        "Exit without saving the current changes?",
+                    ))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show()
+                    == rfd::MessageDialogResult::Yes;
+            if ok {
+                let _ = slint::quit_event_loop();
+            }
+            return;
+        }
+        "toggle-rulers" => {
+            let mut s = st.borrow_mut();
+            s.rulers = !s.rulers;
+            ui.set_show_rulers(s.rulers);
+            save_settings(&s);
+        }
+        "toggle-status" => {
+            let mut s = st.borrow_mut();
+            s.status_bar = !s.status_bar;
+            ui.set_show_status(s.status_bar);
+            save_settings(&s);
+            return;
+        }
+        "toggle-toolbar" => {
+            ui.set_tb_mode(if ui.get_tb_mode() == 2 { 0 } else { 2 });
+            ui.invoke_toolbar_moved();
+            return;
+        }
+        "fullscreen" => {
+            let on = !ui.window().is_fullscreen();
+            ui.window().set_fullscreen(on);
+            ui.set_full_screen_on(on);
+            return;
+        }
+        "resize-dialog" => {
+            let s = st.borrow();
+            ui.set_rs_w(s.doc.width() as i32);
+            ui.set_rs_h(s.doc.height() as i32);
+            ui.set_rs_open(true);
+            return;
+        }
+        "c2pa-dialog" => {
+            refresh_info(ui, st);
+            ui.set_c2pa_open(true);
+            return;
+        }
+        "shortcuts" => {
+            ui.set_keys_open(true);
+            return;
+        }
+        "about" => {
+            ui.set_about_open(true);
+            return;
+        }
+        a if a.starts_with("tab:") => {
+            let n: i32 = a[4..].parse().unwrap_or(0);
+            if st.borrow().view_mode {
+                action(ui, st, "toggle-mode");
+            }
+            ui.set_tab(n);
+            match n {
+                4 => action(ui, st, "tab-redact"),
+                5 => refresh_info(ui, st),
+                7 => action(ui, st, "refresh-shell"),
+                _ => {}
+            }
+            return;
+        }
+        a if a.starts_with("recent:") => {
+            let i: usize = a[7..].parse().unwrap_or(usize::MAX);
+            let p = st.borrow().recent.get(i).cloned();
+            if let Some(p) = p {
+                open_path(ui, st, &p);
+            }
+            return;
+        }
         "tool-redact-box" | "tool-redact-brush" => {
             let t = if a == "tool-redact-box" {
                 Tool::RedactBox
@@ -2268,6 +2517,46 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
     }
 }
 
+/// Hand an image file to the OS print path (Windows shell "print" verb, `lp` elsewhere).
+fn print_file(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", "Start-Process", "-FilePath"])
+        .arg(path)
+        .args(["-Verb", "Print"])
+        .status();
+    #[cfg(not(windows))]
+    let status = std::process::Command::new("lp").arg(path).status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("exit status {s}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Single-letter tool shortcuts (index into `Tool::ALL`), Paint/Photoshop-like.
+fn tool_for_key(t: &str, shift: bool) -> Option<i32> {
+    Some(match (t, shift) {
+        ("s", false) => 0,
+        ("p", false) => 1,
+        ("b", false) => 2,
+        ("l", false) => 3,
+        ("a", false) => 4,
+        ("k", false) => 5,
+        ("e", false) => 6,
+        ("f", false) => 7,
+        ("i", false) => 8,
+        ("t", false) => 9,
+        ("m", false) => 10,
+        ("c", false) => 11,
+        ("h", false) => 12,
+        ("u", false) => 13,
+        ("r", false) => 14,
+        ("r", true) => 15,
+        _ => return None,
+    })
+}
+
 fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
     use slint::platform::Key;
     if std::env::var_os("PIXEL_STUDIO_DEBUG").is_some() {
@@ -2286,6 +2575,15 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
     }
     if ctrl {
         let a = match t.as_str() {
+            "x" => "cut",
+            "e" if shift => "flatten",
+            "e" => "export",
+            "p" => "print",
+            "r" => "toggle-rulers",
+            "w" => "resize-dialog",
+            "j" => "layer-dup",
+            "]" => "layer-up",
+            "[" => "layer-down",
             "z" if shift => "redo",
             "z" => "undo",
             "y" => "redo",
@@ -2317,8 +2615,23 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
         true
     };
     if is(Key::Delete) || is(Key::Backspace) {
-        action(ui, st, "layer-delete");
+        action(ui, st, "delete");
         return true;
+    }
+    if is(Key::F11) {
+        action(ui, st, "fullscreen");
+        return true;
+    }
+    if !st.borrow().view_mode {
+        if let Some(i) = tool_for_key(&t, shift) {
+            ui.set_tool(i);
+            ui.invoke_tool_changed(i);
+            return true;
+        }
+        if t == "x" {
+            action(ui, st, "swap-colors");
+            return true;
+        }
     }
     if is(Key::LeftArrow) {
         if !mv(-nudge, 0) {

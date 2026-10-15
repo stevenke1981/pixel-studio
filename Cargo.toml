@@ -20,10 +20,25 @@ c2pa = { version = "0.85.0", default-features = false, features = ["file_io", "r
 chrono = "0.4.42"
 clap = { version = "4.6.1", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp", "ico"] }
-imageproc = "0.26.2"
+imageproc = { version = "0.26.2", default-features = false, features = ["rayon", "text"] }
 rayon = "1.11.0"
 rfd = "0.15.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2.0.17"
 walkdir = "2.5.0"
+
+# Size-focused release profile (see README "Binary size").
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+# Optimised but quick-to-link profile for CI test runs.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false
+incremental = false

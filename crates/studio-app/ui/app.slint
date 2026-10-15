@@ -13,16 +13,21 @@ export struct LayerRow { name: string, kind: int, visible: bool, selected: bool 
 export struct StickerItem { id: string, img: image }
 export struct BoxItem { x: float, y: float, w: float, h: float, selected: bool, label: string }
 export struct ToolItem { zh: string, en: string, group: int }
+export struct MItem { label: string, key: string, act: string, enabled: bool, sep: bool, checked: bool, check: bool, icon: image }
+export struct Tick { pos: length, label: string, major: bool }
+export struct MTitle { zh: string, en-rest: string, key: string }
+
+// Shared hover tooltip, drawn once on top of the whole window.
+export global Tip {
+    in-out property <string> text;
+    in-out property <length> x;
+    in-out property <length> y;
+}
 
 component Section inherits Text {
     font-weight: 700;
     font-size: 13px;
     color: #1f3b63;
-}
-
-component TB inherits Button {
-    // compact toolbar button
-    height: 30px;
 }
 
 component Swatch inherits Rectangle {
@@ -43,60 +48,112 @@ component Swatch inherits Rectangle {
     }
 }
 
-// Toolbar button with hover tooltip (shown for disabled buttons too).
-component QBtn inherits Rectangle {
-    in property <string> label;
+// Icon-only button: tooltip (label + shortcut) on hover, clear hover/pressed/
+// disabled/active states, exposed to screen readers as a button with that label.
+component IBtn inherits Rectangle {
     in property <image> icon;
     in property <string> tip;
     in property <bool> enabled: true;
     in property <bool> active: false;
+    in property <length> size: 30px;
+    in property <length> icon-size: 18px;
     callback clicked();
-    width: max(30px, lt.preferred-width + 14px);
-    height: 28px;
-    border-radius: 4px;
-    background: root.active ? #d6e2fb : (!root.enabled ? transparent : (ta.pressed ? #c9d6f2 : (ta.has-hover ? #e3ebfb : transparent)));
-    if root.icon.width > 0: Image {
+    width: root.size;
+    height: root.size;
+    border-radius: 5px;
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    background: root.active ? (ta.has-hover ? #255fd6 : #2f6fed) : !root.enabled ? transparent : ta.pressed ? #c2d2f3 : ta.has-hover ? #e4ecfb : transparent;
+    border-width: ta.has-hover && root.enabled && !root.active ? 1px : 0px;
+    border-color: #c3d2ee;
+    Image {
         source: root.icon;
-        width: 16px;
-        height: 16px;
+        width: root.icon-size;
+        height: root.icon-size;
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        opacity: root.enabled ? 1 : 0.35;
-    }
-    lt := Text {
-        text: root.icon.width > 0 ? "" : root.label;
-        color: root.enabled ? #1d2a3a : #b4bac3;
-        font-size: 12px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        width: parent.width;
-        height: parent.height;
+        y: (parent.height - self.height) / 2 + (ta.pressed && root.enabled ? 1px : 0px);
+        colorize: root.active ? #ffffff : root.enabled ? #1d2a3a : #b3bac4;
     }
     ta := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
-    if ta.has-hover && root.tip != "": Rectangle {
-        y: root.height + 4px;
-        x: 0;
-        width: tt.preferred-width + 12px;
-        height: 22px;
-        border-radius: 3px;
-        background: #263238e8;
-        tt := Text { text: root.tip; color: white; font-size: 11px; }
+    // Show the shared tooltip after a short hover delay; hide it on leave.
+    Timer {
+        interval: 450ms;
+        running: ta.has-hover && root.tip != "" && Tip.text != root.tip;
+        triggered => {
+            Tip.text = root.tip;
+            Tip.x = root.absolute-position.x;
+            Tip.y = root.absolute-position.y + root.height + 4px;
+        }
     }
+    property <bool> hov: ta.has-hover;
+    changed hov => { if (!self.hov && Tip.text == root.tip) { Tip.text = ""; } }
 }
 
 component MenuRow inherits Rectangle {
     in property <string> label;
     in property <string> shortcut;
+    in property <image> icon;
     in property <bool> enabled: true;
+    in property <bool> check: false;
+    in property <bool> checked: false;
+    in property <bool> highlighted: false;
     callback clicked();
+    callback hovered();
     height: 26px;
-    background: ma.has-hover && root.enabled ? #e3ebfb : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    background: (ma.has-hover || root.highlighted) && root.enabled ? #e3ebfb : transparent;
     HorizontalLayout {
-        padding-left: 10px; padding-right: 10px;
+        padding-left: 8px; padding-right: 12px;
+        spacing: 8px;
+        Rectangle {
+            width: 18px;
+            if root.check && root.checked: Image { source: @image-url("icons/check.svg"); width: 15px; height: 15px; colorize: #1d2a3a; }
+            if !root.check: Image { source: root.icon; width: 16px; height: 16px; colorize: root.enabled ? #33475b : #b4bac3; }
+        }
         Text { text: root.label; vertical-alignment: center; color: root.enabled ? #1d2a3a : #b4bac3; horizontal-stretch: 1; }
-        Text { text: root.shortcut; vertical-alignment: center; color: #7a8590; font-size: 11px; }
+        Text { text: root.shortcut; vertical-alignment: center; color: root.enabled ? #6b7785 : #c3c8ce; font-size: 11px; }
     }
-    ma := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+    ma := TouchArea {
+        clicked => { if (root.enabled) { root.clicked(); } }
+        changed has-hover => { if (self.has-hover) { root.hovered(); } }
+    }
+}
+
+// Modal dialog shell: dims the window, centred card with a title and a close icon.
+component Dialog inherits Rectangle {
+    in property <string> title;
+    in property <length> card-width: 420px;
+    callback close();
+    background: #0006;
+    TouchArea { }
+    Rectangle {
+        width: min(root.card-width, root.width - 40px);
+        height: min(dl.preferred-height, root.height - 40px);
+        background: white;
+        border-radius: 8px;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #0006;
+        dl := VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+            HorizontalLayout {
+                Text { text: root.title; font-size: 16px; font-weight: 700; color: #1f3b63; horizontal-stretch: 1; vertical-alignment: center; }
+                IBtn { icon: @image-url("icons/close.svg"); size: 28px; tip: T.t("關閉 (Esc)", "Close (Esc)"); clicked => { root.close(); } }
+            }
+            @children
+        }
+    }
+}
+
+component KeyRow inherits HorizontalLayout {
+    in property <string> keys;
+    in property <string> what;
+    spacing: 12px;
+    Text { text: root.keys; width: 150px; color: #2f6fed; font-weight: 600; }
+    Text { text: root.what; horizontal-stretch: 1; wrap: word-wrap; }
 }
 
 component LabeledSlider inherits HorizontalLayout {
@@ -111,7 +168,7 @@ component LabeledSlider inherits HorizontalLayout {
     Text { text: label; width: 78px; vertical-alignment: center; overflow: elide; }
     Slider { minimum: root.minimum; maximum: root.maximum; value <=> root.value; }
     Text { width: 40px; vertical-alignment: center; text: root.decimals == 0 ? round(root.value) : round(root.value * 10) / 10; }
-    if has-apply: Button { text: T.t("套用", "Apply"); clicked => { root.apply(); } }
+    if has-apply: IBtn { icon: @image-url("icons/apply.svg"); size: 28px; tip: T.t("套用", "Apply ") + root.label; clicked => { root.apply(); } }
 }
 
 export component AppWindow inherits Window {
@@ -122,6 +179,7 @@ export component AppWindow inherits Window {
     min-height: 600px;
     background: #eef1f5;
     icon: @image-url("../assets/icon-256.png");
+    default-font-family: root.ui-font;
 
     // ---------------------------------------------------------------- state
     in property <image> canvas;
@@ -272,7 +330,142 @@ export component AppWindow inherits Window {
     in-out property <string> c2pa-in; in-out property <string> c2pa-out;
     in property <string> c2pa-batch-text;
     in property <bool> show-edge-handles;
+    // menu bar / view toggles / extra dialogs
+    in property <string> ui-font;
+    in-out property <int> menu-open: -1;
+    in-out property <int> menu-hl: -1;
+    in-out property <bool> recent-open;
+    in property <[string]> recent-files;
+    in-out property <bool> show-status: true;
+    in-out property <bool> show-rulers: false;
+    in property <bool> full-screen-on;
+    in property <[Tick]> ruler-x;
+    in property <[Tick]> ruler-y;
+    in-out property <bool> rs-open;
+    in-out property <bool> props-open;
+    in property <string> props-text;
+    in-out property <bool> about-open;
+    in-out property <bool> keys-open;
+    property <[string]> tool-keys: ["S", "P", "B", "L", "A", "K", "E", "F", "I", "T", "M", "C", "H", "U", "R", "Shift+R"];
+    property <[image]> tool-icons: [@image-url("icons/tool-select.svg"), @image-url("icons/tool-pencil.svg"), @image-url("icons/tool-brush.svg"), @image-url("icons/tool-highlighter.svg"), @image-url("icons/tool-airbrush.svg"), @image-url("icons/tool-calligraphy.svg"), @image-url("icons/tool-eraser.svg"), @image-url("icons/tool-fill.svg"), @image-url("icons/tool-picker.svg"), @image-url("icons/tool-text.svg"), @image-url("icons/tool-mosaic.svg"), @image-url("icons/tool-crop.svg"), @image-url("icons/tool-hand.svg"), @image-url("icons/tool-shapes.svg"), @image-url("icons/tool-redact-box.svg"), @image-url("icons/tool-redact-brush.svg")];
 
+    property <[MItem]> m-file: [
+        { label: T.t("新增", "New"), act: "new", enabled: true, key: "Ctrl+N", icon: @image-url("icons/new.svg") },
+        { label: T.t("開啟…", "Open…"), act: "open", enabled: true, key: "Ctrl+O", icon: @image-url("icons/open.svg") },
+        { label: T.t("開啟資料夾…", "Open folder…"), act: "open-folder", enabled: true, icon: @image-url("icons/folder.svg") },
+        { label: T.t("開啟專案…", "Open project…"), act: "open-project", enabled: true, icon: @image-url("icons/project-open.svg") },
+        { label: T.t("最近的檔案", "Recent files"), act: "recent-menu", enabled: root.recent-files.length > 0, icon: @image-url("icons/recent.svg") },
+        { sep: true },
+        { label: T.t("儲存", "Save"), act: "quick-save", enabled: true, key: "Ctrl+S", icon: @image-url("icons/save.svg") },
+        { label: T.t("另存新檔…", "Save as…"), act: "save-as", enabled: true, key: "Ctrl+Shift+S", icon: @image-url("icons/save-as.svg") },
+        { label: T.t("儲存專案…", "Save project…"), act: "save-project", enabled: true, icon: @image-url("icons/project-save.svg") },
+        { label: T.t("匯出…", "Export…"), act: "export", enabled: true, key: "Ctrl+E", icon: @image-url("icons/export.svg") },
+        { sep: true },
+        { label: T.t("列印…", "Print…"), act: "print", enabled: true, key: "Ctrl+P", icon: @image-url("icons/print.svg") },
+        { label: T.t("內容…", "Properties…"), act: "properties", enabled: true, key: "Alt+Enter", icon: @image-url("icons/properties.svg") },
+        { sep: true },
+        { label: T.t("結束", "Exit"), act: "exit", enabled: true, key: "Alt+F4", icon: @image-url("icons/exit.svg") }
+    ];
+    property <[MItem]> m-edit: [
+        { label: T.t("復原", "Undo"), act: "undo", enabled: root.can-undo, key: "Ctrl+Z", icon: @image-url("icons/undo.svg") },
+        { label: T.t("重做", "Redo"), act: "redo", enabled: root.can-redo, key: "Ctrl+Y", icon: @image-url("icons/redo.svg") },
+        { sep: true },
+        { label: T.t("剪下", "Cut"), act: "cut", enabled: root.has-selection || root.has-layer, key: "Ctrl+X", icon: @image-url("icons/cut.svg") },
+        { label: T.t("複製", "Copy"), act: "copy", enabled: true, key: "Ctrl+C", icon: @image-url("icons/copy.svg") },
+        { label: T.t("貼上（為圖層）", "Paste (as layer)"), act: "paste-layer", enabled: true, key: "Ctrl+Shift+V", icon: @image-url("icons/paste-layer.svg") },
+        { label: T.t("貼上為新影像", "Paste as new image"), act: "paste", enabled: true, key: "Ctrl+V", icon: @image-url("icons/paste-new.svg") },
+        { sep: true },
+        { label: T.t("全選", "Select all"), act: "select-all", enabled: true, key: "Ctrl+A", icon: @image-url("icons/select-all.svg") },
+        { label: T.t("取消選取", "Deselect"), act: "deselect", enabled: root.has-selection, key: "Ctrl+D", icon: @image-url("icons/deselect.svg") },
+        { label: T.t("刪除", "Delete"), act: "delete", enabled: root.has-selection || root.has-layer, key: "Del", icon: @image-url("icons/delete.svg") },
+        { sep: true },
+        { label: T.t("截圖", "Screenshot"), act: "screenshot", enabled: true, icon: @image-url("icons/screenshot.svg") }
+    ];
+    property <[MItem]> m-view: [
+        { label: T.t("放大", "Zoom in"), act: "zoom-in", enabled: true, key: "Ctrl++", icon: @image-url("icons/zoom-in.svg") },
+        { label: T.t("縮小", "Zoom out"), act: "zoom-out", enabled: true, key: "Ctrl+-", icon: @image-url("icons/zoom-out.svg") },
+        { label: T.t("符合視窗", "Zoom to fit"), act: "zoom-fit", enabled: true, key: "Ctrl+0", icon: @image-url("icons/zoom-fit.svg") },
+        { label: T.t("實際大小 (100%)", "Actual size (100%)"), act: "zoom-100", enabled: true, key: "1", icon: @image-url("icons/zoom-100.svg") },
+        { sep: true },
+        { label: T.t("像素格線", "Pixel grid"), act: "toggle-grid", enabled: true, key: "Ctrl+G", check: true, checked: root.grid-on },
+        { label: T.t("尺規", "Rulers"), act: "toggle-rulers", enabled: true, key: "Ctrl+R", check: true, checked: root.show-rulers },
+        { label: T.t("浮動工具列", "Floating toolbar"), act: "toggle-toolbar", enabled: true, check: true, checked: root.tb-mode != 2 },
+        { label: T.t("狀態列", "Status bar"), act: "toggle-status", enabled: true, check: true, checked: root.show-status },
+        { sep: true },
+        { label: T.t("全螢幕", "Full screen"), act: "fullscreen", enabled: true, key: "F11", check: true, checked: root.full-screen-on },
+        { label: T.t("檢視模式", "Viewer mode"), act: "toggle-mode", enabled: true, check: true, checked: root.view-mode }
+    ];
+    property <[MItem]> m-image: [
+        { label: T.t("裁切到選取區", "Crop to selection"), act: "crop", enabled: root.has-selection, key: "Enter", icon: @image-url("icons/crop.svg") },
+        { label: T.t("調整影像大小…", "Resize image…"), act: "resize-dialog", enabled: true, key: "Ctrl+W", icon: @image-url("icons/resize.svg") },
+        { label: T.t("畫布大小…", "Canvas size…"), act: "resize-dialog", enabled: true, key: "Ctrl+Shift+W", icon: @image-url("icons/canvas-size.svg") },
+        { sep: true },
+        { label: T.t("逆時針旋轉 90°", "Rotate 90° left"), act: "rot-left", enabled: true, icon: @image-url("icons/rot-left.svg") },
+        { label: T.t("順時針旋轉 90°", "Rotate 90° right"), act: "rot-right", enabled: true, icon: @image-url("icons/rot-right.svg") },
+        { label: T.t("旋轉 180°", "Rotate 180°"), act: "rot-180", enabled: true, icon: @image-url("icons/rot-180.svg") },
+        { label: T.t("水平翻轉", "Flip horizontal"), act: "flip-h", enabled: true, icon: @image-url("icons/flip-h.svg") },
+        { label: T.t("垂直翻轉", "Flip vertical"), act: "flip-v", enabled: true, icon: @image-url("icons/flip-v.svg") },
+        { sep: true },
+        { label: T.t("調整…", "Adjustments…"), act: "tab:2", enabled: true, icon: @image-url("icons/adjust.svg") },
+        { label: T.t("灰階", "Grayscale"), act: "f-gray", enabled: true, icon: @image-url("icons/grayscale.svg") },
+        { label: T.t("負片", "Invert colours"), act: "f-invert", enabled: true, icon: @image-url("icons/invert.svg") },
+        { label: T.t("自動對比", "Auto contrast"), act: "f-auto", enabled: true, icon: @image-url("icons/auto-contrast.svg") },
+        { label: T.t("還原成原始影像", "Reset to original"), act: "reset", enabled: true, icon: @image-url("icons/reset.svg") }
+    ];
+    property <[MItem]> m-layer: [
+        { label: T.t("新增文字圖層", "New text layer"), act: "add-text", enabled: true, icon: @image-url("icons/add-text.svg") },
+        { label: T.t("從檔案新增圖片圖層…", "New image layer from file…"), act: "add-image", enabled: true, icon: @image-url("icons/add-image.svg") },
+        { label: T.t("貼上為圖層", "Paste as layer"), act: "paste-layer", enabled: true, key: "Ctrl+Shift+V", icon: @image-url("icons/paste-layer.svg") },
+        { sep: true },
+        { label: T.t("複製圖層", "Duplicate layer"), act: "layer-dup", enabled: root.has-layer, key: "Ctrl+J", icon: @image-url("icons/layer-dup.svg") },
+        { label: T.t("刪除圖層", "Delete layer"), act: "layer-delete", enabled: root.has-layer, key: "Del", icon: @image-url("icons/layer-delete.svg") },
+        { label: T.t("合併所有圖層", "Merge all layers"), act: "flatten", enabled: root.layers.length > 0, key: "Ctrl+Shift+E", icon: @image-url("icons/flatten.svg") },
+        { sep: true },
+        { label: T.t("上移一層", "Bring forward"), act: "layer-up", enabled: root.has-layer, key: "Ctrl+]", icon: @image-url("icons/layer-up.svg") },
+        { label: T.t("下移一層", "Send backward"), act: "layer-down", enabled: root.has-layer, key: "Ctrl+[", icon: @image-url("icons/layer-down.svg") },
+        { label: T.t("圖層面板", "Layers panel"), act: "tab:1", enabled: true, icon: @image-url("icons/tab-layers.svg") }
+    ];
+    property <[MItem]> m-tools: [
+        { label: T.t("貼圖", "Stickers"), act: "tab:3", enabled: true, icon: @image-url("icons/tab-stickers.svg") },
+        { label: T.t("自動打碼", "Auto redact"), act: "tab:4", enabled: true, icon: @image-url("icons/tab-redact.svg") },
+        { label: T.t("C2PA 內容憑證…", "C2PA content credentials…"), act: "c2pa-dialog", enabled: true, icon: @image-url("icons/c2pa.svg") },
+        { sep: true },
+        { label: T.t("批次轉檔", "Batch convert"), act: "tab:6", enabled: true, icon: @image-url("icons/tab-batch.svg") },
+        { label: T.t("GIF 動畫", "Animated GIF"), act: "tab:6", enabled: true, icon: @image-url("icons/gif.svg") },
+        { label: T.t("360° 全景", "360° panorama"), act: "tab:6", enabled: true, icon: @image-url("icons/panorama.svg") },
+        { sep: true },
+        { label: T.t("設定", "Settings"), act: "tab:7", enabled: true, icon: @image-url("icons/tab-settings.svg") }
+    ];
+    property <[MItem]> m-help: [
+        { label: T.t("鍵盤快捷鍵", "Keyboard shortcuts"), act: "shortcuts", enabled: true, key: "F1", icon: @image-url("icons/keyboard.svg") },
+        { label: T.t("關於 Pixel Studio", "About Pixel Studio"), act: "about", enabled: true, icon: @image-url("icons/about.svg") }
+    ];
+    property <[MTitle]> menu-titles: [{ zh: "檔案", en-rest: "ile", key: "F" }, { zh: "編輯", en-rest: "dit", key: "E" }, { zh: "檢視", en-rest: "iew", key: "V" }, { zh: "影像", en-rest: "mage", key: "I" }, { zh: "圖層", en-rest: "ayer", key: "L" }, { zh: "工具", en-rest: "ools", key: "T" }, { zh: "說明", en-rest: "elp", key: "H" }];
+    property <[MItem]> cur-items: root.menu-open == 0 ? root.m-file : root.menu-open == 1 ? root.m-edit : root.menu-open == 2 ? root.m-view : root.menu-open == 3 ? root.m-image : root.menu-open == 4 ? root.m-layer : root.menu-open == 5 ? root.m-tools : root.m-help;
+    function open-menu(i: int) {
+        Tip.text = "";
+        root.recent-open = false;
+        root.menu-open = i;
+        root.menu-hl = -1;
+        fs.focus();
+    }
+    function menu-step(d: int) {
+        if (root.menu-hl < 0 && d < 0) {
+            root.menu-hl = root.cur-items.length - 1;
+        } else {
+            root.menu-hl = mod(root.menu-hl + d + root.cur-items.length, root.cur-items.length);
+        }
+        if (root.cur-items[root.menu-hl].sep || !root.cur-items[root.menu-hl].enabled) {
+            root.menu-hl = mod(root.menu-hl + d + root.cur-items.length, root.cur-items.length);
+        }
+    }
+    function run-item(m: MItem) {
+        if (!m.enabled || m.sep) { return; }
+        if (m.act == "recent-menu") { root.recent-open = !root.recent-open; return; }
+        root.menu-open = -1;
+        root.recent-open = false;
+        root.action(m.act);
+    }
     // ---------------------------------------------------------------- callbacks
     callback toolbar-moved();
     callback action(string);
@@ -297,79 +490,107 @@ export component AppWindow inherits Window {
 
     fs := FocusScope {
         key-pressed(e) => {
+            if (e.modifiers.alt && !e.modifiers.control) {
+                if (e.text == "f" || e.text == "F") { root.open-menu(0); return accept; }
+                if (e.text == "e" || e.text == "E") { root.open-menu(1); return accept; }
+                if (e.text == "v" || e.text == "V") { root.open-menu(2); return accept; }
+                if (e.text == "i" || e.text == "I") { root.open-menu(3); return accept; }
+                if (e.text == "l" || e.text == "L") { root.open-menu(4); return accept; }
+                if (e.text == "t" || e.text == "T") { root.open-menu(5); return accept; }
+                if (e.text == "h" || e.text == "H") { root.open-menu(6); return accept; }
+                if (e.text == Key.Return) { root.action("properties"); return accept; }
+            }
+            if (root.menu-open >= 0) {
+                if (e.text == Key.Escape) { root.menu-open = -1; return accept; }
+                if (e.text == Key.LeftArrow) { root.open-menu(mod(root.menu-open + 6, 7)); return accept; }
+                if (e.text == Key.RightArrow) { root.open-menu(mod(root.menu-open + 1, 7)); return accept; }
+                if (e.text == Key.DownArrow) { root.menu-step(1); return accept; }
+                if (e.text == Key.UpArrow) { root.menu-step(-1); return accept; }
+                if (e.text == Key.Return || e.text == " ") {
+                    if (root.menu-hl >= 0) { root.run-item(root.cur-items[root.menu-hl]); }
+                    return accept;
+                }
+                return accept;
+            }
+            if (e.text == Key.F1) { root.keys-open = true; return accept; }
+            if (e.text == Key.Escape && (root.about-open || root.keys-open || root.props-open || root.rs-open || root.c2pa-open || root.qs-open)) {
+                root.about-open = false; root.keys-open = false; root.props-open = false; root.rs-open = false; root.c2pa-open = false; root.qs-open = false;
+                return accept;
+            }
             if (root.key(e.text, e.modifiers.control || e.modifiers.meta, e.modifiers.shift)) { return accept; }
             return reject;
         }
 
     VerticalLayout {
-        // ------------------------------------------------------------ top bar
+        // ------------------------------------------------------------ menu bar (drawn as an overlay at the end; this reserves its space)
+        Rectangle { height: 26px; }
+        // ------------------------------------------------------------ top bar (icon-only)
         Rectangle {
             background: #ffffff;
-            height: 44px;
+            height: 40px;
             HorizontalLayout {
-                padding: 6px;
-                spacing: 4px;
-                TB { text: T.t("新增", "New"); clicked => { root.action("new"); } }
-                TB { text: T.t("開檔", "Open"); clicked => { root.action("open"); } }
-                TB { text: T.t("資料夾", "Folder"); clicked => { root.action("open-folder"); } }
-                TB { text: T.t("儲存", "Save"); clicked => { root.action("save"); } }
-                TB { text: T.t("另存", "Save as"); clicked => { root.action("save-as"); } }
-                TB { text: T.t("專案…", "Project…"); clicked => { root.action("open-project"); } }
-                TB { text: T.t("存專案", "Save proj"); clicked => { root.action("save-project"); } }
-                Rectangle { width: 8px; }
-                TB { text: T.t("復原", "Undo"); enabled: root.can-undo; clicked => { root.action("undo"); } }
-                TB { text: T.t("重做", "Redo"); enabled: root.can-redo; clicked => { root.action("redo"); } }
-                TB { text: T.t("貼上", "Paste"); clicked => { root.action("paste"); } }
-                TB { text: T.t("複製", "Copy"); clicked => { root.action("copy"); } }
-                TB { text: T.t("截圖", "Screenshot"); clicked => { root.action("screenshot"); } }
-                Rectangle { width: 8px; }
-                TB { text: "−"; clicked => { root.action("zoom-out"); } }
-                Text { text: round(root.zoom * 100) + "%"; vertical-alignment: center; width: 48px; horizontal-alignment: center; }
-                TB { text: "+"; clicked => { root.action("zoom-in"); } }
-                TB { text: T.t("符合", "Fit"); clicked => { root.action("zoom-fit"); } }
-                TB { text: "1:1"; clicked => { root.action("zoom-100"); } }
-                TB { icon: @image-url("icons/prev.svg"); clicked => { root.action("prev"); } }
-                TB { icon: @image-url("icons/next.svg"); clicked => { root.action("next"); } }
+                padding: 5px;
+                spacing: 2px;
+                IBtn { icon: @image-url("icons/new.svg"); tip: T.t("新增 (Ctrl+N)", "New (Ctrl+N)"); clicked => { root.action("new"); } }
+                IBtn { icon: @image-url("icons/open.svg"); tip: T.t("開啟 (Ctrl+O)", "Open (Ctrl+O)"); clicked => { root.action("open"); } }
+                IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("開啟資料夾", "Open folder"); clicked => { root.action("open-folder"); } }
+                IBtn { icon: @image-url("icons/save.svg"); tip: T.t("儲存 (Ctrl+S)", "Save (Ctrl+S)"); clicked => { root.action("save"); } }
+                IBtn { icon: @image-url("icons/save-as.svg"); tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
+                IBtn { icon: @image-url("icons/project-open.svg"); tip: T.t("開啟專案", "Open project"); clicked => { root.action("open-project"); } }
+                IBtn { icon: @image-url("icons/project-save.svg"); tip: T.t("儲存專案", "Save project"); clicked => { root.action("save-project"); } }
+                Rectangle { width: 1px; background: #dde2e8; }
+                IBtn { icon: @image-url("icons/undo.svg"); tip: T.t("復原 (Ctrl+Z)", "Undo (Ctrl+Z)"); enabled: root.can-undo; clicked => { root.action("undo"); } }
+                IBtn { icon: @image-url("icons/redo.svg"); tip: T.t("重做 (Ctrl+Y)", "Redo (Ctrl+Y)"); enabled: root.can-redo; clicked => { root.action("redo"); } }
+                IBtn { icon: @image-url("icons/cut.svg"); tip: T.t("剪下 (Ctrl+X)", "Cut (Ctrl+X)"); enabled: root.has-selection || root.has-layer; clicked => { root.action("cut"); } }
+                IBtn { icon: @image-url("icons/copy.svg"); tip: T.t("複製 (Ctrl+C)", "Copy (Ctrl+C)"); clicked => { root.action("copy"); } }
+                IBtn { icon: @image-url("icons/paste.svg"); tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
+                IBtn { icon: @image-url("icons/screenshot.svg"); tip: T.t("截圖", "Screenshot"); clicked => { root.action("screenshot"); } }
+                Rectangle { width: 1px; background: #dde2e8; }
+                IBtn { icon: @image-url("icons/zoom-out.svg"); tip: T.t("縮小 (-)", "Zoom out (-)"); clicked => { root.action("zoom-out"); } }
+                Text { text: round(root.zoom * 100) + "%"; vertical-alignment: center; width: 46px; horizontal-alignment: center; color: #33475b; }
+                IBtn { icon: @image-url("icons/zoom-in.svg"); tip: T.t("放大 (+)", "Zoom in (+)"); clicked => { root.action("zoom-in"); } }
+                IBtn { icon: @image-url("icons/zoom-fit.svg"); tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
+                IBtn { icon: @image-url("icons/zoom-100.svg"); tip: T.t("實際大小 (1)", "Actual size (1)"); clicked => { root.action("zoom-100"); } }
+                IBtn { icon: @image-url("icons/grid.svg"); tip: T.t("像素格線 (Ctrl+G)", "Pixel grid (Ctrl+G)"); active: root.grid-on; clicked => { root.action("toggle-grid"); } }
+                IBtn { icon: @image-url("icons/ruler.svg"); tip: T.t("尺規 (Ctrl+R)", "Rulers (Ctrl+R)"); active: root.show-rulers; clicked => { root.action("toggle-rulers"); } }
+                Rectangle { width: 1px; background: #dde2e8; }
+                IBtn { icon: @image-url("icons/prev.svg"); tip: T.t("上一張 (左方向鍵)", "Previous image (Left)"); clicked => { root.action("prev"); } }
+                IBtn { icon: @image-url("icons/next.svg"); tip: T.t("下一張 (右方向鍵)", "Next image (Right)"); clicked => { root.action("next"); } }
                 Rectangle { horizontal-stretch: 1; }
-                TB { text: root.tb-mode == 2 ? T.t("顯示工具列", "Show toolbar") : T.t("隱藏工具列", "Hide toolbar"); clicked => { root.tb-mode = root.tb-mode == 2 ? 0 : 2; root.toolbar-moved(); } }
-                TB { text: root.view-mode ? T.t("檢視模式", "Viewer") : T.t("編輯模式", "Editor"); clicked => { root.action("toggle-mode"); } }
+                IBtn { icon: @image-url("icons/toolbar.svg"); tip: root.tb-mode == 2 ? T.t("顯示浮動工具列", "Show floating toolbar") : T.t("隱藏浮動工具列", "Hide floating toolbar"); active: root.tb-mode != 2; clicked => { root.action("toggle-toolbar"); } }
+                IBtn { icon: @image-url("icons/fullscreen.svg"); tip: T.t("全螢幕 (F11)", "Full screen (F11)"); active: root.full-screen-on; clicked => { root.action("fullscreen"); } }
+                IBtn { icon: root.view-mode ? @image-url("icons/mode-view.svg") : @image-url("icons/mode-edit.svg"); tip: root.view-mode ? T.t("檢視模式（按一下切換到編輯）", "Viewer mode (click for editor)") : T.t("編輯模式（按一下切換到檢視）", "Editor mode (click for viewer)"); clicked => { root.action("toggle-mode"); } }
             }
         }
         HorizontalLayout {
             vertical-stretch: 1;
             // -------------------------------------------------------- tool column
             if !root.view-mode: Rectangle {
-                width: 128px;
+                width: 112px;
                 background: #f8f9fb;
                 ScrollView {
                     VerticalLayout {
                         padding: 6px;
                         spacing: 3px;
-                        for t[i] in root.tools: Rectangle {
-                            height: 28px;
-                            border-radius: 4px;
-                            background: root.tool == i ? #2f6fed : (ta.has-hover ? #dde6f7 : transparent);
-                            Text {
-                                text: T.t(t.zh, t.en);
-                                color: root.tool == i ? white : #222;
-                                x: 8px;
-                                vertical-alignment: center;
-                                height: parent.height;
+                        alignment: start;
+                        Rectangle {
+                            height: ceil(root.tools.length / 3) * 33px;
+                            for t[i] in root.tools: IBtn {
+                                x: mod(i, 3) * 33px;
+                                y: floor(i / 3) * 33px;
+                                icon: root.tool-icons[i];
+                                active: root.tool == i;
+                                tip: T.t(t.zh, t.en) + " (" + root.tool-keys[i] + ")";
+                                clicked => { root.tool = i; root.tool-changed(i); fs.focus(); }
                             }
-                            ta := TouchArea { clicked => { root.tool = i; root.tool-changed(i); fs.focus(); } }
                         }
                         Rectangle { height: 8px; }
                         Text { text: T.t("顏色 1 / 2", "Colour 1 / 2"); font-size: 11px; }
                         HorizontalLayout {
                             spacing: 4px;
-                            Rectangle { width: 32px; height: 32px; background: root.color1; border-width: 2px; border-color: #333; border-radius: 4px; }
-                            Rectangle { width: 32px; height: 32px; background: root.color2; border-width: 1px; border-color: #999; border-radius: 4px; }
-                            Rectangle {
-                                width: 28px; height: 32px; border-radius: 4px;
-                                background: swap-ta.has-hover ? #dde6f7 : #eceff4;
-                                Image { source: @image-url("icons/swap.svg"); width: 16px; height: 16px; }
-                                swap-ta := TouchArea { clicked => { root.action("swap-colors"); } }
-                            }
+                            Rectangle { width: 28px; height: 28px; background: root.color1; border-width: 2px; border-color: #333; border-radius: 4px; }
+                            Rectangle { width: 28px; height: 28px; background: root.color2; border-width: 1px; border-color: #999; border-radius: 4px; }
+                            IBtn { icon: @image-url("icons/swap.svg"); size: 28px; tip: T.t("交換色 1 / 色 2 (X)", "Swap colours 1 / 2 (X)"); clicked => { root.action("swap-colors"); } }
                         }
                         Text { text: T.t("左鍵=色1 右鍵=色2", "L=colour 1  R=colour 2"); font-size: 10px; color: #666; wrap: word-wrap; }
                         GridLayout {
@@ -488,11 +709,30 @@ export component AppWindow inherits Window {
                         return accept;
                     }
                 }
+                // ---------------- rulers
+                if root.show-rulers: Rectangle {
+                    x: 0; y: 0; width: canvas-area.width; height: 18px;
+                    background: #f4f6f9;
+                    Rectangle { y: parent.height - 1px; height: 1px; background: #b9c1cb; }
+                    for tk in root.ruler-x: Rectangle {
+                        x: tk.pos; y: tk.major ? 6px : 12px; width: 1px; height: tk.major ? 12px : 6px; background: #7d8894;
+                        if tk.label != "": Text { x: 3px; y: -6px; text: tk.label; font-size: 9px; color: #55606c; }
+                    }
+                }
+                if root.show-rulers: Rectangle {
+                    x: 0; y: 18px; width: 18px; height: canvas-area.height - 18px;
+                    background: #f4f6f9;
+                    Rectangle { x: parent.width - 1px; width: 1px; background: #b9c1cb; }
+                    for tk in root.ruler-y: Rectangle {
+                        y: tk.pos - 18px; x: tk.major ? 6px : 12px; height: 1px; width: tk.major ? 12px : 6px; background: #7d8894;
+                        if tk.label != "": Text { x: -5px; y: 2px; text: tk.label; font-size: 9px; color: #55606c; }
+                    }
+                }
                 // ---------------- floating / docked quick-action toolbar
                 if root.tb-mode != 2: Rectangle {
-                    x: root.tb-mode == 1 ? 0 : clamp(root.tb-x, 0, max(0px, canvas-area.width - self.width));
-                    y: root.tb-mode == 1 ? 0 : clamp(root.tb-y, 0, max(0px, canvas-area.height - self.height));
-                    width: root.tb-mode == 1 ? canvas-area.width : tbl.preferred-width;
+                    x: root.tb-mode == 1 ? (root.show-rulers ? 18px : 0px) : clamp(root.tb-x, root.show-rulers ? 20px : 0px, max(0px, canvas-area.width - self.width));
+                    y: root.tb-mode == 1 ? (root.show-rulers ? 18px : 0px) : clamp(root.tb-y, root.show-rulers ? 20px : 0px, max(0px, canvas-area.height - self.height));
+                    width: root.tb-mode == 1 ? canvas-area.width - (root.show-rulers ? 18px : 0px) : tbl.preferred-width;
                     height: 36px;
                     background: #ffffffee;
                     border-radius: root.tb-mode == 1 ? 0 : 6px;
@@ -504,7 +744,7 @@ export component AppWindow inherits Window {
                         alignment: start;
                         Rectangle {
                             width: 14px;
-                            Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; }
+                            Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: #8a96a3; }
                             grip := TouchArea {
                                 mouse-cursor: MouseCursor.move;
                                 moved => {
@@ -516,19 +756,19 @@ export component AppWindow inherits Window {
                                 pointer-event(e) => { if (e.kind == PointerEventKind.up) { root.toolbar-moved(); } }
                             }
                         }
-                        QBtn { label: T.t("復原", "Undo"); tip: T.t("復原 (Ctrl+Z)", "Undo (Ctrl+Z)"); enabled: root.can-undo; clicked => { root.action("undo"); } }
-                        QBtn { label: T.t("重做", "Redo"); tip: T.t("重做 (Ctrl+Y)", "Redo (Ctrl+Y)"); enabled: root.can-redo; clicked => { root.action("redo"); } }
-                        QBtn { label: T.t("快存", "Save"); tip: T.t("快速儲存 (Ctrl+S)", "Quick save (Ctrl+S)"); clicked => { root.action("quick-save"); } }
-                        QBtn { label: T.t("另存", "Save as"); tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
-                        QBtn { label: T.t("複製", "Copy"); tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
-                        QBtn { label: T.t("貼上", "Paste"); tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
-                        QBtn { label: T.t("裁切", "Crop"); tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
-                        QBtn { icon: @image-url("icons/rot-right.svg"); tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
-                        QBtn { label: T.t("符合", "Fit"); tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
-                        QBtn { label: "1:1"; tip: T.t("實際大小 100% (1)", "Actual size 100% (1)"); clicked => { root.action("zoom-100"); } }
-                        QBtn { label: T.t("格線", "Grid"); tip: T.t("切換像素格線 (Ctrl+G，放大 8 倍以上顯示)", "Toggle pixel grid (Ctrl+G, shown at 800%+)"); active: root.grid-on; clicked => { root.action("toggle-grid"); } }
-                        QBtn { icon: root.tb-mode == 1 ? @image-url("icons/float.svg") : @image-url("icons/dock.svg"); tip: root.tb-mode == 1 ? T.t("改為浮動", "Float toolbar") : T.t("停駐到上方", "Dock to top"); clicked => { root.tb-mode = root.tb-mode == 1 ? 0 : 1; root.toolbar-moved(); } }
-                        QBtn { icon: @image-url("icons/close.svg"); tip: T.t("隱藏工具列（上方「顯示工具列」可再開）", "Hide toolbar (use Show toolbar at the top)"); clicked => { root.tb-mode = 2; root.toolbar-moved(); } }
+                        IBtn { icon: @image-url("icons/undo.svg"); size: 28px; tip: T.t("復原 (Ctrl+Z)", "Undo (Ctrl+Z)"); enabled: root.can-undo; clicked => { root.action("undo"); } }
+                        IBtn { icon: @image-url("icons/redo.svg"); size: 28px; tip: T.t("重做 (Ctrl+Y)", "Redo (Ctrl+Y)"); enabled: root.can-redo; clicked => { root.action("redo"); } }
+                        IBtn { icon: @image-url("icons/save.svg"); size: 28px; tip: T.t("快速儲存 (Ctrl+S)", "Quick save (Ctrl+S)"); clicked => { root.action("quick-save"); } }
+                        IBtn { icon: @image-url("icons/save-as.svg"); size: 28px; tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
+                        IBtn { icon: @image-url("icons/copy.svg"); size: 28px; tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
+                        IBtn { icon: @image-url("icons/paste.svg"); size: 28px; tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
+                        IBtn { icon: @image-url("icons/crop.svg"); size: 28px; tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
+                        IBtn { icon: @image-url("icons/rot-right.svg"); size: 28px; tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
+                        IBtn { icon: @image-url("icons/zoom-fit.svg"); size: 28px; tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
+                        IBtn { icon: @image-url("icons/zoom-100.svg"); size: 28px; tip: T.t("實際大小 100% (1)", "Actual size 100% (1)"); clicked => { root.action("zoom-100"); } }
+                        IBtn { icon: @image-url("icons/grid.svg"); size: 28px; tip: T.t("切換像素格線 (Ctrl+G，放大 8 倍以上顯示)", "Toggle pixel grid (Ctrl+G, shown at 800%+)"); active: root.grid-on; clicked => { root.action("toggle-grid"); } }
+                        IBtn { icon: root.tb-mode == 1 ? @image-url("icons/float.svg") : @image-url("icons/dock.svg"); size: 28px; tip: root.tb-mode == 1 ? T.t("改為浮動", "Float toolbar") : T.t("停駐到上方", "Dock to top"); clicked => { root.tb-mode = root.tb-mode == 1 ? 0 : 1; root.toolbar-moved(); } }
+                        IBtn { icon: @image-url("icons/close.svg"); size: 28px; tip: T.t("隱藏工具列（檢視 > 浮動工具列可再開）", "Hide toolbar (View > Floating toolbar)"); clicked => { root.tb-mode = 2; root.toolbar-moved(); } }
                     }
                 }
                 // ---------------- canvas context menu
@@ -549,26 +789,26 @@ export component AppWindow inherits Window {
                     drop-shadow-color: #0004;
                     ctxl := VerticalLayout {
                         padding-top: 4px; padding-bottom: 4px;
-                        MenuRow { label: T.t("復原", "Undo"); shortcut: "Ctrl+Z"; enabled: root.can-undo; clicked => { root.ctx-open = false; root.action("undo"); } }
-                        MenuRow { label: T.t("重做", "Redo"); shortcut: "Ctrl+Y"; enabled: root.can-redo; clicked => { root.ctx-open = false; root.action("redo"); } }
+                        MenuRow { icon: @image-url("icons/undo.svg"); label: T.t("復原", "Undo"); shortcut: "Ctrl+Z"; enabled: root.can-undo; clicked => { root.ctx-open = false; root.action("undo"); } }
+                        MenuRow { icon: @image-url("icons/redo.svg"); label: T.t("重做", "Redo"); shortcut: "Ctrl+Y"; enabled: root.can-redo; clicked => { root.ctx-open = false; root.action("redo"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
-                        MenuRow { label: T.t("複製", "Copy"); shortcut: "Ctrl+C"; clicked => { root.ctx-open = false; root.action("copy"); } }
-                        MenuRow { label: T.t("貼上為新影像", "Paste as new image"); shortcut: "Ctrl+V"; clicked => { root.ctx-open = false; root.action("paste"); } }
-                        MenuRow { label: T.t("貼上為圖層", "Paste as layer"); shortcut: "Ctrl+Shift+V"; clicked => { root.ctx-open = false; root.action("paste-layer"); } }
+                        MenuRow { icon: @image-url("icons/copy.svg"); label: T.t("複製", "Copy"); shortcut: "Ctrl+C"; clicked => { root.ctx-open = false; root.action("copy"); } }
+                        MenuRow { icon: @image-url("icons/paste.svg"); label: T.t("貼上為新影像", "Paste as new image"); shortcut: "Ctrl+V"; clicked => { root.ctx-open = false; root.action("paste"); } }
+                        MenuRow { icon: @image-url("icons/paste-layer.svg"); label: T.t("貼上為圖層", "Paste as layer"); shortcut: "Ctrl+Shift+V"; clicked => { root.ctx-open = false; root.action("paste-layer"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
-                        MenuRow { label: T.t("全選", "Select all"); shortcut: "Ctrl+A"; clicked => { root.ctx-open = false; root.action("select-all"); } }
-                        MenuRow { label: T.t("取消選取", "Deselect"); shortcut: "Ctrl+D"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("deselect"); } }
-                        MenuRow { label: T.t("裁切到選取區", "Crop to selection"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
-                        MenuRow { label: T.t("刪除圖層", "Delete layer"); shortcut: "Del"; enabled: root.has-layer; clicked => { root.ctx-open = false; root.action("layer-delete"); } }
+                        MenuRow { icon: @image-url("icons/select-all.svg"); label: T.t("全選", "Select all"); shortcut: "Ctrl+A"; clicked => { root.ctx-open = false; root.action("select-all"); } }
+                        MenuRow { icon: @image-url("icons/deselect.svg"); label: T.t("取消選取", "Deselect"); shortcut: "Ctrl+D"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("deselect"); } }
+                        MenuRow { icon: @image-url("icons/crop.svg"); label: T.t("裁切到選取區", "Crop to selection"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
+                        MenuRow { icon: @image-url("icons/layer-delete.svg"); label: T.t("刪除圖層", "Delete layer"); shortcut: "Del"; enabled: root.has-layer; clicked => { root.ctx-open = false; root.action("layer-delete"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
-                        MenuRow { label: T.t("順時針旋轉 90°", "Rotate 90° right"); clicked => { root.ctx-open = false; root.action("rot-right"); } }
-                        MenuRow { label: T.t("逆時針旋轉 90°", "Rotate 90° left"); clicked => { root.ctx-open = false; root.action("rot-left"); } }
-                        MenuRow { label: T.t("符合視窗", "Zoom to fit"); shortcut: "0"; clicked => { root.ctx-open = false; root.action("zoom-fit"); } }
-                        MenuRow { label: T.t("實際大小", "Actual size"); shortcut: "1"; clicked => { root.ctx-open = false; root.action("zoom-100"); } }
-                        MenuRow { label: root.grid-on ? T.t("隱藏像素格線", "Hide pixel grid") : T.t("顯示像素格線", "Show pixel grid"); shortcut: "Ctrl+G"; clicked => { root.ctx-open = false; root.action("toggle-grid"); } }
+                        MenuRow { icon: @image-url("icons/rot-right.svg"); label: T.t("順時針旋轉 90°", "Rotate 90° right"); clicked => { root.ctx-open = false; root.action("rot-right"); } }
+                        MenuRow { icon: @image-url("icons/rot-left.svg"); label: T.t("逆時針旋轉 90°", "Rotate 90° left"); clicked => { root.ctx-open = false; root.action("rot-left"); } }
+                        MenuRow { icon: @image-url("icons/zoom-fit.svg"); label: T.t("符合視窗", "Zoom to fit"); shortcut: "0"; clicked => { root.ctx-open = false; root.action("zoom-fit"); } }
+                        MenuRow { icon: @image-url("icons/zoom-100.svg"); label: T.t("實際大小", "Actual size"); shortcut: "1"; clicked => { root.ctx-open = false; root.action("zoom-100"); } }
+                        MenuRow { icon: @image-url("icons/grid.svg"); label: root.grid-on ? T.t("隱藏像素格線", "Hide pixel grid") : T.t("顯示像素格線", "Show pixel grid"); shortcut: "Ctrl+G"; clicked => { root.ctx-open = false; root.action("toggle-grid"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
-                        MenuRow { label: T.t("快速儲存", "Quick save"); shortcut: "Ctrl+S"; clicked => { root.ctx-open = false; root.action("quick-save"); } }
-                        MenuRow { label: T.t("另存新檔…", "Save as…"); shortcut: "Ctrl+Shift+S"; clicked => { root.ctx-open = false; root.action("save-as"); } }
+                        MenuRow { icon: @image-url("icons/save.svg"); label: T.t("快速儲存", "Quick save"); shortcut: "Ctrl+S"; clicked => { root.ctx-open = false; root.action("quick-save"); } }
+                        MenuRow { icon: @image-url("icons/save-as.svg"); label: T.t("另存新檔…", "Save as…"); shortcut: "Ctrl+Shift+S"; clicked => { root.ctx-open = false; root.action("save-as"); } }
                     }
                 }
             }
@@ -579,21 +819,19 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: 6px;
                     spacing: 4px;
-                    GridLayout {
-                        spacing: 3px;
-                        Row {
-                            Button { text: T.t("工具", "Tools"); primary: root.tab == 0; clicked => { root.tab = 0; } }
-                            Button { text: T.t("圖層", "Layers"); primary: root.tab == 1; clicked => { root.tab = 1; } }
-                            Button { text: T.t("調整", "Adjust"); primary: root.tab == 2; clicked => { root.tab = 2; } }
-                            Button { text: T.t("貼圖", "Stickers"); primary: root.tab == 3; clicked => { root.tab = 3; } }
-                        }
-                        Row {
-                            Button { text: T.t("自動打碼", "Redact"); primary: root.tab == 4; clicked => { root.tab = 4; root.action("tab-redact"); } }
-                            Button { text: T.t("資訊", "Info"); primary: root.tab == 5; clicked => { root.tab = 5; root.action("refresh-info"); } }
-                            Button { text: T.t("批次", "Batch"); primary: root.tab == 6; clicked => { root.tab = 6; } }
-                            Button { text: T.t("設定", "Settings"); primary: root.tab == 7; clicked => { root.tab = 7; root.action("refresh-shell"); } }
-                        }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        alignment: space-between;
+                        IBtn { icon: @image-url("icons/tab-tools.svg"); size: 38px; icon-size: 20px; active: root.tab == 0; tip: T.t("工具", "Tools"); clicked => { root.tab = 0;  } }
+                        IBtn { icon: @image-url("icons/tab-layers.svg"); size: 38px; icon-size: 20px; active: root.tab == 1; tip: T.t("圖層", "Layers"); clicked => { root.tab = 1;  } }
+                        IBtn { icon: @image-url("icons/tab-adjust.svg"); size: 38px; icon-size: 20px; active: root.tab == 2; tip: T.t("調整", "Adjust"); clicked => { root.tab = 2;  } }
+                        IBtn { icon: @image-url("icons/tab-stickers.svg"); size: 38px; icon-size: 20px; active: root.tab == 3; tip: T.t("貼圖", "Stickers"); clicked => { root.tab = 3;  } }
+                        IBtn { icon: @image-url("icons/tab-redact.svg"); size: 38px; icon-size: 20px; active: root.tab == 4; tip: T.t("自動打碼", "Auto redact"); clicked => { root.tab = 4; root.action("tab-redact"); } }
+                        IBtn { icon: @image-url("icons/tab-info.svg"); size: 38px; icon-size: 20px; active: root.tab == 5; tip: T.t("資訊 / C2PA", "Info / C2PA"); clicked => { root.tab = 5; root.action("refresh-info"); } }
+                        IBtn { icon: @image-url("icons/tab-batch.svg"); size: 38px; icon-size: 20px; active: root.tab == 6; tip: T.t("批次 / GIF / 全景", "Batch / GIF / panorama"); clicked => { root.tab = 6;  } }
+                        IBtn { icon: @image-url("icons/tab-settings.svg"); size: 38px; icon-size: 20px; active: root.tab == 7; tip: T.t("設定", "Settings"); clicked => { root.tab = 7; root.action("refresh-shell"); } }
                     }
+                    Text { text: [T.t("工具", "Tools"), T.t("圖層", "Layers"), T.t("調整", "Adjust"), T.t("貼圖", "Stickers"), T.t("自動打碼", "Auto redact"), T.t("資訊 / C2PA", "Info / C2PA"), T.t("批次 / GIF / 全景", "Batch / GIF / panorama"), T.t("設定", "Settings")][root.tab]; font-weight: 700; color: #1f3b63; }
                     Rectangle { height: 1px; background: #ddd; }
                     ScrollView {
                         vertical-stretch: 1;
@@ -621,7 +859,7 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 6px;
                                     ComboBox { model: root.format-names; current-index <=> root.export-format; }
-                                    Button { text: T.t("匯出…", "Export…"); clicked => { root.action("export"); } }
+                                    IBtn { icon: @image-url("icons/export.svg"); tip: T.t("匯出… (Ctrl+E)", "Export… (Ctrl+E)"); clicked => { root.action("export"); } }
                                 }
                                 LabeledSlider { label: T.t("品質", "Quality"); minimum: 1; maximum: 100; value <=> root.quality; has-apply: false; }
                                 CheckBox { text: T.t("WebP 無損", "WebP lossless"); checked <=> root.webp-lossless; }
@@ -633,7 +871,7 @@ export component AppWindow inherits Window {
                                     SpinBox { minimum: 1; maximum: 16000; value <=> root.new-w; }
                                     Text { text: "×"; vertical-alignment: center; }
                                     SpinBox { minimum: 1; maximum: 16000; value <=> root.new-h; }
-                                    Button { text: T.t("新畫布", "New"); clicked => { root.action("new-custom"); } }
+                                    IBtn { icon: @image-url("icons/new.svg"); tip: T.t("以此尺寸建立新畫布", "New canvas with this size"); clicked => { root.action("new-custom"); } }
                                 }
                                 Section { text: T.t("快速文字樣式", "Quick text styles"); }
                                 LineEdit { text <=> root.style-text; }
@@ -673,20 +911,18 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.layers.length == 0: Text { text: T.t("尚無圖層。用文字/形狀工具、貼圖或「加入圖片」。", "No layers yet. Use Text/Shapes, stickers or Add image."); wrap: word-wrap; color: #666; }
-                                GridLayout {
-                                    spacing: 3px;
-                                    Row {
-                                        Button { text: T.t("上移", "Up"); clicked => { root.action("layer-up"); } }
-                                        Button { text: T.t("下移", "Down"); clicked => { root.action("layer-down"); } }
-                                        Button { text: T.t("複製", "Dup"); clicked => { root.action("layer-dup"); } }
-                                        Button { text: T.t("刪除", "Delete"); clicked => { root.action("layer-delete"); } }
-                                    }
-                                    Row {
-                                        Button { text: T.t("加文字", "Add text"); clicked => { root.action("add-text"); } }
-                                        Button { text: T.t("加圖片", "Add image"); clicked => { root.action("add-image"); } }
-                                        Button { text: T.t("貼為圖層", "Paste layer"); clicked => { root.action("paste-layer"); } }
-                                        Button { text: T.t("合併", "Flatten"); clicked => { root.action("flatten"); } }
-                                    }
+                                HorizontalLayout {
+                                    spacing: 2px;
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/layer-up.svg"); tip: T.t("圖層上移 (Ctrl+])", "Move layer up (Ctrl+])"); enabled: root.has-layer; clicked => { root.action("layer-up"); } }
+                                        IBtn { icon: @image-url("icons/layer-down.svg"); tip: T.t("圖層下移 (Ctrl+[)", "Move layer down (Ctrl+[)"); enabled: root.has-layer; clicked => { root.action("layer-down"); } }
+                                        IBtn { icon: @image-url("icons/layer-dup.svg"); tip: T.t("複製圖層 (Ctrl+J)", "Duplicate layer (Ctrl+J)"); enabled: root.has-layer; clicked => { root.action("layer-dup"); } }
+                                        IBtn { icon: @image-url("icons/layer-delete.svg"); tip: T.t("刪除圖層 (Del)", "Delete layer (Del)"); enabled: root.has-layer; clicked => { root.action("layer-delete"); } }
+                                    Rectangle { width: 6px; }
+                                    IBtn { icon: @image-url("icons/add-text.svg"); tip: T.t("新增文字圖層", "Add text layer"); clicked => { root.action("add-text"); } }
+                                        IBtn { icon: @image-url("icons/add-image.svg"); tip: T.t("從檔案新增圖片圖層…", "Add image layer from file…"); clicked => { root.action("add-image"); } }
+                                        IBtn { icon: @image-url("icons/paste-layer.svg"); tip: T.t("貼上為圖層 (Ctrl+Shift+V)", "Paste as layer (Ctrl+Shift+V)"); clicked => { root.action("paste-layer"); } }
+                                        IBtn { icon: @image-url("icons/flatten.svg"); tip: T.t("合併所有圖層 (Ctrl+Shift+E)", "Flatten all layers (Ctrl+Shift+E)"); enabled: root.layers.length > 0; clicked => { root.action("flatten"); } }
                                 }
                                 if root.sel-kind >= 0: VerticalLayout {
                                     spacing: 6px;
@@ -702,7 +938,7 @@ export component AppWindow inherits Window {
                                             CheckBox { text: T.t("外框", "Outline"); checked <=> root.l-stroke; toggled => { root.layer-edited("stroke"); } }
                                             CheckBox { text: T.t("陰影", "Shadow"); checked <=> root.l-shadow; toggled => { root.layer-edited("shadow"); } }
                                         }
-                                        Button { text: T.t("套用色 1 為文字顏色", "Use colour 1 for text"); clicked => { root.layer-edited("color"); } }
+                                        IBtn { icon: @image-url("icons/fill-color.svg"); tip: T.t("套用色 1 為文字顏色", "Use colour 1 for text"); clicked => { root.layer-edited("color"); } }
                                     }
                                     if root.sel-kind == 1 || root.sel-kind == 3: HorizontalLayout {
                                         spacing: 4px;
@@ -715,7 +951,7 @@ export component AppWindow inherits Window {
                                         spacing: 6px;
                                         LabeledSlider { label: T.t("線寬", "Line width"); minimum: 1; maximum: 60; value <=> root.l-stroke-width; has-apply: false; changed value => { root.layer-edited("stroke-width"); } }
                                         CheckBox { text: T.t("填滿", "Filled"); checked <=> root.l-filled; toggled => { root.layer-edited("filled"); } }
-                                        Button { text: T.t("線色=色1 / 填色=色2", "Stroke=colour 1 / fill=colour 2"); clicked => { root.layer-edited("color"); } }
+                                        IBtn { icon: @image-url("icons/fill-color.svg"); tip: T.t("線色=色 1 / 填色=色 2", "Stroke = colour 1 / fill = colour 2"); clicked => { root.layer-edited("color"); } }
                                     }
                                     if root.sel-kind == 3: Text { text: T.t("貼圖顏色與外框請在「貼圖」分頁調整。", "Sticker colours/outline: see the Stickers tab."); font-size: 11px; color: #666; wrap: word-wrap; }
                                 }
@@ -726,19 +962,21 @@ export component AppWindow inherits Window {
                                 Section { text: T.t("旋轉 / 翻轉", "Rotate / flip"); }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { icon: @image-url("icons/rot-left.svg"); text: "90°"; clicked => { root.action("rot-left"); } }
-                                    Button { icon: @image-url("icons/rot-right.svg"); text: "90°"; clicked => { root.action("rot-right"); } }
-                                    Button { text: "180°"; clicked => { root.action("rot-180"); } }
-                                    Button { icon: @image-url("icons/flip-h.svg"); text: ""; clicked => { root.action("flip-h"); } }
-                                    Button { icon: @image-url("icons/flip-v.svg"); text: ""; clicked => { root.action("flip-v"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/rot-left.svg"); tip: T.t("逆時針旋轉 90°", "Rotate 90° left"); clicked => { root.action("rot-left"); } }
+                                    IBtn { icon: @image-url("icons/rot-right.svg"); tip: T.t("順時針旋轉 90°", "Rotate 90° right"); clicked => { root.action("rot-right"); } }
+                                    IBtn { icon: @image-url("icons/rot-180.svg"); tip: T.t("旋轉 180°", "Rotate 180°"); clicked => { root.action("rot-180"); } }
+                                    IBtn { icon: @image-url("icons/flip-h.svg"); tip: T.t("水平翻轉", "Flip horizontal"); clicked => { root.action("flip-h"); } }
+                                    IBtn { icon: @image-url("icons/flip-v.svg"); tip: T.t("垂直翻轉", "Flip vertical"); clicked => { root.action("flip-v"); } }
                                 }
                                 Section { text: T.t("選取 / 裁切", "Select / crop"); }
                                 CheckBox { text: T.t("圓形選取", "Circular selection"); checked <=> root.select-circle; }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("全選", "Select all"); clicked => { root.action("select-all"); } }
-                                    Button { text: T.t("取消選取", "Deselect"); clicked => { root.action("deselect"); } }
-                                    Button { text: T.t("裁切", "Crop"); clicked => { root.action("crop"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/select-all.svg"); tip: T.t("全選 (Ctrl+A)", "Select all (Ctrl+A)"); clicked => { root.action("select-all"); } }
+                                    IBtn { icon: @image-url("icons/deselect.svg"); tip: T.t("取消選取 (Ctrl+D)", "Deselect (Ctrl+D)"); enabled: root.has-selection; clicked => { root.action("deselect"); } }
+                                    IBtn { icon: @image-url("icons/crop.svg"); tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                                 }
                                 Section { text: T.t("尺寸", "Size"); }
                                 HorizontalLayout {
@@ -750,8 +988,9 @@ export component AppWindow inherits Window {
                                 CheckBox { text: T.t("維持比例", "Keep aspect ratio"); checked <=> root.rs-keep; }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("縮放影像", "Resize image"); clicked => { root.action("resize"); } }
-                                    Button { text: T.t("畫布大小", "Canvas size"); clicked => { root.action("canvas-size"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/resize.svg"); tip: T.t("縮放影像到上方尺寸", "Resize image to the size above"); clicked => { root.action("resize"); } }
+                                    IBtn { icon: @image-url("icons/canvas-size.svg"); tip: T.t("畫布大小改為上方尺寸", "Set canvas to the size above"); clicked => { root.action("canvas-size"); } }
                                 }
                                 Section { text: T.t("調整（有選取時只套用選取區）", "Adjustments (selection only if any)"); }
                                 LabeledSlider { label: T.t("亮度", "Brightness"); minimum: -100; maximum: 100; value <=> root.a-bright; apply => { root.action("f-bright"); } }
@@ -768,11 +1007,12 @@ export component AppWindow inherits Window {
                                 LabeledSlider { label: T.t("色階", "Posterize"); minimum: 2; maximum: 16; value <=> root.a-post; apply => { root.action("f-post"); } }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("灰階", "Grayscale"); clicked => { root.action("f-gray"); } }
-                                    Button { text: T.t("負片", "Invert"); clicked => { root.action("f-invert"); } }
-                                    Button { text: T.t("自動對比", "Auto contrast"); clicked => { root.action("f-auto"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/grayscale.svg"); tip: T.t("灰階", "Grayscale"); clicked => { root.action("f-gray"); } }
+                                    IBtn { icon: @image-url("icons/invert.svg"); tip: T.t("負片", "Invert colours"); clicked => { root.action("f-invert"); } }
+                                    IBtn { icon: @image-url("icons/auto-contrast.svg"); tip: T.t("自動對比", "Auto contrast"); clicked => { root.action("f-auto"); } }
                                 }
-                                Button { text: T.t("還原成原始影像", "Reset to original"); clicked => { root.action("reset"); } }
+                                IBtn { icon: @image-url("icons/reset.svg"); tip: T.t("還原成原始影像", "Reset to original"); clicked => { root.action("reset"); } }
                             }
                             // ===== Stickers
                             if root.tab == 3: VerticalLayout {
@@ -822,9 +1062,9 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Rectangle { width: 24px; height: 24px; background: root.st-fill; border-width: 1px; border-color: #888; }
-                                    Button { text: T.t("填色=色1", "Fill = colour 1"); clicked => { root.action("st-fill"); } }
+                                    IBtn { icon: @image-url("icons/fill-color.svg"); tip: T.t("貼圖填色 = 色 1", "Sticker fill = colour 1"); clicked => { root.action("st-fill"); } }
                                     Rectangle { width: 24px; height: 24px; background: root.st-outline; border-width: 1px; border-color: #888; }
-                                    Button { text: T.t("外框=色2", "Outline = colour 2"); clicked => { root.action("st-outline"); } }
+                                    IBtn { icon: @image-url("icons/outline-color.svg"); tip: T.t("貼圖外框 = 色 2", "Sticker outline = colour 2"); clicked => { root.action("st-outline"); } }
                                 }
                                 LabeledSlider { label: T.t("外框粗細", "Outline"); minimum: 0; maximum: 12; value <=> root.st-stroke; has-apply: false; changed value => { root.action("st-style"); } }
                                 CheckBox { text: T.t("陰影", "Shadow"); checked <=> root.st-shadow; toggled => { root.action("st-style"); } }
@@ -837,21 +1077,23 @@ export component AppWindow inherits Window {
                                 Text { text: root.redact-info; wrap: word-wrap; font-size: 11px; color: #444; }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("框選工具", "Box tool"); clicked => { root.action("tool-redact-box"); } }
-                                    Button { text: T.t("打碼筆刷", "Redact brush"); clicked => { root.action("tool-redact-brush"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/tool-redact-box.svg"); tip: T.t("打碼框工具 (R)", "Redact box tool (R)"); active: root.tool == 14; clicked => { root.action("tool-redact-box"); } }
+                                    IBtn { icon: @image-url("icons/tool-redact-brush.svg"); tip: T.t("打碼筆刷 (Shift+R)", "Redact brush (Shift+R)"); active: root.tool == 15; clicked => { root.action("tool-redact-brush"); } }
                                 }
                                 Text { text: T.t("框選：拖曳新增、點擊切換、右鍵刪除。", "Boxes: drag to add, click to toggle, right-click to delete."); font-size: 11px; color: #666; wrap: word-wrap; }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("敏感資料", "Sensitive"); clicked => { root.action("sel-sensitive"); } }
-                                    Button { text: T.t("全選", "All"); clicked => { root.action("sel-all-boxes"); } }
-                                    Button { text: T.t("全不選", "None"); clicked => { root.action("sel-no-boxes"); } }
-                                    Button { text: T.t("清除", "Clear"); clicked => { root.action("clear-boxes"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/sel-sensitive.svg"); tip: T.t("只選敏感資料（電話、Email、身分證…）", "Select sensitive items only (phone, email, ID…)"); clicked => { root.action("sel-sensitive"); } }
+                                    IBtn { icon: @image-url("icons/sel-all-boxes.svg"); tip: T.t("全選打碼框", "Select all boxes"); clicked => { root.action("sel-all-boxes"); } }
+                                    IBtn { icon: @image-url("icons/sel-no-boxes.svg"); tip: T.t("全部不選", "Select no boxes"); clicked => { root.action("sel-no-boxes"); } }
+                                    IBtn { icon: @image-url("icons/clear-boxes.svg"); tip: T.t("清除所有打碼框", "Clear all boxes"); clicked => { root.action("clear-boxes"); } }
                                 }
                                 HorizontalLayout {
                                     spacing: 3px;
                                     LineEdit { placeholder-text: T.t("關鍵字", "Keyword"); text <=> root.redact-keyword; }
-                                    Button { text: T.t("選取", "Select"); clicked => { root.action("sel-keyword"); } }
+                                    IBtn { icon: @image-url("icons/keyword.svg"); tip: T.t("選取含關鍵字的框", "Select boxes containing the keyword"); clicked => { root.action("sel-keyword"); } }
                                 }
                                 HorizontalLayout {
                                     spacing: 6px;
@@ -879,14 +1121,14 @@ export component AppWindow inherits Window {
                                 Section { text: T.t("C2PA 內容憑證", "C2PA content credentials"); }
                                 Text { text: root.c2pa-text; wrap: word-wrap; font-size: 11px; }
                                 CheckBox { text: T.t("儲存時寫入 C2PA", "Write C2PA on save"); checked <=> root.c2pa-on-save; }
-                                Button { text: T.t("C2PA 內容憑證…", "C2PA content credentials…"); primary: true; clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
+                                IBtn { icon: @image-url("icons/c2pa.svg"); tip: T.t("C2PA 內容憑證…", "C2PA content credentials…"); clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
                             }
                             // ===== Batch
                             if root.tab == 6: VerticalLayout {
                                 spacing: 6px;
                                 Section { text: T.t("批次轉檔 / 縮圖 / 浮水印", "Batch convert / resize / watermark"); }
-                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-in; placeholder-text: T.t("來源資料夾", "Input folder"); } Button { text: "…"; clicked => { root.action("batch-in"); } } }
-                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } Button { text: "…"; clicked => { root.action("batch-out"); } } }
+                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-in; placeholder-text: T.t("來源資料夾", "Input folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇來源資料夾…", "Choose input folder…"); clicked => { root.action("batch-in"); } } }
+                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇輸出資料夾…", "Choose output folder…"); clicked => { root.action("batch-out"); } } }
                                 ComboBox { model: root.format-names; current-index <=> root.batch-format; }
                                 HorizontalLayout {
                                     spacing: 4px;
@@ -897,12 +1139,13 @@ export component AppWindow inherits Window {
                                 LineEdit { text <=> root.batch-watermark; placeholder-text: T.t("浮水印文字（可留空）", "Watermark text (optional)"); }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("執行批次", "Run batch"); enabled: !root.batch-running; primary: true; clicked => { root.action("batch-run"); } }
-                                    Button { text: T.t("C2PA 批次…", "C2PA batch…"); clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/batch-run.svg"); tip: T.t("執行批次", "Run batch"); enabled: !root.batch-running; clicked => { root.action("batch-run"); } }
+                                    IBtn { icon: @image-url("icons/c2pa.svg"); tip: T.t("C2PA 批次…", "C2PA batch…"); clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
                                 }
                                 Text { text: root.batch-progress; wrap: word-wrap; font-size: 11px; }
                                 Section { text: T.t("GIF 動畫", "Animated GIF"); }
-                                HorizontalLayout { spacing: 3px; Button { text: T.t("選擇影格…", "Pick frames…"); clicked => { root.action("gif-pick"); } } Text { text: root.gif-frames; vertical-alignment: center; } }
+                                HorizontalLayout { spacing: 3px; IBtn { icon: @image-url("icons/pick-frames.svg"); tip: T.t("選擇影格…", "Pick frames…"); clicked => { root.action("gif-pick"); } } Text { text: root.gif-frames; vertical-alignment: center; } }
                                 LabeledSlider { label: T.t("間隔 ms", "Delay ms"); minimum: 20; maximum: 3000; value <=> root.gif-delay; has-apply: false; }
                                 HorizontalLayout {
                                     spacing: 4px;
@@ -910,14 +1153,14 @@ export component AppWindow inherits Window {
                                     Text { text: T.t("最大邊", "Max side"); vertical-alignment: center; }
                                     SpinBox { minimum: 0; maximum: 4000; value <=> root.gif-max; }
                                 }
-                                Button { text: T.t("建立 GIF…", "Create GIF…"); clicked => { root.action("gif-run"); } }
+                                IBtn { icon: @image-url("icons/gif.svg"); tip: T.t("建立 GIF…", "Create GIF…"); clicked => { root.action("gif-run"); } }
                                 Section { text: T.t("360° 全景 JPEG（目前影像）", "360° panorama JPEG (current image)"); }
                                 HorizontalLayout {
                                     spacing: 4px;
                                     ComboBox { model: [T.t("補邊", "Pad"), T.t("拉伸", "Stretch"), T.t("裁切", "Crop")]; current-index <=> root.pano-mode; }
                                     SpinBox { minimum: 0; maximum: 30000; value <=> root.pano-width; }
                                 }
-                                Button { text: T.t("輸出全景…", "Export panorama…"); clicked => { root.action("pano-run"); } }
+                                IBtn { icon: @image-url("icons/panorama.svg"); tip: T.t("輸出 360° 全景 JPEG…", "Export 360° panorama JPEG…"); clicked => { root.action("pano-run"); } }
                             }
                             // ===== Settings
                             if root.tab == 7: VerticalLayout {
@@ -928,12 +1171,13 @@ export component AppWindow inherits Window {
                                 Text { text: root.shell-state; wrap: word-wrap; }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    Button { text: T.t("註冊", "Register"); clicked => { root.action("shell-register"); } }
-                                    Button { text: T.t("移除", "Unregister"); clicked => { root.action("shell-unregister"); } }
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/shell.svg"); tip: T.t("註冊右鍵選單與開啟方式", "Register right-click menu & Open With"); clicked => { root.action("shell-register"); } }
+                                    IBtn { icon: @image-url("icons/unregister.svg"); tip: T.t("移除右鍵選單登錄", "Remove right-click menu registration"); clicked => { root.action("shell-unregister"); } }
                                 }
                                 Section { text: T.t("關於", "About"); }
                                 Text { text: "Pixel Studio " + root.version + "\n" + T.t("Rust + Slint，MIT 授權。", "Rust + Slint, MIT licensed."); wrap: word-wrap; }
-                                Text { text: T.t("快捷鍵：Ctrl+O 開啟、Ctrl+S 儲存、Ctrl+Z/Y 復原/重做、Ctrl+V 貼上、Ctrl+C 複製、Del 刪除圖層、+/- 縮放、0 符合視窗、方向鍵移動圖層、中鍵拖曳平移、Ctrl+滾輪縮放。", "Shortcuts: Ctrl+O open, Ctrl+S save, Ctrl+Z/Y undo/redo, Ctrl+V paste, Ctrl+C copy, Del delete layer, +/- zoom, 0 fit, arrows nudge layer, middle-drag to pan, Ctrl+wheel zoom."); wrap: word-wrap; font-size: 11px; color: #555; }
+                                Button { text: T.t("鍵盤快捷鍵…", "Keyboard shortcuts…"); clicked => { root.keys-open = true; } }
                             }
                         }
                     }
@@ -941,7 +1185,7 @@ export component AppWindow inherits Window {
             }
         }
         // ------------------------------------------------------------ status bar
-        Rectangle {
+        if root.show-status: Rectangle {
             height: 24px;
             background: #dfe4ea;
             HorizontalLayout {
@@ -953,6 +1197,96 @@ export component AppWindow inherits Window {
             }
         }
     }
+    }
+    // ---------------- menu bar (overlay so drop-downs draw above the canvas and panels)
+    Rectangle {
+        x: 0; y: 0;
+        width: root.width;
+        height: root.menu-open >= 0 ? root.height : 26px;
+        if root.menu-open >= 0: TouchArea { clicked => { root.menu-open = -1; root.recent-open = false; } }
+        Rectangle {
+            x: 0; y: 0; width: parent.width; height: 26px;
+            background: #ffffff;
+            Rectangle { y: parent.height - 1px; height: 1px; background: #e2e6eb; }
+            HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                for mt[mi] in root.menu-titles: Rectangle {
+                    width: mtl.preferred-width + 16px;
+                    background: root.menu-open == mi ? #dbe6fb : (mta.has-hover ? #eef2f8 : transparent);
+                    accessible-role: button;
+                    accessible-label: T.t(mt.zh, mt.key + mt.en-rest);
+                    accessible-action-default => { root.open-menu(mi); }
+                    mta := TouchArea {
+                        clicked => { if (root.menu-open == mi) { root.menu-open = -1; } else { root.open-menu(mi); } }
+                        changed has-hover => { if (self.has-hover && root.menu-open >= 0 && root.menu-open != mi) { root.open-menu(mi); } }
+                    }
+                    mtl := HorizontalLayout {
+                        x: 8px;
+                        width: self.preferred-width;
+                        spacing: 0px;
+                        alignment: start;
+                        Text { text: T.zh ? mt.zh + "(" : ""; vertical-alignment: center; color: #1d2a3a; }
+                        Rectangle {
+                            width: mk.preferred-width;
+                            mk := Text { text: mt.key; vertical-alignment: center; color: #1d2a3a; }
+                            Rectangle { x: 0; y: parent.height / 2 + 7px; width: parent.width; height: 1px; background: #1d2a3a; }
+                        }
+                        Text { text: T.zh ? ")" : mt.en-rest; vertical-alignment: center; color: #1d2a3a; }
+                    }
+                    if root.menu-open == mi: Rectangle {
+                        x: 0; y: 26px;
+                        width: 272px;
+                        height: mdl.preferred-height;
+                        background: white;
+                        border-width: 1px;
+                        border-color: #cfd6df;
+                        drop-shadow-blur: 10px;
+                        drop-shadow-color: #0004;
+                        TouchArea { }
+                        mdl := VerticalLayout {
+                            padding-top: 4px; padding-bottom: 4px;
+                            for m[k] in root.cur-items: Rectangle {
+                                height: m.sep ? 9px : 26px;
+                                if m.sep: Rectangle { y: 4px; height: 1px; x: 8px; width: parent.width - 16px; background: #e4e8ee; }
+                                if !m.sep: MenuRow {
+                                    width: parent.width;
+                                    label: m.label;
+                                    shortcut: m.act == "recent-menu" ? "" : m.key;
+                                    icon: m.icon;
+                                    enabled: m.enabled;
+                                    check: m.check;
+                                    checked: m.checked;
+                                    highlighted: root.menu-hl == k || (m.act == "recent-menu" && root.recent-open);
+                                    hovered => { root.menu-hl = k; if (m.act == "recent-menu" && m.enabled) { root.recent-open = true; } else { root.recent-open = false; } }
+                                    clicked => { root.run-item(m); }
+                                }
+                                if m.act == "recent-menu": Image { x: parent.width - 22px; y: 6px; width: 14px; height: 14px; source: @image-url("icons/next.svg"); colorize: m.enabled ? #6b7785 : #c3c8ce; }
+                            }
+                        }
+                        if root.menu-open == 0 && root.recent-open: Rectangle {
+                            x: parent.width - 4px;
+                            y: 4px + 4 * 26px;
+                            width: 380px;
+                            height: rl.preferred-height;
+                            background: white;
+                            border-width: 1px;
+                            border-color: #cfd6df;
+                            drop-shadow-blur: 10px;
+                            drop-shadow-color: #0004;
+                            rl := VerticalLayout {
+                                padding-top: 4px; padding-bottom: 4px;
+                                for r[ri] in root.recent-files: MenuRow {
+                                    label: (ri + 1) + "  " + r;
+                                    icon: @image-url("icons/layer-image.svg");
+                                    clicked => { root.menu-open = -1; root.recent-open = false; root.action("recent:" + ri); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     // ---------------- quick-save prompt (first quick save of a document)
     if root.qs-open: Rectangle {
@@ -1028,8 +1362,8 @@ export component AppWindow inherits Window {
                     }
                     Text { text: T.t("移除 C2PA 會複製來源檔並只拿掉 manifest（副檔名與來源相同，不能覆寫來源）。", "Stripping copies the source file bytes and removes only the manifest (same extension, cannot overwrite the source)."); wrap: word-wrap; font-size: 11px; color: #666; }
                     Section { text: T.t("批次 C2PA", "Batch C2PA"); }
-                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-in; placeholder-text: T.t("來源資料夾", "Input folder"); } Button { text: "…"; clicked => { root.action("c2pa-in"); } } }
-                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } Button { text: "…"; clicked => { root.action("c2pa-out"); } } }
+                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-in; placeholder-text: T.t("來源資料夾", "Input folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇來源資料夾…", "Choose input folder…"); clicked => { root.action("c2pa-in"); } } }
+                    HorizontalLayout { spacing: 3px; LineEdit { text <=> root.c2pa-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇輸出資料夾…", "Choose output folder…"); clicked => { root.action("c2pa-out"); } } }
                     HorizontalLayout {
                         spacing: 6px;
                         Button { text: T.t("批次加入（使用上方資料）", "Batch add (fields above)"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-add"); } }
@@ -1045,5 +1379,101 @@ export component AppWindow inherits Window {
         width: 56px; height: 56px;
         source: root.drag-img;
         opacity: 0.8;
+    }
+    // ---------------- resize / canvas size
+    if root.rs-open: Dialog {
+        title: T.t("影像大小 / 畫布大小", "Image size / canvas size");
+        close => { root.rs-open = false; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: T.t("寬 × 高 (px)", "W × H (px)"); vertical-alignment: center; width: 90px; }
+            SpinBox { minimum: 1; maximum: 16000; value <=> root.rs-w; edited => { root.action("rs-w"); } }
+            Text { text: "×"; vertical-alignment: center; }
+            SpinBox { minimum: 1; maximum: 16000; value <=> root.rs-h; edited => { root.action("rs-h"); } }
+        }
+        CheckBox { text: T.t("維持比例", "Keep aspect ratio"); checked <=> root.rs-keep; }
+        Text { text: T.t("縮放影像會重新取樣像素；畫布大小只增減邊界（新區域用色 2 填滿）。", "Resize resamples the pixels; canvas size only adds/removes border (new area uses colour 2)."); wrap: word-wrap; font-size: 11px; color: #555; }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: end;
+            Button { text: T.t("取消", "Cancel"); clicked => { root.rs-open = false; } }
+            Button { text: T.t("畫布大小", "Canvas size"); clicked => { root.rs-open = false; root.action("canvas-size"); } }
+            Button { text: T.t("縮放影像", "Resize image"); primary: true; clicked => { root.rs-open = false; root.action("resize"); } }
+        }
+    }
+    // ---------------- properties
+    if root.props-open: Dialog {
+        title: T.t("影像內容", "Image properties");
+        card-width: 520px;
+        close => { root.props-open = false; }
+        Text { text: root.props-text; wrap: word-wrap; }
+        HorizontalLayout { alignment: end; Button { text: T.t("關閉", "Close"); primary: true; clicked => { root.props-open = false; } } }
+    }
+    // ---------------- about
+    if root.about-open: Dialog {
+        title: T.t("關於 Pixel Studio", "About Pixel Studio");
+        close => { root.about-open = false; }
+        HorizontalLayout {
+            spacing: 14px;
+            Image { source: @image-url("../assets/icon-256.png"); width: 64px; height: 64px; }
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Pixel Studio 像素工作室 " + root.version; font-size: 15px; font-weight: 700; }
+                Text { text: T.t("輕量影像編輯器：小畫家級繪圖、圖層、貼圖、自動打碼、C2PA 內容憑證、批次處理。", "Lightweight image editor: Paint-style drawing, layers, stickers, auto redaction, C2PA credentials, batch tools."); wrap: word-wrap; }
+                Text { text: T.t("Rust + Slint，MIT 授權。圖示為本專案原創 SVG。", "Rust + Slint, MIT licensed. Icons are original SVGs made for this project."); wrap: word-wrap; font-size: 11px; color: #555; }
+                Text { text: "github.com/stevenke1981/pixel-studio"; font-size: 11px; color: #2f6fed; }
+            }
+        }
+        HorizontalLayout { alignment: end; Button { text: T.t("確定", "OK"); primary: true; clicked => { root.about-open = false; } } }
+    }
+    // ---------------- keyboard shortcuts
+    if root.keys-open: Dialog {
+        title: T.t("鍵盤快捷鍵", "Keyboard shortcuts");
+        card-width: 640px;
+        close => { root.keys-open = false; }
+        ScrollView {
+            min-height: 420px;
+            VerticalLayout {
+                spacing: 5px;
+                Text { text: T.t("檔案 / 編輯", "File / edit"); font-weight: 700; color: #1f3b63; }
+                KeyRow { keys: "Ctrl+N / Ctrl+O"; what: T.t("新增 / 開啟", "New / open"); }
+                KeyRow { keys: "Ctrl+S / Ctrl+Shift+S"; what: T.t("快速儲存 / 另存新檔", "Quick save / save as"); }
+                KeyRow { keys: "Ctrl+E / Ctrl+P"; what: T.t("匯出 / 列印", "Export / print"); }
+                KeyRow { keys: "Alt+Enter / Alt+F4"; what: T.t("內容 / 結束", "Properties / exit"); }
+                KeyRow { keys: "Ctrl+Z / Ctrl+Y"; what: T.t("復原 / 重做（Ctrl+Shift+Z 也可重做）", "Undo / redo (Ctrl+Shift+Z also redoes)"); }
+                KeyRow { keys: "Ctrl+X / Ctrl+C"; what: T.t("剪下 / 複製", "Cut / copy"); }
+                KeyRow { keys: "Ctrl+V / Ctrl+Shift+V"; what: T.t("貼上為新影像 / 貼上為圖層", "Paste as new image / paste as layer"); }
+                KeyRow { keys: "Ctrl+A / Ctrl+D / Del"; what: T.t("全選 / 取消選取 / 刪除（圖層或選取區）", "Select all / deselect / delete (layer or selection)"); }
+                Text { text: T.t("檢視 / 影像 / 圖層", "View / image / layer"); font-weight: 700; color: #1f3b63; }
+                KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
+                KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }
+                KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
+                KeyRow { keys: "Enter / Esc"; what: T.t("裁切到選取區 / 取消選取或關閉對話框", "Crop to selection / clear selection or close dialog"); }
+                KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }
+                KeyRow { keys: "Ctrl+Shift+E"; what: T.t("合併所有圖層", "Merge all layers"); }
+                KeyRow { keys: T.t("方向鍵", "Arrows"); what: T.t("移動圖層（Shift 一次 10px）；無圖層時切換上一張/下一張", "Nudge layer (Shift = 10px); with no layer, previous/next image"); }
+                Text { text: T.t("工具", "Tools"); font-weight: 700; color: #1f3b63; }
+                KeyRow { keys: "S P B L A K"; what: T.t("選取、鉛筆、筆刷、螢光筆、噴槍、書法筆", "Select, pencil, brush, highlighter, airbrush, calligraphy"); }
+                KeyRow { keys: "E F I T M"; what: T.t("橡皮擦、油漆桶、滴管、文字、馬賽克筆", "Eraser, fill, picker, text, mosaic"); }
+                KeyRow { keys: "C H U R Shift+R"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷", "Crop, pan, shapes, redact box, redact brush"); }
+                KeyRow { keys: "X"; what: T.t("交換色 1 / 色 2", "Swap colour 1 / 2"); }
+                KeyRow { keys: T.t("中鍵拖曳 / Ctrl+滾輪", "Middle-drag / Ctrl+wheel"); what: T.t("平移 / 縮放", "Pan / zoom"); }
+                Text { text: T.t("選單", "Menus"); font-weight: 700; color: #1f3b63; }
+                KeyRow { keys: "Alt+F E V I L T H"; what: T.t("開啟檔案、編輯、檢視、影像、圖層、工具、說明選單；方向鍵移動、Enter 執行、Esc 關閉", "Open File, Edit, View, Image, Layer, Tools, Help; arrows move, Enter runs, Esc closes"); }
+                KeyRow { keys: "F1"; what: T.t("這個視窗", "This window"); }
+            }
+        }
+    }
+    // ---------------- shared tooltip (always on top)
+    if Tip.text != "": Rectangle {
+        x: max(4px, min(Tip.x, root.width - self.width - 4px));
+        y: Tip.y + self.height + 4px > root.height ? Tip.y - self.height - 40px : Tip.y;
+        width: tipt.preferred-width + 14px;
+        height: 24px;
+        border-radius: 4px;
+        background: #263238f0;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #0004;
+        tipt := Text { text: Tip.text; color: white; font-size: 12px; }
     }
 }

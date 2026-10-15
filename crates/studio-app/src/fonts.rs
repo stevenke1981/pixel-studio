@@ -64,3 +64,43 @@ pub fn display_font_name(path: &Path) -> String {
         .unwrap_or("Font")
         .to_owned()
 }
+
+/// UI font family for the Slint window. On Windows the default fallback can pick a
+/// Japanese/Simplified face that lacks Traditional characters (e.g. 啟), so name a
+/// CJK UI font that is actually installed. Elsewhere the platform default is fine.
+pub fn ui_font_family() -> &'static str {
+    ui_font_family_from(|p| Path::new(p).exists(), cfg!(windows))
+}
+
+pub fn ui_font_family_from(exists: impl Fn(&str) -> bool, windows: bool) -> &'static str {
+    if !windows {
+        return "";
+    }
+    const CANDIDATES: [(&str, &str); 4] = [
+        (r"C:\Windows\Fonts\msjh.ttc", "Microsoft JhengHei UI"),
+        (r"C:\Windows\Fonts\msyh.ttc", "Microsoft YaHei UI"),
+        (r"C:\Windows\Fonts\mingliu.ttc", "PMingLiU"),
+        (r"C:\Windows\Fonts\simsun.ttc", "SimSun"),
+    ];
+    CANDIDATES
+        .iter()
+        .find(|(file, _)| exists(file))
+        .map(|(_, family)| *family)
+        .unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ui_font_family_from;
+
+    #[test]
+    fn windows_prefers_jhenghei_then_yahei() {
+        assert_eq!(ui_font_family_from(|_| true, true), "Microsoft JhengHei UI");
+        assert_eq!(
+            ui_font_family_from(|p| p.ends_with("msyh.ttc"), true),
+            "Microsoft YaHei UI"
+        );
+        assert_eq!(ui_font_family_from(|_| false, true), "");
+        assert_eq!(ui_font_family_from(|_| true, false), "");
+    }
+}

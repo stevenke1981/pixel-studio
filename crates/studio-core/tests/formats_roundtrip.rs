@@ -40,7 +40,12 @@ fn webp_lossless_vs_lossy() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut noisy = RgbaImage::new(256, 256);
     for (x, y, p) in noisy.enumerate_pixels_mut() {
-        *p = Rgba([((x * 7) ^ (y * 13)) as u8, (x * y) as u8, (x + y) as u8, 255]);
+        *p = Rgba([
+            ((x * 7) ^ (y * 13)) as u8,
+            (x * y) as u8,
+            (x + y) as u8,
+            255,
+        ]);
     }
     let img = DynamicImage::ImageRgba8(noisy);
     let lossless = dir.join("a.webp");

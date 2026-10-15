@@ -35,7 +35,8 @@ jobs:
         run: cargo build --release --locked
       - name: Test
         shell: bash
-        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --release --locked --workspace
+        # `ci` profile = release optimisations without fat LTO, so test binaries link quickly.
+        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --profile ci --locked --workspace
       - name: CLI smoke test
         shell: bash
         run: |
@@ -69,7 +70,9 @@ jobs:
         if: runner.os == 'Windows' && always()
         with:
           name: windows-gui-screenshot
-          path: win-screenshot.png
+          path: |
+            win-screenshot.png
+            win-shots/*.png
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
         shell: pwsh
