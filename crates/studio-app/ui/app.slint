@@ -469,7 +469,8 @@ export component AppWindow inherits Window {
     // ---------------------------------------------------------------- callbacks
     callback toolbar-moved();
     callback action(string);
-    callback canvas-pointer(int, int, length, length, bool, bool); // kind 0 down 1 up 2 move 3 leave, button 0 left 1 right 2 middle
+    in property <int> canvas-cursor;
+    callback canvas-pointer(int, int, length, length, bool, bool); // kind 0 down 1 up 2 move 3 cancel, button 0 left 1 right 2 middle
     callback canvas-scroll(length, length, length, bool);
     callback canvas-resized();
     callback key(string, bool, bool) -> bool;
@@ -696,7 +697,12 @@ export component AppWindow inherits Window {
                     }
                 }
                 TouchArea {
-                    mouse-cursor: root.tool == 12 ? MouseCursor.grab : MouseCursor.crosshair;
+                    mouse-cursor: !self.has-hover && !self.pressed ? MouseCursor.default :
+                        root.canvas-cursor == 1 ? MouseCursor.grab :
+                        root.canvas-cursor == 2 ? MouseCursor.grabbing :
+                        root.canvas-cursor == 3 ? MouseCursor.nwse-resize :
+                        root.canvas-cursor == 4 ? MouseCursor.ew-resize :
+                        root.canvas-cursor == 5 ? MouseCursor.ns-resize : MouseCursor.crosshair;
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) { fs.focus(); }
                         root.canvas-pointer(
@@ -746,7 +752,7 @@ export component AppWindow inherits Window {
                             width: 14px;
                             Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: #8a96a3; }
                             grip := TouchArea {
-                                mouse-cursor: MouseCursor.move;
+                                mouse-cursor: root.tb-mode != 0 ? MouseCursor.default : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
                                 moved => {
                                     if (root.tb-mode == 0) {
                                         root.tb-x = clamp(root.tb-x + self.mouse-x - self.pressed-x, 0, canvas-area.width - 60px);

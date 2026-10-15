@@ -27,7 +27,13 @@ jobs:
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev \
             libwayland-dev libfontconfig1-dev libxdo-dev fonts-noto-cjk libxkbcommon-x11-0 xvfb imagemagick
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Fetch OCR models
         shell: bash
         run: ./scripts/fetch-models.sh

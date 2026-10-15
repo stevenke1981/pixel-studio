@@ -21,6 +21,7 @@ rten = "0.26"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tempfile = "3.27"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 walkdir.workspace = true
 webp = "0.3"

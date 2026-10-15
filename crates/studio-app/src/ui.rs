@@ -19,7 +19,7 @@ use studio_core::{
     ConvertOptions, GifOptions, PanoramaMode, PanoramaOptions, ShapeKind, SupportedFormat,
 };
 
-use crate::doc::{Doc, IRect, Selection, Tool, ToolSettings};
+use crate::doc::{Doc, IRect, Selection, Snapshot, Tool, ToolSettings};
 use crate::{Args, fonts, shell};
 
 slint::include_modules!();
@@ -118,7 +118,10 @@ enum Drag {
 }
 
 enum Job {
-    Detect(Receiver<Result<Vec<studio_core::redact::RedactBox>, String>>),
+    Detect(
+        u64,
+        Receiver<Result<Vec<studio_core::redact::RedactBox>, String>>,
+    ),
     Batch(Receiver<BatchMsg>),
 }
 
@@ -172,6 +175,8 @@ pub struct State {
     folder: Vec<PathBuf>,
     folder_idx: Option<usize>,
     drag: Drag,
+    gesture: Option<Snapshot>,
+    pointer_pos: Option<(f32, f32)>,
     sticker_style: StickerStyle,
     thumbs: HashMap<String, Image>,
     job: Option<Job>,
@@ -240,6 +245,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         folder: Vec::new(),
         folder_idx: None,
         drag: Drag::None,
+        gesture: None,
+        pointer_pos: None,
         sticker_style: StickerStyle::default(),
         thumbs: HashMap::new(),
         job: None,
@@ -391,6 +398,16 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         });
     }
     refresh(&ui, &state);
+    {
+        let st = state.clone();
+        ui.window().on_close_requested(move || {
+            if confirm_discard(&st) {
+                slint::CloseRequestResponse::HideWindow
+            } else {
+                slint::CloseRequestResponse::KeepWindowShown
+            }
+        });
+    }
     ui.run()?;
     save_settings(&state.borrow());
     Ok(())
@@ -533,6 +550,14 @@ fn refresh(ui: &AppWindow, st: &S) {
 }
 
 fn sync_view(ui: &AppWindow, s: &State) {
+    ui.set_canvas_cursor(canvas_cursor(
+        &s.doc,
+        if s.view_mode { Tool::Hand } else { s.tool },
+        s.drag,
+        s.pan,
+        s.zoom,
+        s.pointer_pos,
+    ));
     ui.set_zoom(s.zoom);
     ui.set_pan_x(s.pan.0);
     ui.set_pan_y(s.pan.1);
@@ -733,11 +758,15 @@ fn image_filter(d: rfd::FileDialog) -> rfd::FileDialog {
 }
 
 fn open_path(ui: &AppWindow, st: &S, path: &Path) {
+    if !confirm_discard(st) {
+        return;
+    }
     let zh = st.borrow().zh;
     if path.extension().is_some_and(|e| e == "pixel-project") {
         let r = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|j| st.borrow_mut().doc.load_project_json(&j));
+        let opened = r.is_ok();
         ui.set_status(
             match r {
                 Ok(()) => format!(
@@ -749,9 +778,13 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
             }
             .into(),
         );
-        push_recent(ui, st, path);
-        fit(ui, st);
-        refresh(ui, st);
+        if opened {
+            reset_document_ui(ui, st);
+            load_c2pa_state(ui, st, None);
+            push_recent(ui, st, path);
+            fit(ui, st);
+            refresh(ui, st);
+        }
         return;
     }
     match studio_core::load_dynamic_image(path) {
@@ -777,7 +810,7 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
                 ui.set_rs_w(s.doc.width() as i32);
                 ui.set_rs_h(s.doc.height() as i32);
             }
-            st.borrow_mut().quick_ok = false;
+            reset_document_ui(ui, st);
             push_recent(ui, st, path);
             load_c2pa_state(ui, st, Some(path));
             fit(ui, st);
@@ -808,7 +841,7 @@ fn format_options(ui: &AppWindow, format: SupportedFormat) -> ConvertOptions {
     }
 }
 
-fn save_to(ui: &AppWindow, st: &S, out: &Path) {
+fn save_to(ui: &AppWindow, st: &S, out: &Path) -> bool {
     let (img, src, keep, zh) = {
         let s = st.borrow();
         (
@@ -821,28 +854,41 @@ fn save_to(ui: &AppWindow, st: &S, out: &Path) {
     st.borrow_mut().keep_metadata = keep;
     let format = SupportedFormat::from_path(out).unwrap_or(SupportedFormat::Png);
     let opts = format_options(ui, format);
-    let r = (|| -> anyhow::Result<()> {
+    let r = studio_core::atomic_file::write_with(out, |staged| -> anyhow::Result<()> {
         if ui.get_c2pa_on_save() {
-            save_with_c2pa(&img, out, opts, &c2pa_draft(ui))?;
+            save_with_c2pa(
+                &img,
+                staged,
+                opts,
+                &c2pa_draft(ui),
+                src.as_deref().filter(|_| keep),
+            )?;
         } else {
-            studio_core::save_dynamic_image(&img, out, opts)?;
-        }
-        // Exports carry no EXIF/XMP unless the user opts in.
-        if keep
-            && let Some(src) = &src
-            && src != out
-        {
-            let _ = studio_core::metadata::copy_metadata(src, out);
+            studio_core::save_dynamic_image(&img, staged, opts)?;
+            // Metadata must be applied before signing, never after it.
+            if keep && let Some(src) = &src {
+                studio_core::metadata::copy_metadata(src, staged)?;
+            }
         }
         Ok(())
-    })();
+    });
     match r {
         Ok(()) => {
             ui.set_status(format!("{} {}", tl(zh, "已儲存：", "Saved:"), out.display()).into());
             push_recent(ui, st, out);
             st.borrow_mut().doc.path = Some(out.to_path_buf());
+            let mut s = st.borrow_mut();
+            s.edit_session = None;
+            // A flattened export does not preserve editable layers.
+            if s.doc.layers.is_empty() {
+                s.doc.mark_saved();
+            }
+            true
         }
-        Err(e) => ui.set_status(format!("{} {e}", tl(zh, "儲存失敗：", "Save failed:")).into()),
+        Err(e) => {
+            ui.set_status(format!("{} {e}", tl(zh, "儲存失敗：", "Save failed:")).into());
+            false
+        }
     }
 }
 
@@ -905,24 +951,24 @@ fn save_with_c2pa(
     out: &Path,
     opts: ConvertOptions,
     draft: &C2paManifestDraft,
+    metadata_source: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
-    let stamp = chrono::Local::now()
-        .timestamp_nanos_opt()
-        .unwrap_or_default();
-    let name = format!(".studio-app-c2pa-{stamp}.{ext}");
-    let tmp = out
-        .parent()
-        .map(|d| d.join(&name))
-        .unwrap_or_else(|| std::env::temp_dir().join(&name));
-    studio_core::save_dynamic_image(img, &tmp, opts)?;
-    if out.exists() {
-        std::fs::remove_file(out)?;
-    }
-    let r = studio_core::write_c2pa_manifest(&tmp, out, draft);
-    let _ = std::fs::remove_file(&tmp);
-    r?;
-    Ok(())
+    studio_core::atomic_file::write_with(out, |staged| {
+        let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
+        // The staging filename is randomly reserved by tempfile.
+        let tmp = staged.with_extension(format!("source.{ext}"));
+        let result = (|| -> anyhow::Result<()> {
+            studio_core::save_dynamic_image(img, &tmp, opts)?;
+            if let Some(source) = metadata_source {
+                studio_core::metadata::copy_metadata(source, &tmp)?;
+            }
+            std::fs::remove_file(staged)?; // C2PA requires a new destination.
+            studio_core::write_c2pa_manifest(&tmp, staged, draft)?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(tmp);
+        result
+    })
 }
 
 fn name_with_suffix(path: &Path, suffix: &str) -> String {
@@ -957,7 +1003,13 @@ fn c2pa_save_copy(ui: &AppWindow, st: &S) {
         out.set_extension(fmt.extension());
     }
     let format = SupportedFormat::from_path(&out).unwrap_or(fmt);
-    let r = save_with_c2pa(&img, &out, format_options(ui, format), &c2pa_draft(ui));
+    let r = save_with_c2pa(
+        &img,
+        &out,
+        format_options(ui, format),
+        &c2pa_draft(ui),
+        None,
+    );
     ui.set_status(
         match r {
             Ok(()) => format!(
@@ -1011,20 +1063,12 @@ fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
         );
         return;
     }
-    if out.exists()
-        && let Err(e) = std::fs::remove_file(&out)
-    {
-        ui.set_status(
-            format!(
-                "{} {e}",
-                tl(zh, "無法覆寫輸出檔：", "Could not overwrite output file:")
-            )
-            .into(),
-        );
-        return;
-    }
+    let result = studio_core::atomic_file::write_with(&out, |staged| -> studio_core::Result<()> {
+        std::fs::remove_file(staged)?;
+        studio_core::remove_c2pa_manifest(&src, staged)
+    });
     ui.set_status(
-        match studio_core::remove_c2pa_manifest(&src, &out) {
+        match result {
             Ok(()) => format!(
                 "{} {}",
                 tl(zh, "已移除 C2PA 並另存：", "Removed C2PA and saved"),
@@ -1229,9 +1273,84 @@ fn to_img(s: &State, x: f32, y: f32) -> (f32, f32) {
     ((x - s.pan.0) / s.zoom, (y - s.pan.1) / s.zoom)
 }
 
+/// Cursor targets use the same hit tests as pointer-down; text inputs live outside
+/// this canvas TouchArea and keep Slint's native text cursor and selection handling.
+fn canvas_cursor(
+    doc: &Doc,
+    tool: Tool,
+    drag: Drag,
+    pan: (f32, f32),
+    zoom: f32,
+    mouse: Option<(f32, f32)>,
+) -> i32 {
+    match drag {
+        Drag::Move { .. } | Drag::BoxMove { .. } | Drag::Pan { .. } => return 2,
+        Drag::Resize { .. } | Drag::BoxResize { .. } => return 3,
+        Drag::CanvasEdge { kind, .. } => {
+            return match kind {
+                0 => 4,
+                1 => 5,
+                _ => 3,
+            };
+        }
+        _ => {}
+    }
+    if tool == Tool::Hand {
+        return 1;
+    }
+    let Some((mx, my)) = mouse else { return 0 };
+    let (x, y) = ((mx - pan.0) / zoom, (my - pan.1) / zoom);
+    if tool == Tool::Select {
+        if let Some(kind) = canvas_edge(doc, pan, zoom, mx, my) {
+            return match kind {
+                0 => 4,
+                1 => 5,
+                _ => 3,
+            };
+        }
+        if doc.on_resize_handle(x, y, 8.0 / zoom) {
+            return 3;
+        }
+        if doc.hit_test(x, y).is_some() {
+            return 1;
+        }
+    }
+    if tool == Tool::RedactBox {
+        let tol = 8.0 / zoom;
+        if doc.boxes.iter().any(|b| {
+            (x - (b.x as f32 + b.width as f32)).abs() <= tol
+                && (y - (b.y as f32 + b.height as f32)).abs() <= tol
+        }) {
+            return 3;
+        }
+        if doc.box_at(x, y).is_some() {
+            return 1;
+        }
+    }
+    0
+}
+
+fn canvas_edge(doc: &Doc, pan: (f32, f32), zoom: f32, mx: f32, my: f32) -> Option<u8> {
+    let (ex, ey) = (
+        pan.0 + doc.width() as f32 * zoom,
+        pan.1 + doc.height() as f32 * zoom,
+    );
+    let near = |ax: f32, ay: f32| (mx - ax).abs() <= 9.0 && (my - ay).abs() <= 9.0;
+    if near(ex + 4.0, ey + 4.0) {
+        Some(2)
+    } else if near(ex + 3.0, pan.1 + (ey - pan.1) / 2.0) {
+        Some(0)
+    } else if near(pan.0 + (ex - pan.0) / 2.0, ey + 3.0) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shift: bool) {
     let mut guard = st.borrow_mut();
     let s = &mut *guard;
+    s.pointer_pos = Some((mx, my));
     let p = to_img(s, mx, my);
     if kind == 2 || kind == 0 {
         ui.set_cursor_info(
@@ -1245,6 +1364,14 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
             .into(),
         );
         if kind == 2 && matches!(s.drag, Drag::None) {
+            ui.set_canvas_cursor(canvas_cursor(
+                &s.doc,
+                if s.view_mode { Tool::Hand } else { s.tool },
+                s.drag,
+                s.pan,
+                s.zoom,
+                s.pointer_pos,
+            ));
             return; // hover only
         }
     }
@@ -1263,11 +1390,14 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
     ][ui.get_shape_kind().clamp(0, 4) as usize];
     match kind {
         0 => {
+            cancel_gesture(s);
+            s.edit_session = None;
             if button == 2 || tool == Tool::Hand {
                 s.drag = Drag::Pan {
                     mouse: (mx, my),
                     pan: s.pan,
                 };
+                ui.set_canvas_cursor(2);
                 return;
             }
             let secondary = button == 1;
@@ -1280,31 +1410,23 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
             }
             // Canvas edge handles (Select tool): drag to resize the canvas.
             if tool == Tool::Select && !secondary {
-                let (ex, ey) = (
-                    s.pan.0 + s.doc.width() as f32 * s.zoom,
-                    s.pan.1 + s.doc.height() as f32 * s.zoom,
-                );
-                let near = |ax: f32, ay: f32| (mx - ax).abs() <= 9.0 && (my - ay).abs() <= 9.0;
-                let kind = if near(ex + 4.0, ey + 4.0) {
-                    Some(2)
-                } else if near(ex + 3.0, s.pan.1 + (ey - s.pan.1) / 2.0) {
-                    Some(0)
-                } else if near(s.pan.0 + (ex - s.pan.0) / 2.0, ey + 3.0) {
-                    Some(1)
-                } else {
-                    None
-                };
+                let kind = canvas_edge(&s.doc, s.pan, s.zoom, mx, my);
                 if let Some(kind) = kind {
                     s.drag = Drag::CanvasEdge {
                         kind,
                         now: (s.doc.width() as f32, s.doc.height() as f32),
                     };
+                    ui.set_canvas_cursor(match kind {
+                        0 => 4,
+                        1 => 5,
+                        _ => 3,
+                    });
                     return;
                 }
             }
             match tool {
                 t if t.is_raster() || t == Tool::RedactBrush => {
-                    s.doc.checkpoint();
+                    s.gesture = Some(s.doc.begin_gesture());
                     s.doc.stroke(t, p, p, secondary, &s.tools);
                     s.drag = Drag::Paint { last: p, secondary };
                 }
@@ -1345,6 +1467,7 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 Tool::RedactBox => {
                     if secondary {
                         if let Some(i) = s.doc.box_at(p.0, p.1) {
+                            s.doc.checkpoint();
                             s.doc.boxes.remove(i);
                         }
                     } else {
@@ -1362,6 +1485,7 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                             },
                             _ => Drag::RedactBox { start: p, now: p },
                         };
+                        s.gesture = Some(s.doc.begin_gesture());
                     }
                 }
                 Tool::Select | Tool::Crop => {
@@ -1376,15 +1500,16 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                             Some(ComposeLayer::Image(l)) => l.height as f32 / l.width.max(1) as f32,
                             _ => 1.0,
                         };
-                        s.doc.checkpoint();
+                        s.gesture = Some(s.doc.begin_gesture());
                         s.drag = Drag::Resize { aspect };
                     } else if let Some(i) = hit {
                         s.doc.selected = Some(i);
                         s.edit_session = None;
-                        s.doc.checkpoint();
+                        s.gesture = Some(s.doc.begin_gesture());
                         s.drag = Drag::Move { last: p };
                         sync_layer_fields(ui, s);
                     } else {
+                        s.gesture = Some(s.doc.begin_gesture());
                         s.doc.selected = None;
                         s.doc.selection = None;
                         s.drag = Drag::Select { start: p };
@@ -1472,7 +1597,8 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
             }
             Drag::None => {}
         },
-        1 | 3 => {
+        3 => cancel_gesture(s),
+        1 => {
             match s.drag {
                 Drag::Shape { start, now }
                     if (start.0 - now.0).abs() + (start.1 - now.1).abs() > 2.0 =>
@@ -1527,6 +1653,9 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 _ => {}
             }
             s.drag = Drag::None;
+            if let Some(before) = s.gesture.take() {
+                s.doc.commit_gesture(before);
+            }
         }
         _ => {}
     }
@@ -1549,9 +1678,14 @@ fn centre(ui: &AppWindow) -> (f32, f32) {
     (ui.get_canvas_w() / 2.0, ui.get_canvas_h() / 2.0)
 }
 
-fn new_doc(ui: &AppWindow, st: &S, img: DynamicImage) {
+fn new_doc(ui: &AppWindow, st: &S, img: DynamicImage) -> bool {
+    if !confirm_discard(st) {
+        return false;
+    }
     st.borrow_mut().doc.load(img, None);
-    st.borrow_mut().quick_ok = false;
+    // New/pasted content has no on-disk copy yet.
+    st.borrow_mut().doc.invalidate_all();
+    reset_document_ui(ui, st);
     load_c2pa_state(ui, st, None);
     let (w, h) = {
         let s = st.borrow();
@@ -1560,18 +1694,74 @@ fn new_doc(ui: &AppWindow, st: &S, img: DynamicImage) {
     ui.set_rs_w(w as i32);
     ui.set_rs_h(h as i32);
     fit(ui, st);
+    true
+}
+
+fn confirm_discard(st: &S) -> bool {
+    let (modified, zh) = {
+        let s = st.borrow();
+        (s.doc.is_modified(), s.zh)
+    };
+    !modified
+        || rfd::MessageDialog::new()
+            .set_title("Pixel Studio")
+            .set_description(tl(
+                zh,
+                "目前文件有未儲存的變更。確定捨棄？如需保留可編輯圖層，請先儲存專案。",
+                "Discard unsaved changes? Save a project first to preserve editable layers.",
+            ))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show()
+            == rfd::MessageDialogResult::Yes
+}
+
+fn reset_document_ui(ui: &AppWindow, st: &S) {
+    let mut s = st.borrow_mut();
+    s.quick_ok = false;
+    s.edit_session = None;
+    s.drag = Drag::None;
+    s.gesture = None;
+    ui.set_rs_w(s.doc.width() as i32);
+    ui.set_rs_h(s.doc.height() as i32);
+}
+
+fn cancel_gesture(s: &mut State) {
+    if let Some(before) = s.gesture.take() {
+        s.doc.cancel_gesture(before);
+    }
+    if let Drag::Pan { pan, .. } = s.drag {
+        s.pan = pan;
+    }
+    s.drag = Drag::None;
 }
 
 fn action(ui: &AppWindow, st: &S, a: &str) {
     use studio_core::{filters as fl, transform as tr};
+    cancel_gesture(&mut st.borrow_mut());
     let zh = st.borrow().zh;
+    if matches!(a, "rot-left" | "rot-right" | "rot-180" | "flip-h" | "flip-v" | "resize")
+        && !st.borrow().doc.layers.is_empty()
+        && rfd::MessageDialog::new()
+            .set_title("Pixel Studio")
+            .set_description(tl(zh,
+                "此操作會先合併圖層，再變換整張圖片；可用復原還原圖層。繼續？",
+                "This will flatten layers and transform the whole image. Undo restores editable layers. Continue?"))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show() != rfd::MessageDialogResult::Yes
+    {
+        return;
+    }
     match a {
-        "new" => new_doc(ui, st, blank(1080, 720)),
-        "new-custom" => new_doc(
-            ui,
-            st,
-            blank(ui.get_new_w().max(1) as u32, ui.get_new_h().max(1) as u32),
-        ),
+        "new" => {
+            new_doc(ui, st, blank(1080, 720));
+        }
+        "new-custom" => {
+            new_doc(
+                ui,
+                st,
+                blank(ui.get_new_w().max(1) as u32, ui.get_new_h().max(1) as u32),
+            );
+        }
         "open" => {
             if let Some(p) = image_filter(rfd::FileDialog::new())
                 .add_filter("Pixel Studio Project", &["pixel-project"])
@@ -1612,11 +1802,14 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 .set_file_name(studio_core::naming::timestamp_name("pixel-project"))
                 .save_file()
             {
-                let r = st
-                    .borrow()
-                    .doc
-                    .to_project_json()
-                    .and_then(|j| std::fs::write(&p, j).map_err(|e| e.to_string()));
+                let r = st.borrow().doc.to_project_json().and_then(|j| {
+                    studio_core::atomic_file::write(&p, j.as_bytes()).map_err(|e| e.to_string())
+                });
+                if r.is_ok() {
+                    let mut s = st.borrow_mut();
+                    s.doc.mark_saved();
+                    s.edit_session = None;
+                }
                 ui.set_status(
                     match r {
                         Ok(()) => format!(
@@ -1639,7 +1832,9 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 (s.quick_ok, s.doc.path.clone())
             };
             match path {
-                Some(p) if ok && SupportedFormat::from_path(&p).is_some() => save_to(ui, st, &p),
+                Some(p) if ok && SupportedFormat::from_path(&p).is_some() => {
+                    save_to(ui, st, &p);
+                }
                 _ => {
                     if let Some(f) = path.as_deref().and_then(SupportedFormat::from_path)
                         && let Some(i) = FORMATS.iter().position(|x| *x == f)
@@ -1682,8 +1877,8 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 }
             };
             if let Some(p) = target {
-                save_to(ui, st, &p);
-                st.borrow_mut().quick_ok = true;
+                let saved = save_to(ui, st, &p);
+                st.borrow_mut().quick_ok = saved;
             }
             return;
         }
@@ -1719,7 +1914,9 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                     };
                     let dynimg = DynamicImage::ImageRgba8(rgba);
                     if a == "paste" {
-                        new_doc(ui, st, dynimg);
+                        if !new_doc(ui, st, dynimg) {
+                            return;
+                        }
                         ui.set_status(
                             tl(
                                 zh,
@@ -1797,7 +1994,9 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 ui.window().set_minimized(false);
                 match r {
                     Ok(img) => {
-                        new_doc(&ui, &st, img);
+                        if !new_doc(&ui, &st, img) {
+                            return;
+                        }
                         ui.set_status(
                             tl(
                                 zh,
@@ -2078,19 +2277,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             return;
         }
         "exit" => {
-            let dirty = st.borrow().doc.can_undo();
-            let ok = !dirty
-                || rfd::MessageDialog::new()
-                    .set_title("Pixel Studio")
-                    .set_description(tl(
-                        zh,
-                        "結束而不儲存目前的變更？",
-                        "Exit without saving the current changes?",
-                    ))
-                    .set_buttons(rfd::MessageButtons::YesNo)
-                    .show()
-                    == rfd::MessageDialogResult::Yes;
-            if ok {
+            if confirm_discard(st) {
                 let _ = slint::quit_event_loop();
             }
             return;
@@ -2353,6 +2540,10 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
 }
 
 fn start_detection(ui: &AppWindow, st: &S) {
+    if st.borrow().job.is_some() {
+        return;
+    }
+    let revision = st.borrow().doc.revision();
     let zh = st.borrow().zh;
     let img = st.borrow().doc.flattened();
     let (tx, rx) = channel();
@@ -2364,7 +2555,7 @@ fn start_detection(ui: &AppWindow, st: &S) {
         .map_err(|e| e.to_string());
         let _ = tx.send(r);
     });
-    st.borrow_mut().job = Some(Job::Detect(rx));
+    st.borrow_mut().job = Some(Job::Detect(revision, rx));
     ui.set_detecting(true);
     ui.set_redact_info(
         tl(
@@ -2377,6 +2568,9 @@ fn start_detection(ui: &AppWindow, st: &S) {
 }
 
 fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
+    if st.borrow().batch_job.is_some() {
+        return;
+    }
     let zh = st.borrow().zh;
     let is_c2pa = kind.starts_with("batch-c2pa");
     let (input, output): (String, String) = if is_c2pa {
@@ -2457,9 +2651,19 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
         let mut s = st.borrow_mut();
         let zh = s.zh;
         let mut detect_done = None;
-        if let Some(Job::Detect(rx)) = &s.job {
+        if let Some(Job::Detect(revision, rx)) = &s.job {
             match rx.try_recv() {
-                Ok(r) => detect_done = Some(r),
+                Ok(r) => {
+                    detect_done = Some(if *revision == s.doc.revision() {
+                        r
+                    } else {
+                        Err(tl(
+                            zh,
+                            "文件已變更，請重新辨識。",
+                            "Document changed; run detection again.",
+                        ))
+                    })
+                }
                 // The worker panicked (unwind) or dropped its sender: don't leave
                 // the UI stuck in "detecting".
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -2635,7 +2839,11 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
         if st.borrow().doc.selected.is_none() {
             return false;
         }
-        st.borrow_mut().doc.move_selected(dx, dy);
+        {
+            let mut s = st.borrow_mut();
+            s.doc.nudge_selected(dx, dy);
+            s.edit_session = None;
+        }
         refresh(ui, st);
         true
     };
@@ -2683,6 +2891,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
     if is(Key::Escape) {
         {
             let mut s = st.borrow_mut();
+            cancel_gesture(&mut s);
             s.doc.selection = None;
             s.doc.selected = None;
             s.drag = Drag::None;
@@ -2824,6 +3033,8 @@ fn wire(ui: &AppWindow, st: &S) {
     });
     cb!(on_tool_changed, |ui, st, i: i32| {
         let t = Tool::from_index(i);
+        cancel_gesture(&mut st.borrow_mut());
+        st.borrow_mut().edit_session = None;
         st.borrow_mut().tool = t;
         if matches!(t, Tool::RedactBox | Tool::RedactBrush) {
             ui.set_tab(4);
@@ -2853,4 +3064,88 @@ fn sticker_insert(ui: &AppWindow, st: &S, id: &str, at: Option<(f32, f32)>) {
         sync_layer_fields(ui, &s);
     }
     refresh(ui, st)
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn failed_c2pa_export_preserves_previous_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("existing.unsupported");
+        std::fs::write(&out, b"keep this original").unwrap();
+        let image = DynamicImage::new_rgba8(8, 8);
+        let result = save_with_c2pa(
+            &image,
+            &out,
+            ConvertOptions {
+                format: SupportedFormat::Png,
+                ..Default::default()
+            },
+            &C2paManifestDraft::default(),
+            None,
+        );
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&out).unwrap(), b"keep this original");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn movable_boxes_and_handles_have_precise_cursor_targets() {
+        let mut doc = Doc::new(300, 200);
+        doc.add_shape(
+            ShapeKind::Rectangle,
+            (30.0, 30.0),
+            (80.0, 80.0),
+            &ToolSettings::default(),
+        );
+        let hover =
+            |doc: &Doc, tool, drag, point| canvas_cursor(doc, tool, drag, (10.0, 20.0), 2.0, point);
+        let point = Some((110.0, 120.0)); // canvas pixel (50, 50)
+        assert_eq!(hover(&doc, Tool::Select, Drag::None, point), 1);
+        assert_eq!(
+            hover(&doc, Tool::Select, Drag::Move { last: (50.0, 50.0) }, point),
+            2
+        );
+        assert_eq!(hover(&doc, Tool::Select, Drag::None, point), 1); // release/cancel
+        assert_eq!(hover(&doc, Tool::Brush, Drag::None, point), 0); // tool switch
+        assert_eq!(hover(&doc, Tool::Text, Drag::None, point), 0); // text tool creates, does not move
+        assert_eq!(hover(&doc, Tool::Select, Drag::None, None), 0);
+        assert_eq!(
+            hover(&doc, Tool::Select, Drag::None, Some((410.0, 220.0))),
+            0
+        );
+        assert_eq!(
+            hover(&doc, Tool::Select, Drag::None, Some((613.0, 220.0))),
+            4
+        );
+        assert_eq!(
+            hover(&doc, Tool::Select, Drag::None, Some((310.0, 423.0))),
+            5
+        );
+        doc.layers[0].set_visible(false);
+        assert_eq!(hover(&doc, Tool::Select, Drag::None, point), 0);
+        doc.boxes
+            .push(studio_core::redact::RedactBox::manual(30, 30, 50, 50));
+        assert_eq!(hover(&doc, Tool::RedactBox, Drag::None, point), 1);
+        assert_eq!(
+            hover(&doc, Tool::RedactBox, Drag::None, Some((170.0, 180.0))),
+            3
+        );
+        assert_eq!(hover(&doc, Tool::Brush, Drag::None, point), 0);
+        assert_eq!(hover(&doc, Tool::Hand, Drag::None, point), 1);
+        assert_eq!(
+            hover(
+                &doc,
+                Tool::Hand,
+                Drag::Pan {
+                    mouse: (0.0, 0.0),
+                    pan: (0.0, 0.0)
+                },
+                point
+            ),
+            2
+        );
+    }
 }

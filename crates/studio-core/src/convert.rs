@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufWriter, Cursor};
+use std::io::{BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
 
 use image::codecs::jpeg::JpegEncoder;
@@ -125,21 +125,33 @@ pub fn encode_image(
     quality: u8,
 ) -> Result<()> {
     let output = output.as_ref();
+    crate::atomic_file::write_with(output, |staged| {
+        encode_staged(image, staged, format, quality)
+    })
+}
+
+fn encode_staged(
+    image: &DynamicImage,
+    output: &Path,
+    format: SupportedFormat,
+    quality: u8,
+) -> Result<()> {
     let file = File::create(output)?;
+    let mut writer = BufWriter::new(file);
 
     if format == SupportedFormat::Jpeg {
         let rgb = image.to_rgb8();
-        let encoder = JpegEncoder::new_with_quality(BufWriter::new(file), quality.clamp(1, 100));
+        let encoder = JpegEncoder::new_with_quality(&mut writer, quality.clamp(1, 100));
         encoder.write_image(
             rgb.as_raw(),
             rgb.width(),
             rgb.height(),
             image::ExtendedColorType::Rgb8,
         )?;
+        writer.flush()?;
         return Ok(());
     }
 
-    let mut writer = BufWriter::new(file);
     match format {
         SupportedFormat::Webp if quality < 100 => {
             use std::io::Write;
@@ -164,6 +176,7 @@ pub fn encode_image(
         }
         _ => image.write_to(&mut writer, format.image_format())?,
     }
+    writer.flush()?;
     Ok(())
 }
 

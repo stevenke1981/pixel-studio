@@ -170,10 +170,13 @@ impl Selection {
 }
 
 #[derive(Clone)]
-struct Snapshot {
+pub struct Snapshot {
     image: RgbaImage,
     layers: Vec<ComposeLayer>,
     selected: Option<usize>,
+    revision: u64,
+    selection: Option<Selection>,
+    boxes: Vec<RedactBox>,
 }
 
 /// Brush/tool settings shared by the UI.
@@ -216,6 +219,9 @@ pub struct Doc {
     pub library: Vec<Sticker>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    revision: u64,
+    next_revision: u64,
+    saved_revision: u64,
     /// Layers rendered over a transparent canvas (cached until layers change).
     overlay: Option<RgbaImage>,
     overlay_dirty: bool,
@@ -240,6 +246,9 @@ impl Doc {
             library: stickers::library(),
             undo: Vec::new(),
             redo: Vec::new(),
+            revision: 0,
+            next_revision: 0,
+            saved_revision: 0,
             overlay: None,
             overlay_dirty: true,
             dirty: None,
@@ -266,12 +275,13 @@ impl Doc {
         self.redo.clear();
         self.path = path;
         self.invalidate_all();
+        self.mark_saved();
     }
 
     pub fn invalidate_all(&mut self) {
         self.overlay_dirty = true;
         self.resized = true;
-        self.dirty = Some(IRect::full(self.width(), self.height()));
+        self.mark(IRect::full(self.width(), self.height()));
     }
 
     pub fn layers_changed(&mut self) {
@@ -280,6 +290,8 @@ impl Doc {
     }
 
     fn mark(&mut self, r: IRect) {
+        self.next_revision += 1;
+        self.revision = self.next_revision;
         self.dirty = Some(match self.dirty {
             Some(d) => d.union(r),
             None => r,
@@ -293,6 +305,9 @@ impl Doc {
             image: self.image.clone(),
             layers: self.layers.clone(),
             selected: self.selected,
+            revision: self.revision,
+            selection: self.selection,
+            boxes: self.boxes.clone(),
         }
     }
 
@@ -312,14 +327,29 @@ impl Doc {
         !self.redo.is_empty()
     }
 
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.revision != self.saved_revision
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.saved_revision = self.revision;
+    }
+
     fn restore(&mut self, s: Snapshot) {
         let resized = s.image.dimensions() != self.image.dimensions();
         self.image = s.image;
         self.layers = s.layers;
         self.selected = s.selected.filter(|i| *i < self.layers.len());
+        self.selection = s.selection;
+        self.boxes = s.boxes;
         self.overlay_dirty = true;
         self.resized |= resized;
         self.mark(IRect::full(self.width(), self.height()));
+        self.revision = s.revision;
     }
 
     pub fn undo(&mut self) -> bool {
@@ -338,6 +368,25 @@ impl Doc {
         self.undo.push(self.snapshot());
         self.restore(s);
         true
+    }
+
+    pub fn begin_gesture(&self) -> Snapshot {
+        self.snapshot()
+    }
+
+    pub fn cancel_gesture(&mut self, before: Snapshot) {
+        self.restore(before);
+    }
+
+    pub fn commit_gesture(&mut self, before: Snapshot) {
+        if before.revision == self.revision && before.boxes == self.boxes {
+            return;
+        }
+        self.undo.push(before);
+        if self.undo.len() > MAX_UNDO {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
     }
 
     // ------------------------------------------------------------ compositing
@@ -566,10 +615,15 @@ impl Doc {
         self.set_image(out.to_rgba8());
     }
 
-    /// Geometry ops (rotate/flip/resize) apply to the whole canvas.
+    /// Geometry ops apply to the visible composition. The UI confirms flattening
+    /// first; undo restores the original editable layers in one step.
     pub fn apply_transform(&mut self, f: impl FnOnce(&DynamicImage) -> DynamicImage) {
         self.checkpoint();
-        let out = f(&DynamicImage::ImageRgba8(self.image.clone())).to_rgba8();
+        let out = f(&self.flattened()).to_rgba8();
+        self.layers.clear();
+        self.selected = None;
+        self.boxes.clear();
+        self.overlay_dirty = true;
         self.selection = None;
         self.set_image(out);
     }
@@ -686,6 +740,16 @@ impl Doc {
             move_layer(l, dx, dy);
             self.layers_changed();
         }
+    }
+
+    /// A keyboard move is its own undoable edit (pointer drags checkpoint once).
+    pub fn nudge_selected(&mut self, dx: i32, dy: i32) -> bool {
+        if (dx == 0 && dy == 0) || self.selected.is_none_or(|i| i >= self.layers.len()) {
+            return false;
+        }
+        self.checkpoint();
+        self.move_selected(dx, dy);
+        true
     }
 
     /// Resize the selected image layer so its bottom-right corner is at (x, y), keeping aspect.
@@ -1018,6 +1082,7 @@ impl Doc {
         self.load(bg, None);
         self.layers = layers;
         self.layers_changed();
+        self.mark_saved();
         Ok(())
     }
 }
@@ -1142,6 +1207,118 @@ enum ProjectLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_revision_tracks_undo_redo_and_new_edit_branch() {
+        let mut d = Doc::new(50, 50);
+        assert!(!d.is_modified());
+        d.add_text(5.0, 5.0, "title".into());
+        d.mark_saved();
+        let saved = d.revision();
+        assert!(d.nudge_selected(4, 0));
+        assert!(d.is_modified());
+        assert!(d.undo());
+        assert!(!d.is_modified());
+        assert_eq!(d.layers.len(), 1);
+        assert!(d.redo());
+        assert!(d.is_modified());
+        assert!(d.undo());
+        d.nudge_selected(0, 3);
+        assert!(!d.can_redo());
+        assert_ne!(d.revision(), saved);
+        d.load(DynamicImage::new_rgba8(10, 10), None);
+        assert!(!d.is_modified());
+        assert_ne!(d.revision(), saved);
+    }
+
+    #[test]
+    fn cancelled_gesture_restores_pixels_layers_and_redo() {
+        let mut d = Doc::new(50, 50);
+        d.add_text(5.0, 5.0, "title".into());
+        d.nudge_selected(4, 0);
+        d.undo();
+        let json = d.to_project_json().unwrap();
+        let revision = d.revision();
+        let before = d.begin_gesture();
+        d.move_selected(12, 8);
+        d.stroke(
+            Tool::Pencil,
+            (0.0, 0.0),
+            (10.0, 0.0),
+            false,
+            &ToolSettings::default(),
+        );
+        d.cancel_gesture(before);
+        assert_eq!(d.to_project_json().unwrap(), json);
+        assert_eq!(d.revision(), revision);
+        assert!(d.can_redo());
+        d.redo();
+        assert!(matches!(&d.layers[0], ComposeLayer::Text(t) if t.x == 9));
+    }
+
+    #[test]
+    fn committed_gesture_is_one_undo_step() {
+        let mut d = Doc::new(50, 50);
+        d.add_text(5.0, 5.0, "title".into());
+        let before = d.begin_gesture();
+        d.move_selected(2, 0);
+        d.move_selected(3, 0);
+        d.commit_gesture(before);
+        d.undo();
+        assert!(matches!(&d.layers[0], ComposeLayer::Text(t) if t.x == 5));
+        d.redo();
+        assert!(matches!(&d.layers[0], ComposeLayer::Text(t) if t.x == 10));
+    }
+
+    #[test]
+    fn redaction_box_gesture_can_be_undone_and_cancelled() {
+        let mut d = Doc::new(100, 100);
+        d.boxes.push(RedactBox::manual(10, 20, 30, 40));
+        let before = d.begin_gesture();
+        d.boxes[0].x = 25;
+        d.commit_gesture(before);
+        assert!(d.undo());
+        assert_eq!(d.boxes[0].x, 10);
+        assert!(d.redo());
+        assert_eq!(d.boxes[0].x, 25);
+        let before = d.begin_gesture();
+        d.boxes[0].width = 80;
+        d.cancel_gesture(before);
+        assert_eq!(d.boxes[0].width, 30);
+    }
+
+    #[test]
+    fn geometry_transforms_composition_and_undo_restores_editable_layers() {
+        let mut d = Doc::new(100, 60);
+        d.add_shape(
+            ShapeKind::Rectangle,
+            (70.0, 10.0),
+            (90.0, 30.0),
+            &ToolSettings {
+                shape_filled: true,
+                color2: [255, 0, 0, 255],
+                ..Default::default()
+            },
+        );
+        let json = d.to_project_json().unwrap();
+        let expected = studio_core::transform::rotate_right(&d.flattened()).to_rgba8();
+        d.apply_transform(studio_core::transform::rotate_right);
+        assert_eq!(d.image, expected);
+        assert!(d.layers.is_empty());
+        d.undo();
+        assert_eq!(d.to_project_json().unwrap(), json);
+    }
+
+    #[test]
+    fn invalid_project_keeps_existing_document_and_history() {
+        let mut d = Doc::new(50, 50);
+        d.add_text(5.0, 5.0, "title".into());
+        let json = d.to_project_json().unwrap();
+        assert!(d.load_project_json("not a project").is_err());
+        assert_eq!(d.to_project_json().unwrap(), json);
+        assert!(d.can_undo());
+        assert!(d.is_modified());
+    }
 
     fn buf(d: &mut Doc) -> Vec<u8> {
         let mut b = vec![0u8; (d.width() * d.height() * 4) as usize];

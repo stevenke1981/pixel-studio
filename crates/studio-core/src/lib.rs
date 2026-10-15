@@ -1,3 +1,4 @@
+pub mod atomic_file;
 pub mod batch;
 pub mod c2pa_metadata;
 pub mod compose;

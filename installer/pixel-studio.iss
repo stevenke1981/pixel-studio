@@ -39,7 +39,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog commandline
 ChangesAssociations=yes
-CloseApplications=force
+CloseApplications=yes
 RestartApplications=no
 ShowLanguageDialog=auto
 
