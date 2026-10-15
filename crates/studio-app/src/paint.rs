@@ -21,7 +21,7 @@ pub enum AppMode {
 impl AppMode {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Viewer => "🖼️",
+            Self::Viewer => "🖼",
             Self::Paint => "🎨",
             Self::Batch => "⚡",
         }
@@ -82,17 +82,17 @@ impl PaintTool {
     pub fn icon(self) -> &'static str {
         match self {
             Self::Select => "🔲",
-            Self::Pencil => "✏️",
-            Self::Brush => "🖌️",
-            Self::Highlighter => "🖊️",
+            Self::Pencil => "✏",
+            Self::Brush => "✍",
+            Self::Highlighter => "🖊",
             Self::Airbrush => "💨",
-            Self::Calligraphy => "✒️",
-            Self::Eraser => "🧽",
-            Self::FloodFill => "🪣",
+            Self::Calligraphy => "✒",
+            Self::Eraser => "⌫",
+            Self::FloodFill => "◉",
             Self::ColorPicker => "💧",
             Self::Text => "🔤",
             Self::Mosaic => "▦",
-            Self::Crop => "✂️",
+            Self::Crop => "✂",
             Self::Hand => "✋",
             Self::Shapes => "📐",
         }
@@ -149,17 +149,21 @@ pub enum InspectorTab {
     Filters,
     Info,
     C2pa,
+    Stickers,
+    Redact,
 }
 
 impl InspectorTab {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Properties => "⚙️",
+            Self::Properties => "⚙",
             Self::Layers => "📚",
-            Self::History => "⏱️",
+            Self::History => "⏱",
             Self::Filters => "✨",
             Self::Info => "📊",
-            Self::C2pa => "🛡️",
+            Self::C2pa => "🛡",
+            Self::Stickers => "★",
+            Self::Redact => "▦",
         }
     }
 
@@ -171,11 +175,15 @@ impl InspectorTab {
             Self::Filters => TextKey::TabFilters,
             Self::Info => TextKey::TabInfo,
             Self::C2pa => TextKey::TabC2pa,
+            Self::Stickers => TextKey::TabStickers,
+            Self::Redact => TextKey::TabRedact,
         }
     }
 
-    pub const ALL_TABS: [InspectorTab; 6] = [
+    pub const ALL_TABS: [InspectorTab; 8] = [
         InspectorTab::Properties,
+        InspectorTab::Stickers,
+        InspectorTab::Redact,
         InspectorTab::Layers,
         InspectorTab::History,
         InspectorTab::Filters,
@@ -342,7 +350,7 @@ mod tests {
     #[test]
     fn test_app_mode_defaults_and_keys() {
         assert_eq!(AppMode::default(), AppMode::Paint);
-        assert_eq!(AppMode::Viewer.icon(), "🖼️");
+        assert_eq!(AppMode::Viewer.icon(), "🖼");
         assert_eq!(AppMode::Paint.icon(), "🎨");
         assert_eq!(AppMode::Batch.icon(), "⚡");
         assert_eq!(AppMode::Paint.text_key(), TextKey::ModePaint);
@@ -353,18 +361,18 @@ mod tests {
     fn test_paint_tool_14_variants() {
         assert_eq!(PaintTool::ALL_TOOLS.len(), 14);
         assert_eq!(PaintTool::default(), PaintTool::Brush);
-        assert_eq!(PaintTool::Brush.icon(), "🖌️");
-        assert_eq!(PaintTool::Pencil.icon(), "✏️");
-        assert_eq!(PaintTool::Eraser.icon(), "🧽");
+        assert_eq!(PaintTool::Brush.icon(), "✍");
+        assert_eq!(PaintTool::Pencil.icon(), "✏");
+        assert_eq!(PaintTool::Eraser.icon(), "⌫");
         assert_eq!(PaintTool::Brush.text_key(), TextKey::ToolBrush);
         assert_eq!(PaintTool::FloodFill.text_key(), TextKey::ToolFloodFill);
     }
 
     #[test]
-    fn test_inspector_tabs_6_variants() {
-        assert_eq!(InspectorTab::ALL_TABS.len(), 6);
+    fn test_inspector_tabs_8_variants() {
+        assert_eq!(InspectorTab::ALL_TABS.len(), 8);
         assert_eq!(InspectorTab::default(), InspectorTab::Properties);
-        assert_eq!(InspectorTab::Properties.icon(), "⚙️");
+        assert_eq!(InspectorTab::Properties.icon(), "⚙");
         assert_eq!(InspectorTab::Properties.text_key(), TextKey::TabProperties);
         assert_eq!(InspectorTab::Layers.text_key(), TextKey::TabLayers);
     }

@@ -4,20 +4,29 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "pixel-studio"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 arboard.workspace = true
 base64.workspace = true
 chrono.workspace = true
-eframe.workspace = true
+eframe = { workspace = true, features = ["glow"] }
 egui.workspace = true
 image.workspace = true
 studio-core = { path = "../studio-core" }
 rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sys-locale = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
 # Windows desktop capture. Keep this target-specific so non-Windows builds retain
 # the platform-independent fallback in `capture.rs` without pulling native APIs.
+winreg = "0.56"
 xcap = { version = "0.9.6", default-features = false }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.34"

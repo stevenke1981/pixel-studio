@@ -99,7 +99,7 @@ fn ring(shape: &str) -> String {
 
 fn label(text: &str, fill: &str, font: u32) -> String {
     format!(
-        r#"<rect x="4" y="28" width="92" height="44" rx="10" fill="{fill}" stroke="{{S}}" stroke-width="{{W}}"/><text x="50" y="{y}" font-family="sans-serif" font-weight="bold" font-size="{font}" text-anchor="middle" fill="white">{text}</text>"#,
+        r#"<rect x="4" y="28" width="92" height="44" rx="10" fill="{fill}" stroke="{{S}}" stroke-width="{{W}}"/><text x="50" y="{y}" font-family="{{FONT}}" font-weight="bold" font-size="{font}" text-anchor="middle" fill="white">{text}</text>"#,
         y = 50 + font * 36 / 100
     )
 }
@@ -114,7 +114,7 @@ const EYES: &str = r##"<circle cx="35" cy="40" r="6" fill="#3b2a1a"/><circle cx=
 
 fn digit_badge(n: u32) -> String {
     format!(
-        r#"<circle cx="50" cy="50" r="42" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}"/><text x="50" y="68" font-family="sans-serif" font-weight="bold" font-size="52" text-anchor="middle" fill="white">{n}</text>"#
+        r#"<circle cx="50" cy="50" r="42" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}"/><text x="50" y="68" font-family="{{FONT}}" font-weight="bold" font-size="52" text-anchor="middle" fill="white">{n}</text>"#
     )
 }
 
@@ -135,7 +135,7 @@ pub fn library() -> Vec<Sticker> {
         ("bubble-square".into(), Callouts, "speech box 對話框", p("M8 10 H92 V70 H40 L20 90 V70 H8 Z"), [255, 255, 255, 255]),
         ("bubble-think".into(), Callouts, "thought cloud 想法 雲", p("M30 22 C34 8 56 6 62 18 C76 10 92 22 86 38 C98 46 92 66 76 64 C72 76 52 78 46 68 C32 76 14 68 18 54 C4 48 8 28 24 30 Z M22 80 a6 6 0 1 0 0.1 0 Z M10 92 a4 4 0 1 0 0.1 0 Z"), [255, 255, 255, 255]),
         ("bubble-shout".into(), Callouts, "shout burst 爆炸 驚嘆", p("M50 4 L60 26 L84 14 L76 38 L98 46 L76 58 L88 82 L62 72 L54 96 L42 74 L18 88 L24 62 L2 54 L24 42 L12 18 L38 28 Z"), YELLOW),
-        ("bubble-info".into(), Callouts, "info tip 提示 資訊", format!(r#"{}<text x="50" y="66" font-family="serif" font-weight="bold" font-size="50" text-anchor="middle" fill="{{S}}">i</text>"#, p("M50 6 A44 44 0 1 1 49.9 6 Z")), BLUE),
+        ("bubble-info".into(), Callouts, "info tip 提示 資訊", format!(r#"{}<text x="50" y="66" font-family="{{FONT}}" font-weight="bold" font-size="50" text-anchor="middle" fill="{{S}}">i</text>"#, p("M50 6 A44 44 0 1 1 49.9 6 Z")), BLUE),
         // Hearts / likes / stars
         ("heart".into(), Hearts, "heart love like 愛心 喜歡", p("M50 88 C20 66 6 50 6 32 C6 18 18 8 30 8 C40 8 46 14 50 22 C54 14 60 8 70 8 C82 8 94 18 94 32 C94 50 80 66 50 88 Z"), RED),
         ("star".into(), Hearts, "star favorite 星星 收藏", p("M50 6 L62 36 L94 38 L69 59 L77 92 L50 74 L23 92 L31 59 L6 38 L38 36 Z"), YELLOW),
@@ -176,7 +176,7 @@ pub fn library() -> Vec<Sticker> {
         // Social (generic, no trademarks)
         ("social-share".into(), Social, "share 分享", format!(r#"<path d="M30 50 L70 26 M30 50 L70 74" stroke="{{F}}" stroke-width="8"/>{}"#, p("M30 38 A12 12 0 1 1 29.9 38 Z M70 14 A12 12 0 1 1 69.9 14 Z M70 62 A12 12 0 1 1 69.9 62 Z")), BLUE),
         ("social-comment".into(), Social, "comment chat message 留言 訊息", p("M14 14 H86 Q92 14 92 20 V64 Q92 70 86 70 H40 L22 88 V70 H14 Q8 70 8 64 V20 Q8 14 14 14 Z"), BLUE),
-        ("social-play".into(), Social, "play video 播放 影片", format!(r#"<rect x="4" y="18" width="92" height="64" rx="18" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}"/><path d="M42 34 L66 50 L42 66 Z" fill="white"/>"#), RED),
+        ("social-play".into(), Social, "play video 播放 影片", format!(r#"<circle cx="50" cy="50" r="44" fill="{{F}}" stroke="{{S}}" stroke-width="{{W}}"/><path d="M40 30 L72 50 L40 70 Z" fill="white"/>"#), [55, 71, 79, 255]),
         ("social-bell".into(), Social, "bell notification subscribe 鈴鐺 訂閱 通知", p("M50 8 C52 8 54 10 54 13 C68 16 76 28 76 44 V62 L86 74 H14 L24 62 V44 C24 28 32 16 46 13 C46 10 48 8 50 8 Z M40 80 H60 C60 86 56 92 50 92 C44 92 40 86 40 80 Z"), YELLOW),
         ("social-camera".into(), Social, "camera photo 相機 拍照", format!(r##"{}<circle cx="50" cy="54" r="16" fill="white"/><circle cx="50" cy="54" r="9" fill="{{F}}"/>"##, p("M10 30 H30 L38 18 H62 L70 30 H90 V82 H10 Z")), [156, 39, 176, 255]),
         ("social-at".into(), Social, "at mention 提及 標註", r#"<circle cx="50" cy="50" r="15" fill="none" stroke="{F}" stroke-width="10"/><path d="M65 36 V58 Q65 68 74 68 Q88 68 88 50 A38 38 0 1 0 70 82" fill="none" stroke="{F}" stroke-width="10" stroke-linecap="round"/>"#.into(), BLUE),
@@ -226,7 +226,8 @@ pub fn styled_svg(sticker: &Sticker, style: &StickerStyle) -> String {
         .replace("stroke-width=\"calc\"", &format!("stroke-width=\"{}\"", 8.0 + w * 2.0))
         .replace("{F}", &hex(style.fill))
         .replace("{S}", &if w > 0.0 { hex(style.stroke) } else { "none".into() })
-        .replace("{W}", &format!("{w}"));
+        .replace("{W}", &format!("{w}"))
+        .replace("{FONT}", FONT_STACK);
     let fo = f32::from(style.fill[3]) / 255.0;
     let shadow = if style.shadow {
         format!(
@@ -241,11 +242,20 @@ pub fn styled_svg(sticker: &Sticker, style: &StickerStyle) -> String {
     )
 }
 
+/// Font fallback chain for sticker labels (Latin first, then Traditional Chinese).
+const FONT_STACK: &str = "Arial, 'Segoe UI', Helvetica, 'DejaVu Sans', 'Liberation Sans', 'Noto Sans', \
+'Microsoft JhengHei', 'PingFang TC', 'Heiti TC', 'Noto Sans CJK TC', 'Noto Sans TC', 'WenQuanYi Micro Hei', sans-serif";
+
 fn font_db() -> &'static resvg::usvg::fontdb::Database {
     static DB: std::sync::OnceLock<resvg::usvg::fontdb::Database> = std::sync::OnceLock::new();
     DB.get_or_init(|| {
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
+        // Make the generic `sans-serif` resolve to something that exists on this machine.
+        let have = |n: &str| db.faces().any(|f| f.families.iter().any(|(fam, _)| fam == n));
+        if let Some(f) = ["Arial", "Segoe UI", "Helvetica", "DejaVu Sans", "Liberation Sans", "Noto Sans"].into_iter().find(|n| have(n)) {
+            db.set_sans_serif_family(f);
+        }
         db
     })
 }
@@ -327,5 +337,16 @@ mod tests {
         assert!(search(&lib, "愛心", None).iter().any(|s| s.id == "heart"));
         assert!(search(&lib, "SALE", None).iter().any(|s| s.id == "label-sale"));
         assert_eq!(search(&lib, "", Some(StickerCategory::Badges)).len(), 13);
+    }
+
+    #[test]
+    fn label_text_is_rendered() {
+        // A label with text must have white glyph pixels inside the coloured plate.
+        let lib = library();
+        let s = find(&lib, "label-new").unwrap();
+        let style = StickerStyle { fill: [229, 57, 53, 255], stroke_width: 0.0, shadow: false, ..Default::default() };
+        let img = render_sticker(s, &style, 200, 200).to_rgba8();
+        let white = img.pixels().filter(|p| p[0] > 240 && p[1] > 240 && p[2] > 240 && p[3] > 240).count();
+        assert!(white > 200, "glyph pixels: {white}");
     }
 }

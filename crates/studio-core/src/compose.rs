@@ -166,6 +166,17 @@ pub struct ImageLayer {
     pub height: u32,
     pub opacity: f32,
     pub visible: bool,
+    /// Set when this layer is a recolorable built-in sticker.
+    pub sticker: Option<StickerInstance>,
+}
+
+/// Sticker identity and style; the app re-rasterizes the layer when these or the size change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickerInstance {
+    pub id: String,
+    pub style: crate::stickers::StickerStyle,
+    /// (width, height, style) of the last rasterization.
+    pub rendered: Option<(u32, u32, crate::stickers::StickerStyle)>,
 }
 
 impl ImageLayer {
@@ -181,6 +192,7 @@ impl ImageLayer {
             height,
             opacity: 1.0,
             visible: true,
+            sticker: None,
         }
     }
 }
@@ -555,6 +567,7 @@ mod tests {
                 height: 8,
                 opacity: 1.0,
                 visible: true,
+                sticker: None,
             })],
         };
 

@@ -269,6 +269,8 @@ pub enum TextKey {
     TabFilters,
     TabInfo,
     TabC2pa,
+    TabStickers,
+    TabRedact,
 
     // --- M2: Properties Panel ---
     PropToolSettings,
@@ -477,7 +479,7 @@ impl TextKey {
 
             // --- M2: App Title & Modes ---
             Self::AppTitle => "Pixel Paint & Viewer 像素畫家與圖片檢視器",
-            Self::ModeViewer => "🖼️ 圖片檢視模式",
+            Self::ModeViewer => "🖼 圖片檢視模式",
             Self::ModePaint => "🎨 小畫家繪圖模式",
             Self::ModeBatch => "⚡ 批次轉檔",
             Self::ModeTagViewer => "【圖片檢視模式】",
@@ -495,9 +497,9 @@ impl TextKey {
             Self::MenuAdvancedFilters => "進階濾鏡",
             Self::MenuC2pa => "🌐 C2PA 憑證",
             Self::MenuLanguage => "語言",
-            Self::MenuThemeLight => "☀️ 淺色模式",
+            Self::MenuThemeLight => "☀ 淺色模式",
             Self::MenuThemeDark => "🌙 深色模式",
-            Self::ThemeLight => "☀️ 淺色模式",
+            Self::ThemeLight => "☀ 淺色模式",
             Self::ThemeDark => "🌙 深色模式",
 
             // --- M2: Common Actions & Canvas Control ---
@@ -514,18 +516,18 @@ impl TextKey {
 
             // --- M2: Paint Tools (14 tools) ---
             Self::ToolSelect => "🔲 選取",
-            Self::ToolPencil => "✏️ 鉛筆",
-            Self::ToolBrush => "🖌️ 畫筆",
-            Self::ToolHighlighter => "🖊️ 螢光標記筆",
+            Self::ToolPencil => "✏ 鉛筆",
+            Self::ToolBrush => "✍ 畫筆",
+            Self::ToolHighlighter => "🖊 螢光標記筆",
             Self::ToolAirbrush => "💨 噴槍",
-            Self::ToolCalligraphy => "✒️ 書法筆",
-            Self::ToolEraser => "🧽 橡皮擦",
-            Self::ToolFloodFill => "🪣 油漆桶填色",
+            Self::ToolCalligraphy => "✒ 書法筆",
+            Self::ToolEraser => "⌫ 橡皮擦",
+            Self::ToolFloodFill => "◉ 油漆桶填色",
             Self::ToolColorPicker => "💧 滴管取色",
             Self::ToolEyedropper => "💧 滴管取色",
             Self::ToolText => "🔤 文字",
             Self::ToolMosaic => "▦ 馬賽克",
-            Self::ToolCrop => "✂️ 裁切",
+            Self::ToolCrop => "✂ 裁切",
             Self::ToolHand => "✋ 手掌",
             Self::ToolShapes => "📐 形狀",
 
@@ -540,12 +542,14 @@ impl TextKey {
             Self::CustomColor => "🎨 自訂",
 
             // --- M2: Inspector Tabs ---
-            Self::TabProperties => "⚙️ 屬性",
+            Self::TabProperties => "⚙ 屬性",
             Self::TabLayers => "📚 圖層",
-            Self::TabHistory => "⏱️ 歷史",
+            Self::TabHistory => "⏱ 歷史",
             Self::TabFilters => "✨ 濾鏡",
             Self::TabInfo => "📊 資訊",
-            Self::TabC2pa => "🛡️ C2PA",
+            Self::TabC2pa => "🛡 C2PA",
+            Self::TabStickers => "★ 貼圖",
+            Self::TabRedact => "▦ 自動打碼",
 
             // --- M2: Properties Panel ---
             Self::PropToolSettings => "工具屬性與快速操作",
@@ -764,7 +768,7 @@ impl TextKey {
 
             // --- M2: App Title & Modes ---
             Self::AppTitle => "Pixel Paint & Viewer",
-            Self::ModeViewer => "🖼️ Image Viewer",
+            Self::ModeViewer => "🖼 Image Viewer",
             Self::ModePaint => "🎨 Paint Drawing",
             Self::ModeBatch => "⚡ Batch Convert",
             Self::ModeTagViewer => "[Image Viewer Mode]",
@@ -782,9 +786,9 @@ impl TextKey {
             Self::MenuAdvancedFilters => "Advanced Filters",
             Self::MenuC2pa => "🌐 C2PA Credentials",
             Self::MenuLanguage => "Language",
-            Self::MenuThemeLight => "☀️ Light Mode",
+            Self::MenuThemeLight => "☀ Light Mode",
             Self::MenuThemeDark => "🌙 Dark Mode",
-            Self::ThemeLight => "☀️ Light Mode",
+            Self::ThemeLight => "☀ Light Mode",
             Self::ThemeDark => "🌙 Dark Mode",
 
             // --- M2: Common Actions & Canvas Control ---
@@ -801,18 +805,18 @@ impl TextKey {
 
             // --- M2: Paint Tools (14 tools) ---
             Self::ToolSelect => "🔲 Select",
-            Self::ToolPencil => "✏️ Pencil",
-            Self::ToolBrush => "🖌️ Brush",
-            Self::ToolHighlighter => "🖊️ Highlighter",
+            Self::ToolPencil => "✏ Pencil",
+            Self::ToolBrush => "✍ Brush",
+            Self::ToolHighlighter => "🖊 Highlighter",
             Self::ToolAirbrush => "💨 Airbrush",
-            Self::ToolCalligraphy => "✒️ Calligraphy",
-            Self::ToolEraser => "🧽 Eraser",
-            Self::ToolFloodFill => "🪣 Flood Fill",
+            Self::ToolCalligraphy => "✒ Calligraphy",
+            Self::ToolEraser => "⌫ Eraser",
+            Self::ToolFloodFill => "◉ Flood Fill",
             Self::ToolColorPicker => "💧 Eyedropper",
             Self::ToolEyedropper => "💧 Eyedropper",
             Self::ToolText => "🔤 Text",
             Self::ToolMosaic => "▦ Mosaic",
-            Self::ToolCrop => "✂️ Crop",
+            Self::ToolCrop => "✂ Crop",
             Self::ToolHand => "✋ Hand",
             Self::ToolShapes => "📐 Shapes",
 
@@ -827,12 +831,14 @@ impl TextKey {
             Self::CustomColor => "🎨 Custom",
 
             // --- M2: Inspector Tabs ---
-            Self::TabProperties => "⚙️ Properties",
+            Self::TabProperties => "⚙ Properties",
             Self::TabLayers => "📚 Layers",
-            Self::TabHistory => "⏱️ History",
+            Self::TabHistory => "⏱ History",
             Self::TabFilters => "✨ Filters",
             Self::TabInfo => "📊 Info",
-            Self::TabC2pa => "🛡️ C2PA",
+            Self::TabStickers => "★ Stickers",
+            Self::TabRedact => "▦ Auto Redact",
+            Self::TabC2pa => "🛡 C2PA",
 
             // --- M2: Properties Panel ---
             Self::PropToolSettings => "Tool Properties & Quick Actions",
@@ -981,10 +987,10 @@ mod tests {
 
     #[test]
     fn test_mode_labels() {
-        assert_eq!(TextKey::ModeViewer.zh_tw(), "🖼️ 圖片檢視模式");
+        assert_eq!(TextKey::ModeViewer.zh_tw(), "🖼 圖片檢視模式");
         assert_eq!(TextKey::ModePaint.zh_tw(), "🎨 小畫家繪圖模式");
         assert_eq!(TextKey::ModeBatch.zh_tw(), "⚡ 批次轉檔");
-        assert_eq!(TextKey::ModeViewer.en(), "🖼️ Image Viewer");
+        assert_eq!(TextKey::ModeViewer.en(), "🖼 Image Viewer");
         assert_eq!(TextKey::ModePaint.en(), "🎨 Paint Drawing");
         assert_eq!(TextKey::ModeBatch.en(), "⚡ Batch Convert");
     }
@@ -1007,17 +1013,17 @@ mod tests {
     fn test_paint_tools_14_variants() {
         let tools = [
             (TextKey::ToolSelect, "🔲 選取", "🔲 Select"),
-            (TextKey::ToolPencil, "✏️ 鉛筆", "✏️ Pencil"),
-            (TextKey::ToolBrush, "🖌️ 畫筆", "🖌️ Brush"),
-            (TextKey::ToolHighlighter, "🖊️ 螢光標記筆", "🖊️ Highlighter"),
+            (TextKey::ToolPencil, "✏ 鉛筆", "✏ Pencil"),
+            (TextKey::ToolBrush, "✍ 畫筆", "✍ Brush"),
+            (TextKey::ToolHighlighter, "🖊 螢光標記筆", "🖊 Highlighter"),
             (TextKey::ToolAirbrush, "💨 噴槍", "💨 Airbrush"),
-            (TextKey::ToolCalligraphy, "✒️ 書法筆", "✒️ Calligraphy"),
-            (TextKey::ToolEraser, "🧽 橡皮擦", "🧽 Eraser"),
-            (TextKey::ToolFloodFill, "🪣 油漆桶填色", "🪣 Flood Fill"),
+            (TextKey::ToolCalligraphy, "✒ 書法筆", "✒ Calligraphy"),
+            (TextKey::ToolEraser, "⌫ 橡皮擦", "⌫ Eraser"),
+            (TextKey::ToolFloodFill, "◉ 油漆桶填色", "◉ Flood Fill"),
             (TextKey::ToolColorPicker, "💧 滴管取色", "💧 Eyedropper"),
             (TextKey::ToolText, "🔤 文字", "🔤 Text"),
             (TextKey::ToolMosaic, "▦ 馬賽克", "▦ Mosaic"),
-            (TextKey::ToolCrop, "✂️ 裁切", "✂️ Crop"),
+            (TextKey::ToolCrop, "✂ 裁切", "✂ Crop"),
             (TextKey::ToolHand, "✋ 手掌", "✋ Hand"),
             (TextKey::ToolShapes, "📐 形狀", "📐 Shapes"),
         ];
@@ -1039,18 +1045,18 @@ mod tests {
         assert_eq!(TextKey::RibbonCustomColor.zh_tw(), "🎨 自訂");
         assert_eq!(TextKey::RibbonCustomColor.en(), "🎨 Custom");
 
-        assert_eq!(TextKey::TabProperties.zh_tw(), "⚙️ 屬性");
-        assert_eq!(TextKey::TabProperties.en(), "⚙️ Properties");
+        assert_eq!(TextKey::TabProperties.zh_tw(), "⚙ 屬性");
+        assert_eq!(TextKey::TabProperties.en(), "⚙ Properties");
         assert_eq!(TextKey::TabLayers.zh_tw(), "📚 圖層");
         assert_eq!(TextKey::TabLayers.en(), "📚 Layers");
-        assert_eq!(TextKey::TabHistory.zh_tw(), "⏱️ 歷史");
-        assert_eq!(TextKey::TabHistory.en(), "⏱️ History");
+        assert_eq!(TextKey::TabHistory.zh_tw(), "⏱ 歷史");
+        assert_eq!(TextKey::TabHistory.en(), "⏱ History");
         assert_eq!(TextKey::TabFilters.zh_tw(), "✨ 濾鏡");
         assert_eq!(TextKey::TabFilters.en(), "✨ Filters");
         assert_eq!(TextKey::TabInfo.zh_tw(), "📊 資訊");
         assert_eq!(TextKey::TabInfo.en(), "📊 Info");
-        assert_eq!(TextKey::TabC2pa.zh_tw(), "🛡️ C2PA");
-        assert_eq!(TextKey::TabC2pa.en(), "🛡️ C2PA");
+        assert_eq!(TextKey::TabC2pa.zh_tw(), "🛡 C2PA");
+        assert_eq!(TextKey::TabC2pa.en(), "🛡 C2PA");
     }
 
     #[test]

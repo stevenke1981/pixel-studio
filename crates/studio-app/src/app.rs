@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod extras;
 use std::borrow::Cow;
 use std::fs;
 use std::io::Cursor;
@@ -245,6 +246,7 @@ pub struct PixelStudioApp {
     status: String,
     pending_excluding_capture: Option<Receiver<anyhow::Result<DynamicImage>>>,
     pub paint_state: PaintState,
+    ex: extras::ExtrasState,
     pub dark_mode: bool,
 }
 
@@ -345,7 +347,28 @@ impl PixelStudioApp {
             batch_total: 0,
             status: "準備就緒。支援拖曳開啟、剪貼簿貼上、小畫家繪圖與高畫質圖片檢視。".to_owned(),
             pending_excluding_capture: None,
+            ex: extras::ExtrasState::default(),
         }
+    }
+
+    pub fn new_with_mode(initial_path: Option<PathBuf>, view: bool) -> Self {
+        let mut app = Self::new(initial_path);
+        app.language = detect_language();
+        if view {
+            app.paint_state.active_mode = AppMode::Viewer;
+        }
+        app
+    }
+}
+
+/// zh-TW for Chinese (or unknown) system locales, English otherwise.
+fn detect_language() -> Language {
+    if let Ok(l) = std::env::var("PIXEL_STUDIO_LANG") {
+        return if l.starts_with("en") { Language::En } else { Language::ZhTw };
+    }
+    match sys_locale::get_locale() {
+        Some(l) if !l.to_ascii_lowercase().starts_with("zh") => Language::En,
+        _ => Language::ZhTw,
     }
 }
 
@@ -362,6 +385,10 @@ impl eframe::App for PixelStudioApp {
         self.open_pending_path(ui.ctx());
         self.open_dropped_files(ui.ctx());
         self.handle_keyboard_shortcuts(ui.ctx());
+        self.extras_poll(ui.ctx());
+        if ui.ctx().input(|i| i.modifiers.command && i.key_pressed(egui::Key::G)) {
+            self.ex.show_grid = !self.ex.show_grid;
+        }
 
         if self.working_image.is_none() && self.paint_state.active_mode == AppMode::Paint {
             self.init_default_paint_canvas(ui.ctx());
@@ -819,7 +846,7 @@ impl PixelStudioApp {
             // 14 Tools
             for tool in PaintTool::ALL_TOOLS {
                 let active = self.paint_state.active_tool == tool;
-                let label = format!("{} {}", tool.icon(), self.tr(tool.text_key()));
+                let label = self.tr(tool.text_key()).to_owned();
                 let text = egui::RichText::new(label).strong().color(if active {
                     crate::theme::PRIMARY_DARK
                 } else {
@@ -1047,7 +1074,7 @@ impl PixelStudioApp {
         ui.horizontal_wrapped(|ui| {
             for tab in InspectorTab::ALL_TABS {
                 let active = self.paint_state.active_inspector_tab == tab;
-                let label = format!("{} {}", tab.icon(), self.tr(tab.text_key()));
+                let label = self.tr(tab.text_key()).to_owned();
                 let text = egui::RichText::new(label).strong().color(if active {
                     crate::theme::PRIMARY_DARK
                 } else {
@@ -1097,6 +1124,12 @@ impl PixelStudioApp {
             }
             InspectorTab::C2pa => {
                 self.c2pa_panel(ui);
+            }
+            InspectorTab::Stickers => {
+                self.stickers_panel(ui, ctx);
+            }
+            InspectorTab::Redact => {
+                self.redact_panel(ui, ctx);
             }
         });
     }
@@ -1199,6 +1232,8 @@ impl PixelStudioApp {
                     self.save_quick_copy();
                 }
             });
+        let ctx = ui.ctx().clone();
+        self.extras_properties(ui, &ctx);
     }
 
     fn history_tab_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -2716,11 +2751,10 @@ impl PixelStudioApp {
 
                         for choice in &font_choices {
                             let selected = layer.font_path.as_ref() == Some(&choice.path);
-                            let preview = egui::RichText::new(format!("Aa 字型 - {}", choice.name))
-                                .font(egui::FontId::new(
-                                    18.0,
-                                    egui::FontFamily::Name(choice.preview_family.clone().into()),
-                                ));
+                            // Font files are no longer all loaded into the UI at startup
+                            // (that cost hundreds of MB and seconds on Windows).
+                            let _ = &choice.preview_family;
+                            let preview = egui::RichText::new(choice.name.clone());
                             if ui.selectable_label(selected, preview).clicked() {
                                 layer.font_path = Some(choice.path.clone());
                                 changed = true;
@@ -2956,14 +2990,16 @@ impl PixelStudioApp {
                     let iy = img_pos.y.floor() as i32;
                     self.paint_state.hover_pixel_coord = Some((ix, iy));
                     if let Some(image) = &self.working_image {
-                        let rgba = image.to_rgba8();
+                        // Sample in place: converting the whole image every frame was a
+                        // major hover-time CPU and memory cost on large images.
+                        use image::GenericImageView;
                         if ix >= 0
                             && iy >= 0
-                            && (ix as u32) < rgba.width()
-                            && (iy as u32) < rgba.height()
+                            && (ix as u32) < image.width()
+                            && (iy as u32) < image.height()
                         {
                             self.paint_state.hover_pixel_color =
-                                studio_core::drawing::sample_color(&rgba, ix as u32, iy as u32);
+                                Some(image.get_pixel(ix as u32, iy as u32));
                         } else {
                             self.paint_state.hover_pixel_color = None;
                         }
@@ -3089,7 +3125,8 @@ impl PixelStudioApp {
             self.handle_middle_pan(ui.ctx(), viewport_rect, scale);
             self.handle_preview_zoom(ui.ctx(), &viewport_response, viewport_rect, scale);
 
-            if !handle_active && !is_hand {
+            let consumed = !is_hand && self.extras_canvas(ui.ctx(), &response, image_rect, scale);
+            if !consumed && !handle_active && !is_hand {
                 if is_paint_mode {
                     self.handle_paint_canvas_interaction(ui.ctx(), &response, image_rect, scale);
                 } else {
@@ -3098,6 +3135,7 @@ impl PixelStudioApp {
             }
             self.paint_selection(ui, image_rect, scale);
             self.paint_selected_layer(ui, image_rect, scale);
+            self.extras_overlay(ui, image_rect, scale);
         } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(((ui.available_height() - 310.0) / 2.0).max(40.0));
@@ -3446,7 +3484,13 @@ impl PixelStudioApp {
         let Some(image) = &mut self.working_image else {
             return;
         };
-        let mut rgba = image.to_rgba8();
+        if !matches!(image, DynamicImage::ImageRgba8(_)) {
+            *image = DynamicImage::ImageRgba8(image.to_rgba8());
+        }
+        let DynamicImage::ImageRgba8(rgba) = image else {
+            return;
+        };
+        let rgba = &mut *rgba;
         let x0 = from.x.round() as i32;
         let y0 = from.y.round() as i32;
         let x1 = to.x.round() as i32;
@@ -3463,30 +3507,30 @@ impl PixelStudioApp {
 
         match tool {
             PaintTool::Pencil => {
-                studio_core::drawing::draw_pencil_line(&mut rgba, x0, y0, x1, y1, draw_color);
+                studio_core::drawing::draw_pencil_line(rgba, x0, y0, x1, y1, draw_color);
             }
             PaintTool::Brush => {
                 studio_core::drawing::draw_brush_stroke(
-                    &mut rgba, x0, y0, x1, y1, radius, draw_color,
+                    rgba, x0, y0, x1, y1, radius, draw_color,
                 );
             }
             PaintTool::Highlighter => {
                 studio_core::drawing::draw_highlighter_stroke(
-                    &mut rgba, x0, y0, x1, y1, radius, draw_color, 128,
+                    rgba, x0, y0, x1, y1, radius, draw_color, 128,
                 );
             }
             PaintTool::Airbrush => {
                 let air_radius = (stroke_width * 1.5).clamp(4.0, 64.0);
-                studio_core::drawing::draw_airbrush(&mut rgba, x1, y1, air_radius, 25, draw_color);
+                studio_core::drawing::draw_airbrush(rgba, x1, y1, air_radius, 25, draw_color);
             }
             PaintTool::Calligraphy => {
                 let width = (stroke_width * 1.5).clamp(3.0, 64.0);
                 studio_core::drawing::draw_calligraphy_stroke(
-                    &mut rgba, x0, y0, x1, y1, width, 45.0, draw_color,
+                    rgba, x0, y0, x1, y1, width, 45.0, draw_color,
                 );
             }
             PaintTool::Eraser => {
-                studio_core::drawing::draw_eraser(&mut rgba, x0, y0, x1, y1, radius, draw_color);
+                studio_core::drawing::draw_eraser(rgba, x0, y0, x1, y1, radius, draw_color);
             }
             PaintTool::Mosaic => {
                 let block = (stroke_width as u32).clamp(4, 32);
@@ -3494,13 +3538,12 @@ impl PixelStudioApp {
                 let rx = (x1.max(0) as u32).saturating_sub(box_size / 2);
                 let ry = (y1.max(0) as u32).saturating_sub(box_size / 2);
                 studio_core::drawing::apply_mosaic_region(
-                    &mut rgba, rx, ry, box_size, box_size, block,
+                    rgba, rx, ry, box_size, box_size, block,
                 );
             }
             _ => {}
         }
 
-        self.working_image = Some(DynamicImage::ImageRgba8(rgba));
     }
 
     fn handle_middle_pan(&mut self, ctx: &egui::Context, viewport_rect: Rect, current_scale: f32) {
@@ -3651,7 +3694,11 @@ impl PixelStudioApp {
         let crop_mode = self.preview_tool == PreviewTool::Crop;
 
         if response.drag_started()
-            && let Some(pointer) = response.interact_pointer_pos()
+            // Use where the button went down: by the time a drag is recognised the
+            // pointer has already moved, so fast drags used to miss the layer.
+            && let Some(pointer) = ctx
+                .input(|input| input.pointer.press_origin())
+                .or_else(|| response.interact_pointer_pos())
         {
             let image_pos = screen_to_image(pointer, image_rect, scale);
             self.selected_layer = if crop_mode {
@@ -3870,7 +3917,16 @@ impl PixelStudioApp {
             let rgba = image.to_rgba8();
             let size = [rgba.width() as usize, rgba.height() as usize];
             let color_image = ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            self.texture = Some(ctx.load_texture("preview", color_image, TextureOptions::LINEAR));
+            let options = TextureOptions {
+                magnification: egui::TextureFilter::Nearest,
+                minification: egui::TextureFilter::Linear,
+                ..TextureOptions::LINEAR
+            };
+            match &mut self.texture {
+                // Reuse the GPU texture instead of allocating a new one per stroke.
+                Some(handle) if handle.size() == size => handle.set(color_image, options),
+                _ => self.texture = Some(ctx.load_texture("preview", color_image, options)),
+            }
             self.texture_size = Vec2::new(image.width() as f32, image.height() as f32);
         } else {
             self.texture = None;
@@ -4000,11 +4056,19 @@ impl PixelStudioApp {
             background: [255, 255, 255, 255],
         };
 
-        if !self.c2pa_write_on_save {
-            return save_dynamic_image(image, output, options);
+        let result = if !self.c2pa_write_on_save {
+            save_dynamic_image(image, output, options)
+        } else {
+            self.save_image_with_c2pa(image, output, options)
+        }?;
+        // Exports are re-encoded from pixels, so EXIF/XMP is stripped unless the user opts in.
+        if self.ex.keep_metadata
+            && let Some(src) = &self.image_path
+            && !same_existing_path(src, output)
+        {
+            let _ = studio_core::metadata::copy_metadata(src, output);
         }
-
-        self.save_image_with_c2pa(image, output, options)
+        Ok(result)
     }
 
     fn save_image_with_c2pa(
@@ -5572,6 +5636,7 @@ impl PixelStudioApp {
                     height,
                     opacity,
                     visible,
+                    sticker: None,
                 })),
                 ProjectLayer::Shape {
                     name,
