@@ -1,23 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app;
 pub mod capture;
+mod doc;
 mod fonts;
-pub mod i18n;
-pub mod paint;
 pub mod shell;
-mod theme;
+mod ui;
 
 use anyhow::Result;
-
-const TITLE: &str = "Pixel Studio 像素工作室";
 
 /// Parsed command line: `pixel-studio [--edit|--view] [FILE]`,
 /// `--register-shell`, `--unregister-shell`, `--version`.
 #[derive(Debug, Default, PartialEq)]
-struct Args {
-    file: Option<std::path::PathBuf>,
-    view: bool,
+pub struct Args {
+    pub file: Option<std::path::PathBuf>,
+    pub view: bool,
 }
 
 fn console_print(msg: &str) {
@@ -32,16 +28,26 @@ fn console_print(msg: &str) {
     println!("{msg}");
 }
 
+/// On Windows prefer the Skia renderer: the software renderer's partial presentation
+/// can leave regions of the window unpainted (desktop shows through). Fall back to the
+/// software renderer if Skia cannot initialise (e.g. no GPU / RDP without GL).
+fn select_renderer() {
+    #[cfg(windows)]
+    if std::env::var_os("SLINT_BACKEND").is_none() {
+        let skia = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("skia".into()).select();
+        if skia.is_err() {
+            let _ = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("software".into()).select();
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let mut args = Args::default();
     for a in std::env::args_os().skip(1) {
         match a.to_str() {
             Some("--register-shell") => {
-                let zh = std::env::var("PIXEL_STUDIO_LANG")
-                    .map(|l| l != "en")
-                    .unwrap_or(true);
-                let msg = shell::register(zh)?;
-                console_print(&msg);
+                let zh = std::env::var("PIXEL_STUDIO_LANG").map(|l| l != "en").unwrap_or(true);
+                console_print(&shell::register(zh)?);
                 return Ok(());
             }
             Some("--unregister-shell") => {
@@ -57,55 +63,6 @@ fn main() -> Result<()> {
             _ => args.file = Some(std::path::PathBuf::from(a)),
         }
     }
-
-    let make_options = |renderer| eframe::NativeOptions {
-        renderer,
-        viewport: egui::ViewportBuilder::default()
-            .with_title(TITLE)
-            .with_app_id("pixel-studio")
-            .with_icon(app_icon())
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([960.0, 640.0]),
-        ..Default::default()
-    };
-    // wgpu (DX12/Metal/Vulkan) first; fall back to OpenGL if no adapter is available.
-    let order = match std::env::var("PIXEL_STUDIO_RENDERER").as_deref() {
-        Ok("glow") => [eframe::Renderer::Glow, eframe::Renderer::Wgpu],
-        _ => [eframe::Renderer::Wgpu, eframe::Renderer::Glow],
-    };
-    let mut last_err = None;
-    for renderer in order {
-        let file = args.file.clone();
-        let view = args.view;
-        match eframe::run_native(
-            TITLE,
-            make_options(renderer),
-            Box::new(move |cc| {
-                fonts::configure_fonts(&cc.egui_ctx);
-                theme::configure(&cc.egui_ctx);
-                Ok(Box::new(app::PixelStudioApp::new_with_mode(file, view)))
-            }),
-        ) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                eprintln!("renderer {renderer:?} failed: {e}");
-                last_err = Some(e);
-            }
-        }
-    }
-    Err(anyhow::anyhow!(
-        last_err.map(|e| e.to_string()).unwrap_or_default()
-    ))
-}
-
-fn app_icon() -> egui::IconData {
-    let bytes = include_bytes!("../assets/icon-256.png");
-    let img = image::load_from_memory(bytes)
-        .map(|i| i.to_rgba8())
-        .unwrap_or_default();
-    egui::IconData {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw(),
-    }
+    select_renderer();
+    ui::run(args)
 }

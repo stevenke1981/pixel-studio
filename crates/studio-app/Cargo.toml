@@ -13,20 +13,22 @@ anyhow.workspace = true
 arboard.workspace = true
 base64.workspace = true
 chrono.workspace = true
-eframe = { workspace = true, features = ["glow"] }
-egui.workspace = true
 image.workspace = true
 studio-core = { path = "../studio-core" }
 rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sys-locale = "0.3.2"
+dirs = "7.0.0"
+slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "software-renderer-systemfonts", "unstable-winit-030"] }
 
 [target.'cfg(windows)'.dependencies]
-# Windows desktop capture. Keep this target-specific so non-Windows builds retain
-# the platform-independent fallback in `capture.rs` without pulling native APIs.
+# Windows: the software renderer's partial (damage-region) presentation leaves parts of
+# the window unpainted/transparent on some systems, so Skia is used there.
+slint = { version = "1.18.1", default-features = false, features = ["renderer-skia"] }
 winreg = "0.56"
 xcap = { version = "0.9.6", default-features = false }
 
-[target.'cfg(windows)'.build-dependencies]
+[build-dependencies]
+slint-build = "1.18.1"
 winresource = "0.1.34"

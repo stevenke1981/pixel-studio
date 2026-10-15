@@ -2,45 +2,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-pub fn configure_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    if let Some(bytes) = load_system_font_bytes() {
-        fonts.font_data.insert(
-            "windows_cjk".to_owned(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .insert(0, "windows_cjk".to_owned());
-        }
-    }
-
-    // Symbol fallbacks for toolbar icons (appended after egui's own emoji font).
-    let symbol_fonts = [
-        r"C:\Windows\Fonts\seguisym.ttf",
-        r"C:\Windows\Fonts\seguiemj.ttf",
-        "/System/Library/Fonts/Apple Symbols.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    ];
-    for (i, path) in symbol_fonts.iter().enumerate() {
-        if let Ok(bytes) = std::fs::read(path) {
-            let name = format!("symbol_fallback_{i}");
-            fonts
-                .font_data
-                .insert(name.clone(), egui::FontData::from_owned(bytes).into());
-            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                fonts.families.entry(family).or_default().push(name.clone());
-            }
-        }
-    }
-    ctx.set_fonts(fonts);
-}
-
 pub fn load_system_font_bytes() -> Option<Vec<u8>> {
     [
         r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
@@ -106,8 +67,3 @@ pub fn display_font_name(path: &Path) -> String {
         .to_owned()
 }
 
-pub fn preview_family_name(path: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("studio_app_font_preview_{:x}", hasher.finish())
-}

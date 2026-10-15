@@ -1,0 +1,789 @@
+// Pixel Studio — Slint front-end. All document logic lives in Rust (doc.rs);
+// this file only lays out widgets and forwards input.
+import { Button, CheckBox, ComboBox, LineEdit, Slider, SpinBox, ScrollView, TextEdit, ListView } from "std-widgets.slint";
+
+export global T {
+    in property <bool> zh: true;
+    public pure function t(zh-text: string, en-text: string) -> string {
+        return zh ? zh-text : en-text;
+    }
+}
+
+export struct LayerRow { name: string, kind: int, visible: bool, selected: bool }
+export struct StickerItem { id: string, img: image }
+export struct BoxItem { x: float, y: float, w: float, h: float, selected: bool, label: string }
+export struct ToolItem { zh: string, en: string, group: int }
+
+component Section inherits Text {
+    font-weight: 700;
+    font-size: 13px;
+    color: #1f3b63;
+}
+
+component TB inherits Button {
+    // compact toolbar button
+    height: 30px;
+}
+
+component Swatch inherits Rectangle {
+    in property <color> c;
+    callback pick(bool);
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #8888;
+    background: c;
+    TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.pick(e.button == PointerEventButton.right);
+            }
+        }
+    }
+}
+
+component LabeledSlider inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <float> value;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <int> decimals: 0;
+    callback apply();
+    in property <bool> has-apply: true;
+    spacing: 6px;
+    Text { text: label; width: 78px; vertical-alignment: center; overflow: elide; }
+    Slider { minimum: root.minimum; maximum: root.maximum; value <=> root.value; }
+    Text { width: 40px; vertical-alignment: center; text: root.decimals == 0 ? round(root.value) : round(root.value * 10) / 10; }
+    if has-apply: Button { text: T.t("套用", "Apply"); clicked => { root.apply(); } }
+}
+
+export component AppWindow inherits Window {
+    title: "Pixel Studio 像素工作室";
+    preferred-width: 1360px;
+    preferred-height: 860px;
+    min-width: 900px;
+    min-height: 600px;
+    background: #eef1f5;
+    icon: @image-url("../assets/icon-256.png");
+
+    // ---------------------------------------------------------------- state
+    in property <image> canvas;
+    in property <int> img-w: 1;
+    in property <int> img-h: 1;
+    in-out property <float> zoom: 1.0;
+    in-out property <length> pan-x: 0px;
+    in-out property <length> pan-y: 0px;
+    in property <bool> pixelated: false;
+    in property <string> grid-path: "";
+    in property <bool> show-grid-overlay: false;
+    in property <bool> has-selection;
+    in property <float> sel-x; in property <float> sel-y; in property <float> sel-w; in property <float> sel-h;
+    in property <bool> sel-circle;
+    in property <bool> has-preview;
+    in property <float> pv-x; in property <float> pv-y; in property <float> pv-w; in property <float> pv-h;
+    in property <bool> has-layer-box;
+    in property <float> lb-x; in property <float> lb-y; in property <float> lb-w; in property <float> lb-h;
+    in property <bool> lb-handle;
+    in property <[BoxItem]> boxes;
+    in property <bool> show-boxes;
+    out property <length> canvas-w: canvas-area.width;
+    out property <length> canvas-h: canvas-area.height;
+
+    in property <string> status;
+    in property <string> cursor-info;
+    in property <string> doc-info;
+    in property <string> title-file;
+    in property <bool> view-mode;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> dirty-doc;
+
+    in-out property <int> tool: 2;
+    in property <[ToolItem]> tools;
+    in-out property <color> color1: #000000;
+    in-out property <color> color2: #ffffff;
+    in property <[color]> palette;
+    in-out property <float> stroke-width: 4;
+    in-out property <int> shape-kind: 2;
+    in-out property <bool> shape-filled;
+    in-out property <float> fill-tolerance: 16;
+    in-out property <bool> show-grid: true;
+    in-out property <bool> keep-metadata;
+    in-out property <int> tab: 0;
+    in-out property <int> language: 0;
+
+    // export
+    in-out property <int> export-format: 0;
+    in property <[string]> format-names;
+    in-out property <float> quality: 90;
+    in-out property <bool> webp-lossless: true;
+
+    // canvas presets / text styles
+    in property <[string]> preset-names;
+    in-out property <int> new-w: 1080;
+    in-out property <int> new-h: 1080;
+    in-out property <string> style-text: "標題文字";
+
+    // layers
+    in property <[LayerRow]> layers;
+    in property <int> sel-kind: -1; // -1 none, 0 text, 1 image, 2 shape, 3 sticker
+    in-out property <string> l-name;
+    in-out property <string> l-text;
+    in-out property <float> l-font-size: 48;
+    in-out property <float> l-opacity: 100;
+    in-out property <bool> l-stroke;
+    in-out property <bool> l-shadow;
+    in-out property <int> l-w; in-out property <int> l-h;
+    in-out property <float> l-stroke-width: 4;
+    in-out property <bool> l-filled;
+    in property <[string]> font-names;
+    in-out property <int> l-font: 0;
+
+    // adjust
+    in-out property <int> rs-w; in-out property <int> rs-h;
+    in-out property <bool> rs-keep: true;
+    in-out property <bool> select-circle;
+    in-out property <float> a-bright: 20; in-out property <float> a-contrast: 20; in-out property <float> a-sat: 20;
+    in-out property <float> a-expo: 0.5; in-out property <float> a-blur: 2; in-out property <float> a-sharp: 1.5;
+    in-out property <float> a-hue: 30; in-out property <float> a-sepia: 0.8; in-out property <float> a-vig: 0.5;
+    in-out property <float> a-temp: 20; in-out property <float> a-tint: 20; in-out property <float> a-post: 4;
+
+    // stickers
+    in property <[StickerItem]> stickers;
+    in-out property <string> sticker-query;
+    in property <[string]> sticker-categories;
+    in-out property <int> sticker-category: 0;
+    in-out property <float> st-stroke: 4;
+    in-out property <bool> st-shadow: true;
+    in-out property <color> st-fill: #e53935;
+    in-out property <color> st-outline: #ffffff;
+    out property <bool> dragging-sticker: false;
+    property <image> drag-img;
+    property <string> drag-id;
+    property <length> drag-x; property <length> drag-y;
+
+    // redact
+    in property <string> redact-info;
+    in property <bool> detecting;
+    in-out property <int> redact-style: 0;
+    in-out property <float> redact-padding: 4;
+    in-out property <float> mosaic-block: 12;
+    in-out property <float> blur-sigma: 10;
+    in-out property <string> redact-keyword;
+    in-out property <float> redact-radius: 12;
+    in property <[BoxItem]> box-list;
+
+    // info / c2pa
+    in property <string> info-text;
+    in property <string> c2pa-text;
+    in-out property <string> c2pa-title; in-out property <string> c2pa-creator; in-out property <string> c2pa-action: "c2pa.edited";
+    in-out property <bool> c2pa-on-save;
+
+    // batch
+    in-out property <string> batch-in; in-out property <string> batch-out;
+    in-out property <int> batch-format: 0;
+    in-out property <int> batch-max-w: 0; in-out property <int> batch-max-h: 0;
+    in-out property <string> batch-watermark;
+    in property <string> batch-progress;
+    in property <bool> batch-running;
+    in-out property <float> gif-delay: 500;
+    in-out property <bool> gif-repeat: true;
+    in-out property <int> gif-max: 0;
+    in property <string> gif-frames;
+    in-out property <int> pano-mode: 0;
+    in-out property <int> pano-width: 0;
+
+    // settings
+    in property <string> shell-state;
+    in property <string> version;
+
+    // ---------------------------------------------------------------- callbacks
+    callback action(string);
+    callback canvas-pointer(int, int, length, length, bool, bool); // kind 0 down 1 up 2 move 3 leave, button 0 left 1 right 2 middle
+    callback canvas-scroll(length, length, length, bool);
+    callback canvas-resized();
+    callback key(string, bool, bool) -> bool;
+    callback pick-color(color, bool);
+    callback select-layer(int);
+    callback toggle-layer(int);
+    callback layer-edited(string);
+    callback sticker-click(string);
+    callback sticker-drop(string, length, length);
+    callback sticker-search();
+    callback toggle-box(int);
+    callback apply-preset(int);
+    callback text-style(int);
+    callback tool-changed(int);
+    callback language-changed(int);
+
+    changed canvas-w => { root.canvas-resized(); }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control || e.modifiers.meta, e.modifiers.shift)) { return accept; }
+            return reject;
+        }
+
+    VerticalLayout {
+        // ------------------------------------------------------------ top bar
+        Rectangle {
+            background: #ffffff;
+            height: 44px;
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 4px;
+                TB { text: T.t("新增", "New"); clicked => { root.action("new"); } }
+                TB { text: T.t("開啟", "Open"); clicked => { root.action("open"); } }
+                TB { text: T.t("資料夾", "Folder"); clicked => { root.action("open-folder"); } }
+                TB { text: T.t("儲存", "Save"); clicked => { root.action("save"); } }
+                TB { text: T.t("另存", "Save as"); clicked => { root.action("save-as"); } }
+                TB { text: T.t("專案…", "Project…"); clicked => { root.action("open-project"); } }
+                TB { text: T.t("存專案", "Save proj"); clicked => { root.action("save-project"); } }
+                Rectangle { width: 8px; }
+                TB { text: T.t("復原", "Undo"); enabled: root.can-undo; clicked => { root.action("undo"); } }
+                TB { text: T.t("重做", "Redo"); enabled: root.can-redo; clicked => { root.action("redo"); } }
+                TB { text: T.t("貼上", "Paste"); clicked => { root.action("paste"); } }
+                TB { text: T.t("複製", "Copy"); clicked => { root.action("copy"); } }
+                TB { text: T.t("截圖", "Screenshot"); clicked => { root.action("screenshot"); } }
+                Rectangle { width: 8px; }
+                TB { text: "−"; clicked => { root.action("zoom-out"); } }
+                Text { text: round(root.zoom * 100) + "%"; vertical-alignment: center; width: 48px; horizontal-alignment: center; }
+                TB { text: "+"; clicked => { root.action("zoom-in"); } }
+                TB { text: T.t("符合", "Fit"); clicked => { root.action("zoom-fit"); } }
+                TB { text: "1:1"; clicked => { root.action("zoom-100"); } }
+                TB { text: "◀"; clicked => { root.action("prev"); } }
+                TB { text: "▶"; clicked => { root.action("next"); } }
+                Rectangle { horizontal-stretch: 1; }
+                TB { text: root.view-mode ? T.t("檢視模式", "Viewer") : T.t("編輯模式", "Editor"); clicked => { root.action("toggle-mode"); } }
+            }
+        }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // -------------------------------------------------------- tool column
+            if !root.view-mode: Rectangle {
+                width: 112px;
+                background: #f8f9fb;
+                ScrollView {
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 3px;
+                        for t[i] in root.tools: Rectangle {
+                            height: 28px;
+                            border-radius: 4px;
+                            background: root.tool == i ? #2f6fed : (ta.has-hover ? #dde6f7 : transparent);
+                            Text {
+                                text: T.t(t.zh, t.en);
+                                color: root.tool == i ? white : #222;
+                                x: 8px;
+                                vertical-alignment: center;
+                                height: parent.height;
+                            }
+                            ta := TouchArea { clicked => { root.tool = i; root.tool-changed(i); fs.focus(); } }
+                        }
+                        Rectangle { height: 8px; }
+                        Text { text: T.t("顏色 1 / 2", "Colour 1 / 2"); font-size: 11px; }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Rectangle { width: 32px; height: 32px; background: root.color1; border-width: 2px; border-color: #333; border-radius: 4px; }
+                            Rectangle { width: 32px; height: 32px; background: root.color2; border-width: 1px; border-color: #999; border-radius: 4px; }
+                            Button { text: "⇄"; clicked => { root.action("swap-colors"); } }
+                        }
+                        Text { text: T.t("左鍵=色1 右鍵=色2", "L=colour 1  R=colour 2"); font-size: 10px; color: #666; wrap: word-wrap; }
+                        GridLayout {
+                            spacing: 3px;
+                            for c[i] in root.palette: Swatch {
+                                row: floor(i / 4);
+                                col: mod(i, 4);
+                                c: c;
+                                pick(right) => { root.pick-color(c, right); }
+                            }
+                        }
+                        hex := LineEdit { placeholder-text: "#RRGGBB"; accepted(t) => { root.action("hex:" + t); } }
+                    }
+                }
+            }
+            // -------------------------------------------------------- canvas
+            canvas-area := Rectangle {
+                horizontal-stretch: 1;
+                background: #c9ced6;
+                clip: true;
+                // checkerboard behind transparent pixels
+                Rectangle {
+                    x: root.pan-x; y: root.pan-y;
+                    width: root.img-w * root.zoom * 1px;
+                    height: root.img-h * root.zoom * 1px;
+                    background: #ffffff;
+                    drop-shadow-blur: 8px;
+                    drop-shadow-color: #0004;
+                }
+                Image {
+                    x: root.pan-x; y: root.pan-y;
+                    width: root.img-w * root.zoom * 1px;
+                    height: root.img-h * root.zoom * 1px;
+                    source: root.canvas;
+                    image-rendering: root.pixelated ? ImageRendering.pixelated : ImageRendering.smooth;
+                    image-fit: fill;
+                }
+                if root.show-grid-overlay: Path {
+                    x: 0; y: 0;
+                    width: canvas-area.width; height: canvas-area.height;
+                    viewbox-x: 0; viewbox-y: 0;
+                    viewbox-width: canvas-area.width / 1px; viewbox-height: canvas-area.height / 1px;
+                    commands: root.grid-path;
+                    stroke: #0003;
+                    stroke-width: 1px;
+                }
+                if root.has-selection: Rectangle {
+                    x: root.pan-x + root.sel-x * root.zoom * 1px;
+                    y: root.pan-y + root.sel-y * root.zoom * 1px;
+                    width: root.sel-w * root.zoom * 1px;
+                    height: root.sel-h * root.zoom * 1px;
+                    border-width: 1.5px;
+                    border-color: #2f6fed;
+                    border-radius: root.sel-circle ? self.width / 2 : 0;
+                    background: #2f6fed18;
+                }
+                if root.has-preview: Rectangle {
+                    x: root.pan-x + root.pv-x * root.zoom * 1px;
+                    y: root.pan-y + root.pv-y * root.zoom * 1px;
+                    width: root.pv-w * root.zoom * 1px;
+                    height: root.pv-h * root.zoom * 1px;
+                    border-width: 1.5px;
+                    border-color: #e53935;
+                    background: #e5393520;
+                }
+                if root.show-boxes: Rectangle {
+                    for b in root.boxes: Rectangle {
+                        x: root.pan-x + b.x * root.zoom * 1px;
+                        y: root.pan-y + b.y * root.zoom * 1px;
+                        width: b.w * root.zoom * 1px;
+                        height: b.h * root.zoom * 1px;
+                        border-width: 2px;
+                        border-color: b.selected ? #e53935 : #1e88e5;
+                        background: b.selected ? #e5393540 : #1e88e518;
+                        if b.label != "": Rectangle {
+                            x: 0; y: -14px; height: 14px; width: lbl.preferred-width + 6px;
+                            background: b.selected ? #e53935 : #1e88e5;
+                            lbl := Text { text: b.label; color: white; font-size: 10px; }
+                        }
+                    }
+                }
+                if root.has-layer-box: Rectangle {
+                    x: root.pan-x + root.lb-x * root.zoom * 1px - 2px;
+                    y: root.pan-y + root.lb-y * root.zoom * 1px - 2px;
+                    width: root.lb-w * root.zoom * 1px + 4px;
+                    height: root.lb-h * root.zoom * 1px + 4px;
+                    border-width: 1px;
+                    border-color: #ff9800;
+                    if root.lb-handle: Rectangle {
+                        x: parent.width - 6px; y: parent.height - 6px; width: 12px; height: 12px;
+                        background: #ff9800; border-width: 1px; border-color: white;
+                    }
+                }
+                TouchArea {
+                    mouse-cursor: root.tool == 12 ? MouseCursor.grab : MouseCursor.crosshair;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) { fs.focus(); }
+                        root.canvas-pointer(
+                            e.kind == PointerEventKind.down ? 0 : e.kind == PointerEventKind.up ? 1 : e.kind == PointerEventKind.move ? 2 : 3,
+                            e.button == PointerEventButton.right ? 1 : e.button == PointerEventButton.middle ? 2 : 0,
+                            self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control);
+                    }
+                    scroll-event(e) => {
+                        root.canvas-scroll(self.mouse-x, self.mouse-y, e.delta-y, e.modifiers.control);
+                        return accept;
+                    }
+                }
+            }
+            // -------------------------------------------------------- inspector
+            if !root.view-mode: Rectangle {
+                width: 340px;
+                background: #ffffff;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    GridLayout {
+                        spacing: 3px;
+                        Row {
+                            Button { text: T.t("工具", "Tools"); primary: root.tab == 0; clicked => { root.tab = 0; } }
+                            Button { text: T.t("圖層", "Layers"); primary: root.tab == 1; clicked => { root.tab = 1; } }
+                            Button { text: T.t("調整", "Adjust"); primary: root.tab == 2; clicked => { root.tab = 2; } }
+                            Button { text: T.t("貼圖", "Stickers"); primary: root.tab == 3; clicked => { root.tab = 3; } }
+                        }
+                        Row {
+                            Button { text: T.t("自動打碼", "Redact"); primary: root.tab == 4; clicked => { root.tab = 4; root.action("tab-redact"); } }
+                            Button { text: T.t("資訊", "Info"); primary: root.tab == 5; clicked => { root.tab = 5; root.action("refresh-info"); } }
+                            Button { text: T.t("批次", "Batch"); primary: root.tab == 6; clicked => { root.tab = 6; } }
+                            Button { text: T.t("設定", "Settings"); primary: root.tab == 7; clicked => { root.tab = 7; root.action("refresh-shell"); } }
+                        }
+                    }
+                    Rectangle { height: 1px; background: #ddd; }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding: 4px;
+                            spacing: 6px;
+                            alignment: start;
+                            // ===== Tools
+                            if root.tab == 0: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("筆刷 / 形狀", "Brush / shape"); }
+                                LabeledSlider { label: T.t("粗細", "Width"); minimum: 1; maximum: 120; value <=> root.stroke-width; has-apply: false; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Text { text: T.t("形狀", "Shape"); vertical-alignment: center; width: 78px; }
+                                    ComboBox {
+                                        model: [T.t("直線", "Line"), T.t("箭頭", "Arrow"), T.t("矩形", "Rectangle"), T.t("橢圓", "Ellipse"), T.t("三角形", "Triangle")];
+                                        current-index <=> root.shape-kind;
+                                    }
+                                }
+                                CheckBox { text: T.t("形狀填滿（色 2）", "Fill shapes (colour 2)"); checked <=> root.shape-filled; }
+                                LabeledSlider { label: T.t("填滿容差", "Fill tolerance"); minimum: 0; maximum: 128; value <=> root.fill-tolerance; has-apply: false; }
+                                CheckBox { text: T.t("放大時顯示像素格線", "Pixel grid when zoomed in"); checked <=> root.show-grid; toggled => { root.action("grid"); } }
+                                Section { text: T.t("匯出", "Export"); }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    ComboBox { model: root.format-names; current-index <=> root.export-format; }
+                                    Button { text: T.t("匯出…", "Export…"); clicked => { root.action("export"); } }
+                                }
+                                LabeledSlider { label: T.t("品質", "Quality"); minimum: 1; maximum: 100; value <=> root.quality; has-apply: false; }
+                                CheckBox { text: T.t("WebP 無損", "WebP lossless"); checked <=> root.webp-lossless; }
+                                CheckBox { text: T.t("保留 EXIF/ICC 中繼資料", "Keep EXIF/ICC metadata"); checked <=> root.keep-metadata; }
+                                Section { text: T.t("社群畫布尺寸", "Social canvas presets"); }
+                                for p[i] in root.preset-names: Button { text: p; clicked => { root.apply-preset(i); } }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    SpinBox { minimum: 1; maximum: 16000; value <=> root.new-w; }
+                                    Text { text: "×"; vertical-alignment: center; }
+                                    SpinBox { minimum: 1; maximum: 16000; value <=> root.new-h; }
+                                    Button { text: T.t("新畫布", "New"); clicked => { root.action("new-custom"); } }
+                                }
+                                Section { text: T.t("快速文字樣式", "Quick text styles"); }
+                                LineEdit { text <=> root.style-text; }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    Button { text: T.t("外框", "Outline"); clicked => { root.text-style(0); } }
+                                    Button { text: T.t("陰影", "Shadow"); clicked => { root.text-style(1); } }
+                                    Button { text: T.t("框+影", "Both"); clicked => { root.text-style(2); } }
+                                    Button { text: T.t("純文字", "Plain"); clicked => { root.text-style(3); } }
+                                }
+                            }
+                            // ===== Layers
+                            if root.tab == 1: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("圖層（上方在前）", "Layers (top first)"); }
+                                for l[i] in root.layers: Rectangle {
+                                    height: 28px;
+                                    border-radius: 4px;
+                                    background: l.selected ? #dbe7ff : (lta.has-hover ? #f0f3f8 : #fafbfc);
+                                    lta := TouchArea { clicked => { root.select-layer(i); } }
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        spacing: 6px;
+                                        CheckBox { checked: l.visible; toggled => { root.toggle-layer(i); } }
+                                        Text {
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                            horizontal-stretch: 1;
+                                            text: (l.kind == 0 ? "T  " : l.kind == 1 ? "▣  " : l.kind == 2 ? "◇  " : "★  ") + l.name;
+                                        }
+                                    }
+                                }
+                                if root.layers.length == 0: Text { text: T.t("尚無圖層。用文字/形狀工具、貼圖或「加入圖片」。", "No layers yet. Use Text/Shapes, stickers or Add image."); wrap: word-wrap; color: #666; }
+                                GridLayout {
+                                    spacing: 3px;
+                                    Row {
+                                        Button { text: T.t("上移", "Up"); clicked => { root.action("layer-up"); } }
+                                        Button { text: T.t("下移", "Down"); clicked => { root.action("layer-down"); } }
+                                        Button { text: T.t("複製", "Dup"); clicked => { root.action("layer-dup"); } }
+                                        Button { text: T.t("刪除", "Delete"); clicked => { root.action("layer-delete"); } }
+                                    }
+                                    Row {
+                                        Button { text: T.t("加文字", "Add text"); clicked => { root.action("add-text"); } }
+                                        Button { text: T.t("加圖片", "Add image"); clicked => { root.action("add-image"); } }
+                                        Button { text: T.t("貼為圖層", "Paste layer"); clicked => { root.action("paste-layer"); } }
+                                        Button { text: T.t("合併", "Flatten"); clicked => { root.action("flatten"); } }
+                                    }
+                                }
+                                if root.sel-kind >= 0: VerticalLayout {
+                                    spacing: 6px;
+                                    Section { text: T.t("選取的圖層", "Selected layer"); }
+                                    LineEdit { text <=> root.l-name; edited => { root.layer-edited("name"); } }
+                                    LabeledSlider { label: T.t("不透明度", "Opacity"); minimum: 0; maximum: 100; value <=> root.l-opacity; has-apply: false; changed value => { root.layer-edited("opacity"); } }
+                                    if root.sel-kind == 0: VerticalLayout {
+                                        spacing: 6px;
+                                        TextEdit { height: 70px; text <=> root.l-text; edited => { root.layer-edited("text"); } }
+                                        LabeledSlider { label: T.t("字級", "Size"); minimum: 6; maximum: 400; value <=> root.l-font-size; has-apply: false; changed value => { root.layer-edited("font-size"); } }
+                                        ComboBox { model: root.font-names; current-index <=> root.l-font; selected => { root.layer-edited("font"); } }
+                                        HorizontalLayout {
+                                            CheckBox { text: T.t("外框", "Outline"); checked <=> root.l-stroke; toggled => { root.layer-edited("stroke"); } }
+                                            CheckBox { text: T.t("陰影", "Shadow"); checked <=> root.l-shadow; toggled => { root.layer-edited("shadow"); } }
+                                        }
+                                        Button { text: T.t("套用色 1 為文字顏色", "Use colour 1 for text"); clicked => { root.layer-edited("color"); } }
+                                    }
+                                    if root.sel-kind == 1 || root.sel-kind == 3: HorizontalLayout {
+                                        spacing: 4px;
+                                        SpinBox { minimum: 1; maximum: 16000; value <=> root.l-w; edited => { root.layer-edited("w"); } }
+                                        Text { text: "×"; vertical-alignment: center; }
+                                        SpinBox { minimum: 1; maximum: 16000; value <=> root.l-h; edited => { root.layer-edited("h"); } }
+                                    }
+                                    if root.sel-kind == 1 || root.sel-kind == 3: Text { text: T.t("在畫布上拖曳右下角控點可等比縮放。", "Drag the bottom-right handle on the canvas to resize."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                    if root.sel-kind == 2: VerticalLayout {
+                                        spacing: 6px;
+                                        LabeledSlider { label: T.t("線寬", "Line width"); minimum: 1; maximum: 60; value <=> root.l-stroke-width; has-apply: false; changed value => { root.layer-edited("stroke-width"); } }
+                                        CheckBox { text: T.t("填滿", "Filled"); checked <=> root.l-filled; toggled => { root.layer-edited("filled"); } }
+                                        Button { text: T.t("線色=色1 / 填色=色2", "Stroke=colour 1 / fill=colour 2"); clicked => { root.layer-edited("color"); } }
+                                    }
+                                    if root.sel-kind == 3: Text { text: T.t("貼圖顏色與外框請在「貼圖」分頁調整。", "Sticker colours/outline: see the Stickers tab."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                }
+                            }
+                            // ===== Adjust
+                            if root.tab == 2: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("旋轉 / 翻轉", "Rotate / flip"); }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: "⟲ 90°"; clicked => { root.action("rot-left"); } }
+                                    Button { text: "⟳ 90°"; clicked => { root.action("rot-right"); } }
+                                    Button { text: "180°"; clicked => { root.action("rot-180"); } }
+                                    Button { text: "⇋"; clicked => { root.action("flip-h"); } }
+                                    Button { text: "⇵"; clicked => { root.action("flip-v"); } }
+                                }
+                                Section { text: T.t("選取 / 裁切", "Select / crop"); }
+                                CheckBox { text: T.t("圓形選取", "Circular selection"); checked <=> root.select-circle; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("全選", "Select all"); clicked => { root.action("select-all"); } }
+                                    Button { text: T.t("取消選取", "Deselect"); clicked => { root.action("deselect"); } }
+                                    Button { text: T.t("裁切", "Crop"); clicked => { root.action("crop"); } }
+                                }
+                                Section { text: T.t("尺寸", "Size"); }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    SpinBox { minimum: 1; maximum: 16000; value <=> root.rs-w; edited => { root.action("rs-w"); } }
+                                    Text { text: "×"; vertical-alignment: center; }
+                                    SpinBox { minimum: 1; maximum: 16000; value <=> root.rs-h; edited => { root.action("rs-h"); } }
+                                }
+                                CheckBox { text: T.t("維持比例", "Keep aspect ratio"); checked <=> root.rs-keep; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("縮放影像", "Resize image"); clicked => { root.action("resize"); } }
+                                    Button { text: T.t("畫布大小", "Canvas size"); clicked => { root.action("canvas-size"); } }
+                                }
+                                Section { text: T.t("調整（有選取時只套用選取區）", "Adjustments (selection only if any)"); }
+                                LabeledSlider { label: T.t("亮度", "Brightness"); minimum: -100; maximum: 100; value <=> root.a-bright; apply => { root.action("f-bright"); } }
+                                LabeledSlider { label: T.t("對比", "Contrast"); minimum: -100; maximum: 100; value <=> root.a-contrast; apply => { root.action("f-contrast"); } }
+                                LabeledSlider { label: T.t("飽和度", "Saturation"); minimum: -100; maximum: 100; value <=> root.a-sat; apply => { root.action("f-sat"); } }
+                                LabeledSlider { label: T.t("曝光", "Exposure"); minimum: -3; maximum: 3; decimals: 1; value <=> root.a-expo; apply => { root.action("f-expo"); } }
+                                LabeledSlider { label: T.t("色相", "Hue"); minimum: -180; maximum: 180; value <=> root.a-hue; apply => { root.action("f-hue"); } }
+                                LabeledSlider { label: T.t("色溫", "Temperature"); minimum: -100; maximum: 100; value <=> root.a-temp; apply => { root.action("f-temp"); } }
+                                LabeledSlider { label: T.t("色調", "Tint"); minimum: -100; maximum: 100; value <=> root.a-tint; apply => { root.action("f-tint"); } }
+                                LabeledSlider { label: T.t("模糊", "Blur"); minimum: 0.1; maximum: 20; decimals: 1; value <=> root.a-blur; apply => { root.action("f-blur"); } }
+                                LabeledSlider { label: T.t("銳利化", "Sharpen"); minimum: 0.1; maximum: 10; decimals: 1; value <=> root.a-sharp; apply => { root.action("f-sharp"); } }
+                                LabeledSlider { label: T.t("懷舊", "Sepia"); minimum: 0; maximum: 1; decimals: 1; value <=> root.a-sepia; apply => { root.action("f-sepia"); } }
+                                LabeledSlider { label: T.t("暗角", "Vignette"); minimum: 0; maximum: 1; decimals: 1; value <=> root.a-vig; apply => { root.action("f-vig"); } }
+                                LabeledSlider { label: T.t("色階", "Posterize"); minimum: 2; maximum: 16; value <=> root.a-post; apply => { root.action("f-post"); } }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("灰階", "Grayscale"); clicked => { root.action("f-gray"); } }
+                                    Button { text: T.t("負片", "Invert"); clicked => { root.action("f-invert"); } }
+                                    Button { text: T.t("自動對比", "Auto contrast"); clicked => { root.action("f-auto"); } }
+                                }
+                                Button { text: T.t("還原成原始影像", "Reset to original"); clicked => { root.action("reset"); } }
+                            }
+                            // ===== Stickers
+                            if root.tab == 3: VerticalLayout {
+                                spacing: 6px;
+                                LineEdit { placeholder-text: T.t("搜尋：愛心、arrow、NEW…", "Search: heart, 箭頭, NEW…"); text <=> root.sticker-query; edited => { root.sticker-search(); } }
+                                ComboBox { model: root.sticker-categories; current-index <=> root.sticker-category; selected => { root.sticker-search(); } }
+                                Text { text: T.t("點一下插入到中央，或拖曳到畫布上。", "Click to insert at centre, or drag onto the canvas."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                Rectangle {
+                                    height: ceil(root.stickers.length / 5) * 62px;
+                                    for s[i] in root.stickers: Rectangle {
+                                        x: mod(i, 5) * 62px;
+                                        y: floor(i / 5) * 62px;
+                                        width: 58px; height: 58px;
+                                        border-radius: 6px;
+                                        background: sta.has-hover ? #e3ecfd : #f4f6f9;
+                                        Image { source: s.img; width: 48px; height: 48px; }
+                                        sta := TouchArea {
+                                            property <bool> moved-far;
+                                            pointer-event(e) => {
+                                                if (e.kind == PointerEventKind.down) { self.moved-far = false; }
+                                                if (e.kind == PointerEventKind.up) {
+                                                    if (root.dragging-sticker) {
+                                                        root.dragging-sticker = false;
+                                                        if (root.drag-x >= canvas-area.absolute-position.x - root.absolute-position.x && root.drag-x < canvas-area.absolute-position.x - root.absolute-position.x + canvas-area.width
+                                                            && root.drag-y >= canvas-area.absolute-position.y - root.absolute-position.y && root.drag-y < canvas-area.absolute-position.y - root.absolute-position.y + canvas-area.height) {
+                                                            root.sticker-drop(s.id, root.drag-x - (canvas-area.absolute-position.x - root.absolute-position.x), root.drag-y - (canvas-area.absolute-position.y - root.absolute-position.y));
+                                                        }
+                                                    } else if (!self.moved-far) {
+                                                        root.sticker-click(s.id);
+                                                    }
+                                                }
+                                            }
+                                            moved => {
+                                                if (abs(self.mouse-x - self.pressed-x) + abs(self.mouse-y - self.pressed-y) > 8px) {
+                                                    self.moved-far = true;
+                                                    root.dragging-sticker = true;
+                                                    root.drag-img = s.img;
+                                                    root.drag-id = s.id;
+                                                    root.drag-x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                                                    root.drag-y = self.absolute-position.y - root.absolute-position.y + self.mouse-y;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Section { text: T.t("貼圖樣式（新貼圖與選取的貼圖）", "Sticker style (new + selected)"); }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle { width: 24px; height: 24px; background: root.st-fill; border-width: 1px; border-color: #888; }
+                                    Button { text: T.t("填色=色1", "Fill = colour 1"); clicked => { root.action("st-fill"); } }
+                                    Rectangle { width: 24px; height: 24px; background: root.st-outline; border-width: 1px; border-color: #888; }
+                                    Button { text: T.t("外框=色2", "Outline = colour 2"); clicked => { root.action("st-outline"); } }
+                                }
+                                LabeledSlider { label: T.t("外框粗細", "Outline"); minimum: 0; maximum: 12; value <=> root.st-stroke; has-apply: false; changed value => { root.action("st-style"); } }
+                                CheckBox { text: T.t("陰影", "Shadow"); checked <=> root.st-shadow; toggled => { root.action("st-style"); } }
+                            }
+                            // ===== Redact
+                            if root.tab == 4: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("自動打碼（離線文字偵測）", "Auto redact (offline text detection)"); }
+                                Button { text: root.detecting ? T.t("偵測中…", "Detecting…") : T.t("偵測文字", "Detect text"); enabled: !root.detecting; primary: true; clicked => { root.action("detect"); } }
+                                Text { text: root.redact-info; wrap: word-wrap; font-size: 11px; color: #444; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("框選工具", "Box tool"); clicked => { root.action("tool-redact-box"); } }
+                                    Button { text: T.t("打碼筆刷", "Redact brush"); clicked => { root.action("tool-redact-brush"); } }
+                                }
+                                Text { text: T.t("框選：拖曳新增、點擊切換、右鍵刪除。", "Boxes: drag to add, click to toggle, right-click to delete."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("敏感資料", "Sensitive"); clicked => { root.action("sel-sensitive"); } }
+                                    Button { text: T.t("全選", "All"); clicked => { root.action("sel-all-boxes"); } }
+                                    Button { text: T.t("全不選", "None"); clicked => { root.action("sel-no-boxes"); } }
+                                    Button { text: T.t("清除", "Clear"); clicked => { root.action("clear-boxes"); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    LineEdit { placeholder-text: T.t("關鍵字", "Keyword"); text <=> root.redact-keyword; }
+                                    Button { text: T.t("選取", "Select"); clicked => { root.action("sel-keyword"); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Text { text: T.t("樣式", "Style"); vertical-alignment: center; width: 78px; }
+                                    ComboBox { model: [T.t("實心色塊（最安全）", "Solid box (safest)"), T.t("馬賽克", "Mosaic"), T.t("高斯模糊", "Gaussian blur")]; current-index <=> root.redact-style; }
+                                }
+                                LabeledSlider { label: T.t("外擴", "Padding"); minimum: 0; maximum: 40; value <=> root.redact-padding; has-apply: false; }
+                                if root.redact-style == 1: LabeledSlider { label: T.t("格大小", "Block"); minimum: 4; maximum: 48; value <=> root.mosaic-block; has-apply: false; }
+                                if root.redact-style == 2: LabeledSlider { label: "Sigma"; minimum: 2; maximum: 40; value <=> root.blur-sigma; has-apply: false; }
+                                LabeledSlider { label: T.t("筆刷半徑", "Brush radius"); minimum: 2; maximum: 80; value <=> root.redact-radius; has-apply: false; }
+                                Text { text: T.t("實心色塊與筆刷使用色 1。", "Solid box and brush use colour 1."); font-size: 11px; color: #666; }
+                                CheckBox { text: T.t("匯出時保留中繼資料（預設移除）", "Keep metadata on export (stripped by default)"); checked <=> root.keep-metadata; }
+                                Button { text: T.t("套用打碼（破壞性）", "Apply redaction (destructive)"); primary: true; clicked => { root.action("apply-redact"); } }
+                                for b[i] in root.box-list: HorizontalLayout {
+                                    spacing: 4px;
+                                    CheckBox { checked: b.selected; toggled => { root.toggle-box(i); } }
+                                    Text { text: b.label; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                }
+                            }
+                            // ===== Info / C2PA
+                            if root.tab == 5: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("影像資訊", "Image info"); }
+                                Text { text: root.info-text; wrap: word-wrap; }
+                                Section { text: "C2PA"; }
+                                Text { text: root.c2pa-text; wrap: word-wrap; font-size: 11px; }
+                                LineEdit { placeholder-text: T.t("標題", "Title"); text <=> root.c2pa-title; }
+                                LineEdit { placeholder-text: T.t("作者", "Creator"); text <=> root.c2pa-creator; }
+                                LineEdit { placeholder-text: "c2pa.edited"; text <=> root.c2pa-action; }
+                                CheckBox { text: T.t("儲存時寫入 C2PA", "Write C2PA on save"); checked <=> root.c2pa-on-save; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("另存含 C2PA", "Save copy + C2PA"); clicked => { root.action("c2pa-write"); } }
+                                    Button { text: T.t("另存移除 C2PA", "Save copy − C2PA"); clicked => { root.action("c2pa-remove"); } }
+                                }
+                            }
+                            // ===== Batch
+                            if root.tab == 6: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("批次轉檔 / 縮圖 / 浮水印", "Batch convert / resize / watermark"); }
+                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-in; placeholder-text: T.t("來源資料夾", "Input folder"); } Button { text: "…"; clicked => { root.action("batch-in"); } } }
+                                HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } Button { text: "…"; clicked => { root.action("batch-out"); } } }
+                                ComboBox { model: root.format-names; current-index <=> root.batch-format; }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    Text { text: T.t("最大寬高(0=不限)", "Max W×H (0=any)"); vertical-alignment: center; }
+                                    SpinBox { minimum: 0; maximum: 16000; value <=> root.batch-max-w; }
+                                    SpinBox { minimum: 0; maximum: 16000; value <=> root.batch-max-h; }
+                                }
+                                LineEdit { text <=> root.batch-watermark; placeholder-text: T.t("浮水印文字（可留空）", "Watermark text (optional)"); }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("執行批次", "Run batch"); enabled: !root.batch-running; primary: true; clicked => { root.action("batch-run"); } }
+                                    Button { text: T.t("批次加 C2PA", "Batch add C2PA"); enabled: !root.batch-running; clicked => { root.action("batch-c2pa-add"); } }
+                                    Button { text: T.t("批次移除", "Batch strip"); enabled: !root.batch-running; clicked => { root.action("batch-c2pa-remove"); } }
+                                }
+                                Text { text: root.batch-progress; wrap: word-wrap; font-size: 11px; }
+                                Section { text: T.t("GIF 動畫", "Animated GIF"); }
+                                HorizontalLayout { spacing: 3px; Button { text: T.t("選擇影格…", "Pick frames…"); clicked => { root.action("gif-pick"); } } Text { text: root.gif-frames; vertical-alignment: center; } }
+                                LabeledSlider { label: T.t("間隔 ms", "Delay ms"); minimum: 20; maximum: 3000; value <=> root.gif-delay; has-apply: false; }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    CheckBox { text: T.t("循環", "Loop"); checked <=> root.gif-repeat; }
+                                    Text { text: T.t("最大邊", "Max side"); vertical-alignment: center; }
+                                    SpinBox { minimum: 0; maximum: 4000; value <=> root.gif-max; }
+                                }
+                                Button { text: T.t("建立 GIF…", "Create GIF…"); clicked => { root.action("gif-run"); } }
+                                Section { text: T.t("360° 全景 JPEG（目前影像）", "360° panorama JPEG (current image)"); }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    ComboBox { model: [T.t("補邊", "Pad"), T.t("拉伸", "Stretch"), T.t("裁切", "Crop")]; current-index <=> root.pano-mode; }
+                                    SpinBox { minimum: 0; maximum: 30000; value <=> root.pano-width; }
+                                }
+                                Button { text: T.t("輸出全景…", "Export panorama…"); clicked => { root.action("pano-run"); } }
+                            }
+                            // ===== Settings
+                            if root.tab == 7: VerticalLayout {
+                                spacing: 6px;
+                                Section { text: T.t("語言", "Language"); }
+                                ComboBox { model: ["繁體中文", "English"]; current-index <=> root.language; selected => { root.language-changed(root.language); } }
+                                Section { text: T.t("右鍵選單與開啟方式", "Right-click menu & Open With"); }
+                                Text { text: root.shell-state; wrap: word-wrap; }
+                                HorizontalLayout {
+                                    spacing: 3px;
+                                    Button { text: T.t("註冊", "Register"); clicked => { root.action("shell-register"); } }
+                                    Button { text: T.t("移除", "Unregister"); clicked => { root.action("shell-unregister"); } }
+                                }
+                                Section { text: T.t("關於", "About"); }
+                                Text { text: "Pixel Studio " + root.version + "\n" + T.t("Rust + Slint，MIT 授權。", "Rust + Slint, MIT licensed."); wrap: word-wrap; }
+                                Text { text: T.t("快捷鍵：Ctrl+O 開啟、Ctrl+S 儲存、Ctrl+Z/Y 復原/重做、Ctrl+V 貼上、Ctrl+C 複製、Del 刪除圖層、+/- 縮放、0 符合視窗、方向鍵移動圖層、中鍵拖曳平移、Ctrl+滾輪縮放。", "Shortcuts: Ctrl+O open, Ctrl+S save, Ctrl+Z/Y undo/redo, Ctrl+V paste, Ctrl+C copy, Del delete layer, +/- zoom, 0 fit, arrows nudge layer, middle-drag to pan, Ctrl+wheel zoom."); wrap: word-wrap; font-size: 11px; color: #555; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ------------------------------------------------------------ status bar
+        Rectangle {
+            height: 24px;
+            background: #dfe4ea;
+            HorizontalLayout {
+                padding-left: 8px; padding-right: 8px;
+                spacing: 16px;
+                Text { text: root.status; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                Text { text: root.cursor-info; vertical-alignment: center; }
+                Text { text: root.doc-info; vertical-alignment: center; }
+            }
+        }
+    }
+    }
+    if root.dragging-sticker: Image {
+        x: root.drag-x - 28px; y: root.drag-y - 28px;
+        width: 56px; height: 56px;
+        source: root.drag-img;
+        opacity: 0.8;
+    }
+}
