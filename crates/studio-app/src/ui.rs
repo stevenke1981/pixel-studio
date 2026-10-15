@@ -2457,10 +2457,16 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
         let mut s = st.borrow_mut();
         let zh = s.zh;
         let mut detect_done = None;
-        if let Some(Job::Detect(rx)) = &s.job
-            && let Ok(r) = rx.try_recv()
-        {
-            detect_done = Some(r);
+        if let Some(Job::Detect(rx)) = &s.job {
+            match rx.try_recv() {
+                Ok(r) => detect_done = Some(r),
+                // The worker panicked (unwind) or dropped its sender: don't leave
+                // the UI stuck in "detecting".
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    detect_done = Some(Err("worker stopped unexpectedly".into()))
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
         }
         if let Some(r) = detect_done {
             s.job = None;
@@ -2486,7 +2492,26 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
         }
         let mut batch_done = false;
         if let Some(Job::Batch(rx)) = &s.batch_job {
-            while let Ok(m) = rx.try_recv() {
+            loop {
+                let m = match rx.try_recv() {
+                    Ok(m) => m,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        if !batch_done {
+                            ui.set_batch_running(false);
+                            ui.set_batch_progress(
+                                tl(
+                                    zh,
+                                    "批次工作意外中止。",
+                                    "Batch worker stopped unexpectedly.",
+                                )
+                                .into(),
+                            );
+                            batch_done = true;
+                        }
+                        break;
+                    }
+                };
                 match m {
                     BatchMsg::Progress(c, t, c2) => {
                         let m = SharedString::from(format!("{c} / {t}"));
