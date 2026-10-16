@@ -13,6 +13,10 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 ![Sticker library](docs/slint-stickers.png)
 ![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
 
+## v0.4.1: individual redaction deletion and editing safety
+
+Select, delete and undo individual automatic or manual redaction boxes, independently of their apply checkboxes. This version also fixes unsaved-edit protection, atomic writes, gesture cancellation and stale OCR results. See the [Traditional Chinese release notes and limitations](https://github.com/stevenke1981/pixel-studio/blob/v0.4.1/docs/releases/v0.4.1.zh-TW.md). Native Windows mouse/keyboard interaction and GUI export for the new feature have not been fully validated; testing-backend checks and CI screenshots do not replace native interaction acceptance.
+
 ## v0.4.0: icon buttons, menu bar, Windows CJK font, smaller binaries
 
 - **All function buttons are now SVG icons** (top bar, tool palette, floating toolbar, Adjust, Layers, Stickers, Redact, Batch). Hovering shows the name and shortcut. Buttons have hover, pressed, disabled and active states, plus screen-reader labels. The icon set is original (`scripts/gen-icons.py`, 115 icons).
