@@ -1,5 +1,7 @@
 fn main() {
-    let config = slint_build::CompilerConfiguration::new().with_style("fluent-light".into());
+    let config = slint_build::CompilerConfiguration::new()
+        .with_style("fluent-light".into())
+        .with_debug_info(std::env::var_os("CARGO_FEATURE_UI_TESTING").is_some());
     slint_build::compile_with_config("ui/app.slint", config).expect("Slint build failed");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

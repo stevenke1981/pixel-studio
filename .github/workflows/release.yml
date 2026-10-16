@@ -73,7 +73,9 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/*.exe
-          generate_release_notes: true
+          draft: true
+          overwrite_files: false
+          body_path: docs/releases/${{ github.ref_name }}.zh-TW.md
 
   macos:
     name: Build macOS universal .app
@@ -100,4 +102,6 @@ jobs:
           files: |
             dist/*.zip
             dist/*.tar.gz
-          generate_release_notes: true
+          draft: true
+          overwrite_files: false
+          body_path: docs/releases/${{ github.ref_name }}.zh-TW.md

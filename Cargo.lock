@@ -6797,13 +6797,14 @@ dependencies = [
 
 [[package]]
 name = "studio-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "arboard",
  "base64 0.22.1",
  "chrono",
  "dirs",
+ "i-slint-backend-testing",
  "image",
  "rfd",
  "serde",
@@ -6812,6 +6813,7 @@ dependencies = [
  "slint-build",
  "studio-core",
  "sys-locale",
+ "tempfile",
  "winreg",
  "winresource",
  "xcap",
@@ -6819,7 +6821,7 @@ dependencies = [
 
 [[package]]
 name = "studio-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -6828,7 +6830,7 @@ dependencies = [
 
 [[package]]
 name = "studio-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -6845,6 +6847,7 @@ dependencies = [
  "rten",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "ureq",
  "walkdir",

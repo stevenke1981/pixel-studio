@@ -27,7 +27,13 @@ jobs:
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev \
             libwayland-dev libfontconfig1-dev libxdo-dev fonts-noto-cjk libxkbcommon-x11-0 xvfb imagemagick
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked --features studio-app/ui-testing -- -D warnings
       - name: Fetch OCR models
         shell: bash
         run: ./scripts/fetch-models.sh
@@ -36,7 +42,7 @@ jobs:
       - name: Test
         shell: bash
         # `ci` profile = release optimisations without fat LTO, so test binaries link quickly.
-        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --profile ci --locked --workspace
+        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --profile ci --locked --workspace --features studio-app/ui-testing
       - name: CLI smoke test
         shell: bash
         run: |
@@ -65,7 +71,9 @@ jobs:
       - name: GUI screenshot (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/win-screenshot.ps1
+        run: |
+          $env:PIXEL_STUDIO_MODEL_DIR = "$PWD/models"
+          ./scripts/win-screenshot.ps1
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows' && always()
         with:
@@ -73,6 +81,7 @@ jobs:
           path: |
             win-screenshot.png
             win-shots/*.png
+            win-shots/*.json
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
         shell: pwsh

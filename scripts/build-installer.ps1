@@ -4,12 +4,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-if (-not (Test-Path $iscc)) {
-    choco install innosetup -y --no-progress
-    if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
-}
-if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+$iscc = @(
+    (Join-Path $env:ProgramFiles 'Inno Setup 7\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $iscc) { throw 'Install Inno Setup 6 or 7 before building the installer.' }
 
 $isl = 'installer\ChineseTraditional.isl'
 if (-not (Test-Path $isl)) {

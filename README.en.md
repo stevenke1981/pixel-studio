@@ -13,6 +13,10 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 ![Sticker library](docs/slint-stickers.png)
 ![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
 
+## v0.4.1: individual redaction deletion and editing safety
+
+Select, delete and undo individual automatic or manual redaction boxes, independently of their apply checkboxes. This version also fixes unsaved-edit protection, atomic writes, gesture cancellation and stale OCR results. See the [Traditional Chinese release notes and limitations](https://github.com/stevenke1981/pixel-studio/blob/v0.4.1/docs/releases/v0.4.1.zh-TW.md). Native Windows mouse/keyboard interaction and GUI export for the new feature have not been fully validated; testing-backend checks and CI screenshots do not replace native interaction acceptance.
+
 ## v0.4.0: icon buttons, menu bar, Windows CJK font, smaller binaries
 
 - **All function buttons are now SVG icons** (top bar, tool palette, floating toolbar, Adjust, Layers, Stickers, Redact, Batch). Hovering shows the name and shortcut. Buttons have hover, pressed, disabled and active states, plus screen-reader labels. The icon set is original (`scripts/gen-icons.py`, 115 icons).
@@ -66,10 +70,12 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 
 1. Click **Detect text**. Text is detected locally with the [ocrs](https://github.com/robertknight/ocrs) models (bundled in the installer and archives, ~12 MB; downloaded once on first use when running from source).
 2. Boxes are drawn over the image. Lines recognised as phone numbers (TW + international), emails, Taiwan national IDs (checksum), credit cards (Luhn), URLs or addresses are pre-selected (red).
-3. Click a box to toggle, right-click to delete, drag with the Redact boxes tool to add, tick boxes in the list, or select by keyword.
+3. With the Redact boxes tool, click a box or its list label to select it (orange outline). Delete/Backspace, right-click or its row delete button removes only that box; Ctrl+Z undoes and Ctrl+Y redoes. Drag empty space to add a manual box. List checkboxes and keyword selection control which boxes are applied, independently of the orange editing selection. Delete does not remove boxes while editing text or while a dialog is open.
 4. Pick a style: **solid box (default, any colour)**, mosaic or blur, plus padding. Mosaic and blur can sometimes be partially reversed; use a solid box for secrets.
 5. Applying flattens layers into the pixels (destructive). Exports strip EXIF/XMP by default; tick "Keep EXIF/ICC metadata" in the Tools or Redact tab to keep it.
 6. Manual **Boxes** and **Redact brush** tools are included.
+
+Boxes are previews and are not saved in project files; apply them before saving the output. Deleting a preview box does not remove redaction already applied to image pixels.
 
 **Limitation:** detection is script-agnostic, so Chinese and English lines are both boxed, but *recognition* currently reads Latin letters, digits and symbols only. Chinese-only content (for example a Chinese street address) is not auto-selected and must be clicked manually.
 

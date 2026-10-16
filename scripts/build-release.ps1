@@ -25,16 +25,18 @@ try {
 
     if ($RunTests) {
         Write-Host "Running workspace tests..."
-        cargo test --workspace
+        cargo test --workspace --locked -j 2
+        if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
     }
 
     Write-Host "Building release workspace..."
-    cargo build --release --workspace
+    cargo build --release --workspace --locked -j 2
+    if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
 
     New-Item -ItemType Directory -Force -Path $distPath | Out-Null
 
     $binaries = @(
-        "studio-app.exe",
+        "pixel-studio.exe",
         "studio-cli.exe"
     )
 
