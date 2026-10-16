@@ -33,7 +33,7 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --features studio-app/ui-testing -- -D warnings
       - name: Fetch OCR models
         shell: bash
         run: ./scripts/fetch-models.sh
@@ -42,7 +42,7 @@ jobs:
       - name: Test
         shell: bash
         # `ci` profile = release optimisations without fat LTO, so test binaries link quickly.
-        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --profile ci --locked --workspace
+        run: PIXEL_STUDIO_MODEL_DIR="$PWD/models" cargo test --profile ci --locked --workspace --features studio-app/ui-testing
       - name: CLI smoke test
         shell: bash
         run: |
@@ -71,7 +71,9 @@ jobs:
       - name: GUI screenshot (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/win-screenshot.ps1
+        run: |
+          $env:PIXEL_STUDIO_MODEL_DIR = "$PWD/models"
+          ./scripts/win-screenshot.ps1
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows' && always()
         with:

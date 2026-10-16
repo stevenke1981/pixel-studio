@@ -201,6 +201,9 @@ export component AppWindow inherits Window {
     in property <bool> lb-handle;
     in property <[BoxItem]> boxes;
     in property <bool> show-boxes;
+    in property <int> focused-box: -1;
+    out property <bool> editor-key-focus: fs.has-focus;
+    out property <bool> modal-open: root.about-open || root.keys-open || root.props-open || root.rs-open || root.c2pa-open || root.qs-open;
     out property <length> canvas-w: canvas-area.width;
     out property <length> canvas-h: canvas-area.height;
 
@@ -376,8 +379,8 @@ export component AppWindow inherits Window {
         { label: T.t("貼上為新影像", "Paste as new image"), act: "paste", enabled: true, key: "Ctrl+V", icon: @image-url("icons/paste-new.svg") },
         { sep: true },
         { label: T.t("全選", "Select all"), act: "select-all", enabled: true, key: "Ctrl+A", icon: @image-url("icons/select-all.svg") },
-        { label: T.t("取消選取", "Deselect"), act: "deselect", enabled: root.has-selection, key: "Ctrl+D", icon: @image-url("icons/deselect.svg") },
-        { label: T.t("刪除", "Delete"), act: "delete", enabled: root.has-selection || root.has-layer, key: "Del", icon: @image-url("icons/delete.svg") },
+        { label: T.t("取消選取", "Deselect"), act: "deselect", enabled: root.has-selection || root.focused-box >= 0, key: "Ctrl+D", icon: @image-url("icons/deselect.svg") },
+        { label: T.t("刪除", "Delete"), act: "delete", enabled: root.has-selection || root.has-layer || root.focused-box >= 0, key: "Del", icon: @image-url("icons/delete.svg") },
         { sep: true },
         { label: T.t("截圖", "Screenshot"), act: "screenshot", enabled: true, icon: @image-url("icons/screenshot.svg") }
     ];
@@ -482,6 +485,8 @@ export component AppWindow inherits Window {
     callback sticker-drop(string, length, length);
     callback sticker-search();
     callback toggle-box(int);
+    callback select-box(int);
+    callback delete-box(int);
     callback apply-preset(int);
     callback text-style(int);
     callback tool-changed(int);
@@ -658,13 +663,13 @@ export component AppWindow inherits Window {
                     background: #e5393520;
                 }
                 if root.show-boxes: Rectangle {
-                    for b in root.boxes: Rectangle {
+                    for b[i] in root.boxes: Rectangle {
                         x: root.pan-x + b.x * root.zoom * 1px;
                         y: root.pan-y + b.y * root.zoom * 1px;
                         width: b.w * root.zoom * 1px;
                         height: b.h * root.zoom * 1px;
-                        border-width: 2px;
-                        border-color: b.selected ? #e53935 : #1e88e5;
+                        border-width: root.focused-box == i ? 3px : 2px;
+                        border-color: root.focused-box == i ? #ff9800 : b.selected ? #e53935 : #1e88e5;
                         background: b.selected ? #e5393540 : #1e88e518;
                         if b.label != "": Rectangle {
                             x: 0; y: -14px; height: 14px; width: lbl.preferred-width + 6px;
@@ -937,7 +942,7 @@ export component AppWindow inherits Window {
                                     LabeledSlider { label: T.t("不透明度", "Opacity"); minimum: 0; maximum: 100; value <=> root.l-opacity; has-apply: false; changed value => { root.layer-edited("opacity"); } }
                                     if root.sel-kind == 0: VerticalLayout {
                                         spacing: 6px;
-                                        TextEdit { height: 70px; text <=> root.l-text; edited => { root.layer-edited("text"); } }
+                                        TextEdit { accessible-label: T.t("文字內容", "Text content"); height: 70px; text <=> root.l-text; edited => { root.layer-edited("text"); } }
                                         LabeledSlider { label: T.t("字級", "Size"); minimum: 6; maximum: 400; value <=> root.l-font-size; has-apply: false; changed value => { root.layer-edited("font-size"); } }
                                         ComboBox { model: root.font-names; current-index <=> root.l-font; selected => { root.layer-edited("font"); } }
                                         HorizontalLayout {
@@ -1087,7 +1092,31 @@ export component AppWindow inherits Window {
                                     IBtn { icon: @image-url("icons/tool-redact-box.svg"); tip: T.t("打碼框工具 (R)", "Redact box tool (R)"); active: root.tool == 14; clicked => { root.action("tool-redact-box"); } }
                                     IBtn { icon: @image-url("icons/tool-redact-brush.svg"); tip: T.t("打碼筆刷 (Shift+R)", "Redact brush (Shift+R)"); active: root.tool == 15; clicked => { root.action("tool-redact-brush"); } }
                                 }
-                                Text { text: T.t("框選：拖曳新增、點擊切換、右鍵刪除。", "Boxes: drag to add, click to toggle, right-click to delete."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                Text { text: T.t("點框或清單文字選取，再按 Delete 刪除單框；也可右鍵或按每列刪除。勾選框決定是否套用打碼。", "Select a box or list label, then Delete; or right-click/use its delete button. Checkboxes control which boxes are applied."); font-size: 11px; color: #666; wrap: word-wrap; }
+                                if root.box-list.length > 0: ScrollView {
+                                    height: min(192px, root.box-list.length * 32px);
+                                    VerticalLayout {
+                                        for b[i] in root.box-list: Rectangle {
+                                            height: 32px;
+                                            background: root.focused-box == i ? #fff0d8 : transparent;
+                                            border-width: root.focused-box == i ? 1px : 0px;
+                                            border-color: #ff9800;
+                                            HorizontalLayout {
+                                                spacing: 4px;
+                                                CheckBox { checked: b.selected; toggled => { root.toggle-box(i); } }
+                                                Rectangle {
+                                                    horizontal-stretch: 1;
+                                                    accessible-role: button;
+                                                    accessible-label: T.t("選取打碼框：", "Select redaction box: ") + b.label;
+                                                    accessible-action-default => { root.select-box(i); fs.focus(); }
+                                                    Text { text: b.label; vertical-alignment: center; overflow: elide; }
+                                                    TouchArea { clicked => { root.select-box(i); fs.focus(); } }
+                                                }
+                                                IBtn { icon: @image-url("icons/delete.svg"); tip: T.t("刪除此打碼框", "Delete this redaction box"); clicked => { root.delete-box(i); fs.focus(); } }
+                                            }
+                                        }
+                                    }
+                                }
                                 HorizontalLayout {
                                     spacing: 3px;
                                     alignment: start;
@@ -1098,7 +1127,7 @@ export component AppWindow inherits Window {
                                 }
                                 HorizontalLayout {
                                     spacing: 3px;
-                                    LineEdit { placeholder-text: T.t("關鍵字", "Keyword"); text <=> root.redact-keyword; }
+                                    LineEdit { accessible-label: T.t("打碼關鍵字", "Redaction keyword"); placeholder-text: T.t("關鍵字", "Keyword"); text <=> root.redact-keyword; }
                                     IBtn { icon: @image-url("icons/keyword.svg"); tip: T.t("選取含關鍵字的框", "Select boxes containing the keyword"); clicked => { root.action("sel-keyword"); } }
                                 }
                                 HorizontalLayout {
@@ -1113,11 +1142,6 @@ export component AppWindow inherits Window {
                                 Text { text: T.t("實心色塊與筆刷使用色 1。", "Solid box and brush use colour 1."); font-size: 11px; color: #666; }
                                 CheckBox { text: T.t("匯出時保留中繼資料（預設移除）", "Keep metadata on export (stripped by default)"); checked <=> root.keep-metadata; }
                                 Button { text: T.t("套用打碼（破壞性）", "Apply redaction (destructive)"); primary: true; clicked => { root.action("apply-redact"); } }
-                                for b[i] in root.box-list: HorizontalLayout {
-                                    spacing: 4px;
-                                    CheckBox { checked: b.selected; toggled => { root.toggle-box(i); } }
-                                    Text { text: b.label; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                }
                             }
                             // ===== Info / C2PA
                             if root.tab == 5: VerticalLayout {
@@ -1357,7 +1381,7 @@ export component AppWindow inherits Window {
                     GridLayout {
                         spacing: 6px;
                         Row { Text { text: T.t("標題", "Title"); vertical-alignment: center; } LineEdit { text <=> root.c2pa-title; } }
-                        Row { Text { text: T.t("作者", "Creator"); vertical-alignment: center; } LineEdit { text <=> root.c2pa-creator; } }
+                        Row { Text { text: T.t("作者", "Creator"); vertical-alignment: center; } LineEdit { accessible-label: T.t("C2PA 作者", "C2PA creator"); text <=> root.c2pa-creator; } }
                         Row { Text { text: T.t("動作說明", "Action note"); vertical-alignment: center; } TextEdit { height: 56px; text <=> root.c2pa-action; } }
                     }
                     CheckBox { text: T.t("儲存時寫入 C2PA（使用上方資料）", "Write C2PA on save (using the fields above)"); checked <=> root.c2pa-on-save; }
@@ -1449,7 +1473,7 @@ export component AppWindow inherits Window {
                 KeyRow { keys: "Ctrl+Z / Ctrl+Y"; what: T.t("復原 / 重做（Ctrl+Shift+Z 也可重做）", "Undo / redo (Ctrl+Shift+Z also redoes)"); }
                 KeyRow { keys: "Ctrl+X / Ctrl+C"; what: T.t("剪下 / 複製", "Cut / copy"); }
                 KeyRow { keys: "Ctrl+V / Ctrl+Shift+V"; what: T.t("貼上為新影像 / 貼上為圖層", "Paste as new image / paste as layer"); }
-                KeyRow { keys: "Ctrl+A / Ctrl+D / Del"; what: T.t("全選 / 取消選取 / 刪除（圖層或選取區）", "Select all / deselect / delete (layer or selection)"); }
+                KeyRow { keys: "Ctrl+A / Ctrl+D / Del"; what: T.t("全選 / 取消選取 / 刪除（打碼框、圖層或選取區）", "Select all / deselect / delete (redaction box, layer or selection)"); }
                 Text { text: T.t("檢視 / 影像 / 圖層", "View / image / layer"); font-weight: 700; color: #1f3b63; }
                 KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
                 KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }

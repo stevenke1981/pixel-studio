@@ -8,6 +8,10 @@ license.workspace = true
 name = "pixel-studio"
 path = "src/main.rs"
 
+[features]
+# UI adapter/input tests only; release workflows use default features.
+ui-testing = []
+
 [dependencies]
 anyhow.workspace = true
 arboard.workspace = true
@@ -34,4 +38,5 @@ slint-build = "1.18.1"
 winresource = "0.1.34"
 
 [dev-dependencies]
+i-slint-backend-testing = "=1.18.1"
 tempfile = "3.27"

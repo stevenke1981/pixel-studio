@@ -52,8 +52,8 @@ function Geometry([IntPtr]$handle) {
   }
 }
 
-function Shot([string]$name, [hashtable]$envs, [scriptblock]$interact) {
-  foreach ($k in @('PIXEL_STUDIO_TAB', 'PIXEL_STUDIO_MENU', 'PIXEL_STUDIO_DIALOG', 'PIXEL_STUDIO_C2PA_DIALOG')) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+function Shot([string]$name, [hashtable]$envs, [scriptblock]$interact, [int]$waitSeconds = 9) {
+  foreach ($k in @('PIXEL_STUDIO_TAB', 'PIXEL_STUDIO_MENU', 'PIXEL_STUDIO_DIALOG', 'PIXEL_STUDIO_C2PA_DIALOG', 'PIXEL_STUDIO_AUTODETECT')) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   $env:PIXEL_STUDIO_LANG = 'zh-TW'
   foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
   # Do not let the previous scene's hover switch a startup menu during resize.
@@ -61,7 +61,7 @@ function Shot([string]$name, [hashtable]$envs, [scriptblock]$interact) {
   if (-not [W32]::SetCursorPos($workArea.Right - 2, $workArea.Bottom - 2)) { throw 'Cannot park the capture cursor.' }
   $p = Start-Process $Exe -PassThru -ArgumentList "`"$img`""
   try {
-  Start-Sleep -Seconds 9
+  Start-Sleep -Seconds $waitSeconds
   if ($p.HasExited) { throw "GUI exited early with code $($p.ExitCode)" }
   $p.Refresh()
   $h = $p.MainWindowHandle
@@ -119,5 +119,6 @@ Shot 'win-dialog-resize' @{ PIXEL_STUDIO_DIALOG = 'resize' } $null
 Shot 'win-dialog-props' @{ PIXEL_STUDIO_DIALOG = 'props'; PIXEL_STUDIO_TAB = '5' } $null
 Shot 'win-dialog-quicksave' @{ PIXEL_STUDIO_DIALOG = 'quicksave' } $null
 Shot 'win-dialog-c2pa' @{ PIXEL_STUDIO_C2PA_DIALOG = '1' } $null
+Shot 'win-redact-boxes' @{ PIXEL_STUDIO_TAB = '4'; PIXEL_STUDIO_AUTODETECT = '1' } $null 25
 Copy-Item (Join-Path $OutDir 'win-main.png') 'win-screenshot.png'
 } finally { [W32]::SetThreadDpiAwarenessContext($oldDpiContext) | Out-Null }

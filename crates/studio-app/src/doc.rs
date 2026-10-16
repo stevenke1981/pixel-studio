@@ -177,6 +177,7 @@ pub struct Snapshot {
     revision: u64,
     selection: Option<Selection>,
     boxes: Vec<RedactBox>,
+    focused_box: Option<usize>,
 }
 
 /// Brush/tool settings shared by the UI.
@@ -216,6 +217,8 @@ pub struct Doc {
     pub path: Option<PathBuf>,
     pub font_bytes: Option<Vec<u8>>,
     pub boxes: Vec<RedactBox>,
+    /// Single editing target, separate from each box's apply-redaction checkbox.
+    pub focused_box: Option<usize>,
     pub library: Vec<Sticker>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
@@ -243,6 +246,7 @@ impl Doc {
             path: None,
             font_bytes: None,
             boxes: Vec::new(),
+            focused_box: None,
             library: stickers::library(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -271,6 +275,7 @@ impl Doc {
         self.selected = None;
         self.selection = None;
         self.boxes.clear();
+        self.focused_box = None;
         self.undo.clear();
         self.redo.clear();
         self.path = path;
@@ -308,6 +313,7 @@ impl Doc {
             revision: self.revision,
             selection: self.selection,
             boxes: self.boxes.clone(),
+            focused_box: self.focused_box,
         }
     }
 
@@ -346,6 +352,7 @@ impl Doc {
         self.selected = s.selected.filter(|i| *i < self.layers.len());
         self.selection = s.selection;
         self.boxes = s.boxes;
+        self.focused_box = s.focused_box.filter(|i| *i < self.boxes.len());
         self.overlay_dirty = true;
         self.resized |= resized;
         self.mark(IRect::full(self.width(), self.height()));
@@ -623,6 +630,7 @@ impl Doc {
         self.layers.clear();
         self.selected = None;
         self.boxes.clear();
+        self.focused_box = None;
         self.overlay_dirty = true;
         self.selection = None;
         self.set_image(out);
@@ -768,6 +776,7 @@ impl Doc {
         self.checkpoint();
         self.layers.push(layer);
         self.selected = Some(self.layers.len() - 1);
+        self.focused_box = None;
         self.layers_changed();
     }
 
@@ -904,6 +913,26 @@ impl Doc {
 
     // ------------------------------------------------------------ redaction
 
+    pub fn focus_box(&mut self, index: Option<usize>) {
+        self.focused_box = index.filter(|i| *i < self.boxes.len());
+        if self.focused_box.is_some() {
+            self.selected = None;
+            self.selection = None;
+        }
+    }
+
+    /// Rows are an unfiltered, synchronous projection of boxes. Validate before
+    /// checkpointing so a stale/invalid index never clears the redo branch.
+    pub fn delete_box(&mut self, index: usize) -> bool {
+        if index >= self.boxes.len() {
+            return false;
+        }
+        self.checkpoint();
+        self.boxes.remove(index);
+        self.focused_box = None;
+        true
+    }
+
     /// Flatten layers and apply selected redaction boxes destructively.
     pub fn apply_redaction(&mut self, style: RedactStyle, padding: u32) -> usize {
         if !self.boxes.iter().any(|b| b.selected) {
@@ -916,6 +945,7 @@ impl Doc {
         self.selected = None;
         self.overlay_dirty = true;
         self.boxes.retain(|b| !b.selected);
+        self.focused_box = None;
         self.set_image(out.to_rgba8());
         n
     }
@@ -1285,6 +1315,79 @@ mod tests {
         d.boxes[0].width = 80;
         d.cancel_gesture(before);
         assert_eq!(d.boxes[0].width, 30);
+    }
+
+    #[test]
+    fn delete_one_redaction_box_preserves_mixed_boxes_and_history() {
+        let mut d = Doc::new(100, 100);
+        let mut auto = RedactBox::manual(10, 10, 20, 10);
+        auto.text = "sample@example.com".into();
+        auto.kind = Some(studio_core::redact::SensitiveKind::Email);
+        let mut unchecked = auto.clone();
+        unchecked.x = 40;
+        unchecked.selected = false;
+        d.boxes = vec![auto, unchecked, RedactBox::manual(70, 20, 10, 10)];
+        let before = d.boxes.clone();
+        let pixels = d.image.clone();
+        assert!(d.delete_box(0));
+        assert_eq!(d.boxes, before[1..]);
+        assert_eq!(d.image, pixels);
+        assert!(d.undo());
+        assert_eq!(d.boxes, before);
+        assert!(d.redo());
+        assert_eq!(d.boxes, before[1..]);
+        assert!(d.delete_box(1)); // manual box, leave the unchecked OCR box
+        assert_eq!(d.boxes, before[1..2]);
+    }
+
+    #[test]
+    fn delete_last_redaction_box_and_invalid_index_do_not_remove_other_history() {
+        let mut d = Doc::new(20, 20);
+        assert!(!d.delete_box(0));
+        assert!(!d.can_undo());
+        d.boxes.push(RedactBox::manual(2, 2, 5, 5));
+        let before = d.boxes.clone();
+        assert!(!d.delete_box(usize::MAX));
+        assert!(!d.can_undo());
+        assert!(d.delete_box(0));
+        assert!(d.boxes.is_empty());
+        assert!(d.undo());
+        assert_eq!(d.boxes, before);
+        assert!(!d.delete_box(1));
+        assert!(d.can_redo());
+        assert!(d.redo());
+        assert!(d.boxes.is_empty());
+    }
+
+    #[test]
+    fn deleted_redaction_box_is_absent_from_applied_and_exported_pixels() {
+        let mut d = Doc::new(300, 120);
+        d.boxes = vec![
+            RedactBox::manual(20, 20, 80, 60),
+            RedactBox::manual(180, 20, 80, 60),
+        ];
+        d.boxes[0].text = "sample@example.com".into();
+        d.boxes[0].kind = Some(studio_core::redact::SensitiveKind::Email);
+        assert!(d.delete_box(0));
+        assert_eq!(d.apply_redaction(RedactStyle::Solid([0, 0, 0, 255]), 0), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("redacted.png");
+        d.flattened().save(&file).unwrap();
+        let output = image::open(file).unwrap().to_rgba8();
+        assert_eq!(output.get_pixel(30, 30).0, [255; 4]);
+        assert_eq!(output.get_pixel(190, 30).0, [0, 0, 0, 255]);
+        // Optional retained synthetic output for review; never used by the app.
+        if let Some(dir) = std::env::var_os("PIXEL_STUDIO_TEST_OUTPUT_DIR") {
+            let dir = PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            output
+                .save(dir.join("deleted-left-retained-right.png"))
+                .unwrap();
+        }
+        assert!(d.undo()); // undo applying: only the retained box is restored
+        assert_eq!(d.boxes.len(), 1);
+        assert!(d.undo()); // undo deleting: both boxes are restored
+        assert_eq!(d.boxes.len(), 2);
     }
 
     #[test]

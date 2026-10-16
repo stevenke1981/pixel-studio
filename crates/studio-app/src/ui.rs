@@ -120,6 +120,7 @@ enum Drag {
 enum Job {
     Detect(
         u64,
+        Vec<studio_core::redact::RedactBox>,
         Receiver<Result<Vec<studio_core::redact::RedactBox>, String>>,
     ),
     Batch(Receiver<BatchMsg>),
@@ -225,13 +226,10 @@ fn blank(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(w, h, image::Rgba([255; 4])))
 }
 
-pub fn run(args: Args) -> Result<(), anyhow::Error> {
-    let ui = AppWindow::new()?;
-    let settings = load_settings();
-    let zh = detect_zh(&settings);
+fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
     let mut doc = Doc::new(1080, 720);
     doc.font_bytes = fonts::load_system_font_bytes();
-    let state = Rc::new(RefCell::new(State {
+    State {
         doc,
         tools: ToolSettings::default(),
         tool: Tool::Brush,
@@ -239,7 +237,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         pan: (20.0, 20.0),
         buf: SharedPixelBuffer::new(1, 1),
         zh,
-        view_mode: args.view,
+        view_mode,
         show_grid: settings.show_grid,
         keep_metadata: settings.keep_metadata,
         folder: Vec::new(),
@@ -270,7 +268,14 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             .collect(),
         rulers: settings.show_rulers,
         status_bar: !settings.hide_status,
-    }));
+    }
+}
+
+pub fn run(args: Args) -> Result<(), anyhow::Error> {
+    let ui = AppWindow::new()?;
+    let settings = load_settings();
+    let zh = detect_zh(&settings);
+    let state = Rc::new(RefCell::new(initial_state(&settings, zh, args.view)));
     {
         let s = state.borrow();
         ui.set_tb_mode(s.toolbar.0);
@@ -615,6 +620,7 @@ fn sync_view(ui: &AppWindow, s: &State) {
         None => ui.set_has_layer_box(false),
     }
     ui.set_show_boxes(!s.doc.boxes.is_empty());
+    ui.set_focused_box(s.doc.focused_box.map(|i| i as i32).unwrap_or(-1));
     let items: Vec<BoxItem> = s
         .doc
         .boxes
@@ -1392,6 +1398,9 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
         0 => {
             cancel_gesture(s);
             s.edit_session = None;
+            if tool != Tool::RedactBox {
+                s.doc.focus_box(None);
+            }
             if button == 2 || tool == Tool::Hand {
                 s.drag = Drag::Pan {
                     mouse: (mx, my),
@@ -1466,9 +1475,10 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 Tool::Shapes => s.drag = Drag::Shape { start: p, now: p },
                 Tool::RedactBox => {
                     if secondary {
-                        if let Some(i) = s.doc.box_at(p.0, p.1) {
-                            s.doc.checkpoint();
-                            s.doc.boxes.remove(i);
+                        let target = s.doc.box_at(p.0, p.1);
+                        s.doc.focus_box(target);
+                        if let Some(i) = target {
+                            s.doc.delete_box(i);
                         }
                     } else {
                         let tol = 8.0 / s.zoom;
@@ -1476,6 +1486,7 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                             (p.0 - (b.x as f32 + b.width as f32)).abs() <= tol
                                 && (p.1 - (b.y as f32 + b.height as f32)).abs() <= tol
                         });
+                        s.doc.focus_box(corner.or_else(|| s.doc.box_at(p.0, p.1)));
                         s.drag = match (corner, s.doc.box_at(p.0, p.1)) {
                             (Some(i), _) => Drag::BoxResize { i },
                             (None, Some(i)) => Drag::BoxMove {
@@ -1614,8 +1625,7 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         s.doc.boxes.push(studio_core::redact::RedactBox::manual(
                             x0 as i32, y0 as i32, w as u32, h as u32,
                         ));
-                    } else if let Some(i) = s.doc.box_at(start.0, start.1) {
-                        s.doc.boxes[i].selected = !s.doc.boxes[i].selected;
+                        s.doc.focus_box(Some(s.doc.boxes.len() - 1));
                     }
                 }
                 Drag::Select { .. } => {
@@ -1637,13 +1647,6 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     }
                 }
                 Drag::Move { .. } | Drag::Resize { .. } => sync_layer_fields(ui, s),
-                Drag::BoxMove {
-                    i, moved: false, ..
-                } => {
-                    if let Some(b) = s.doc.boxes.get_mut(i) {
-                        b.selected = !b.selected;
-                    }
-                }
                 Drag::CanvasEdge { now, .. } => {
                     let bg = s.tools.color2;
                     s.doc.resize_canvas(now.0 as u32, now.1 as u32, bg);
@@ -2098,6 +2101,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "flip-h" => with_doc(ui, st, |d| d.apply_transform(tr::flip_horizontal)),
         "flip-v" => with_doc(ui, st, |d| d.apply_transform(tr::flip_vertical)),
         "select-all" => with_doc(ui, st, |d| {
+            d.focus_box(None);
             d.selection = Some(Selection {
                 x: 0.0,
                 y: 0.0,
@@ -2106,7 +2110,10 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 circle: false,
             })
         }),
-        "deselect" => with_doc(ui, st, |d| d.selection = None),
+        "deselect" => with_doc(ui, st, |d| {
+            d.selection = None;
+            d.focus_box(None);
+        }),
         "crop" => {
             let ok = st.borrow_mut().doc.crop_to_selection();
             if !ok {
@@ -2225,6 +2232,16 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             return;
         }
         "delete" => {
+            // Repeated Delete after removing the last/active box must not fall
+            // through to pixels or a previously selected composition layer.
+            if st.borrow().doc.focused_box.is_some() || st.borrow().tool == Tool::RedactBox {
+                with_doc(ui, st, |d| {
+                    if let Some(i) = d.focused_box {
+                        d.delete_box(i);
+                    }
+                });
+                return;
+            }
             let (has_layer, has_sel, bg) = {
                 let s = st.borrow();
                 (
@@ -2355,6 +2372,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 Tool::RedactBrush
             };
             st.borrow_mut().tool = t;
+            st.borrow_mut().doc.focus_box(None);
             ui.set_tool(t.index());
         }
         "detect" => start_detection(ui, st),
@@ -2367,7 +2385,13 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "sel-no-boxes" => with_doc(ui, st, |d| {
             d.boxes.iter_mut().for_each(|b| b.selected = false)
         }),
-        "clear-boxes" => with_doc(ui, st, |d| d.boxes.clear()),
+        "clear-boxes" => with_doc(ui, st, |d| {
+            if !d.boxes.is_empty() {
+                d.checkpoint();
+                d.boxes.clear();
+                d.focus_box(None);
+            }
+        }),
         "sel-keyword" => {
             let k: String = ui.get_redact_keyword().into();
             let mut n = 0;
@@ -2544,6 +2568,7 @@ fn start_detection(ui: &AppWindow, st: &S) {
         return;
     }
     let revision = st.borrow().doc.revision();
+    let boxes_before = st.borrow().doc.boxes.clone();
     let zh = st.borrow().zh;
     let img = st.borrow().doc.flattened();
     let (tx, rx) = channel();
@@ -2555,7 +2580,7 @@ fn start_detection(ui: &AppWindow, st: &S) {
         .map_err(|e| e.to_string());
         let _ = tx.send(r);
     });
-    st.borrow_mut().job = Some(Job::Detect(revision, rx));
+    st.borrow_mut().job = Some(Job::Detect(revision, boxes_before, rx));
     ui.set_detecting(true);
     ui.set_redact_info(
         tl(
@@ -2651,18 +2676,23 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
         let mut s = st.borrow_mut();
         let zh = s.zh;
         let mut detect_done = None;
-        if let Some(Job::Detect(revision, rx)) = &s.job {
+        if let Some(Job::Detect(revision, boxes_before, rx)) = &s.job {
             match rx.try_recv() {
                 Ok(r) => {
-                    detect_done = Some(if *revision == s.doc.revision() {
-                        r
-                    } else {
-                        Err(tl(
-                            zh,
-                            "文件已變更，請重新辨識。",
-                            "Document changed; run detection again.",
-                        ))
-                    })
+                    detect_done = Some(
+                        if *revision == s.doc.revision()
+                            && *boxes_before == s.doc.boxes
+                            && s.gesture.is_none()
+                        {
+                            r
+                        } else {
+                            Err(tl(
+                                zh,
+                                "文件已變更，請重新辨識。",
+                                "Document changed; run detection again.",
+                            ))
+                        },
+                    )
                 }
                 // The worker panicked (unwind) or dropped its sender: don't leave
                 // the UI stuck in "detecting".
@@ -2687,6 +2717,7 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
                         .into(),
                     );
                     s.doc.boxes = boxes;
+                    s.doc.focus_box(None);
                     changed = true;
                 }
                 Err(e) => ui.set_redact_info(
@@ -2848,6 +2879,9 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
         true
     };
     if is(Key::Delete) || is(Key::Backspace) {
+        if !ui.get_editor_key_focus() || ui.get_modal_open() {
+            return false;
+        }
         action(ui, st, "delete");
         return true;
     }
@@ -2894,6 +2928,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             cancel_gesture(&mut s);
             s.doc.selection = None;
             s.doc.selected = None;
+            s.doc.focus_box(None);
             s.drag = Drag::None;
         }
         refresh(ui, st);
@@ -2968,6 +3003,7 @@ fn wire(ui: &AppWindow, st: &S) {
             let n = s.doc.layers.len() as i32;
             let i = n - 1 - row;
             s.doc.selected = (i >= 0 && i < n).then_some(i as usize);
+            s.doc.focus_box(None);
             s.edit_session = None;
             sync_layer_fields(&ui, &s);
         }
@@ -3016,6 +3052,27 @@ fn wire(ui: &AppWindow, st: &S) {
         }
         refresh(&ui, &st)
     });
+    cb!(on_select_box, |ui, st, i: i32| {
+        let mut s = st.borrow_mut();
+        cancel_gesture(&mut s);
+        s.doc.focus_box(usize::try_from(i).ok());
+        s.edit_session = None;
+        s.tool = Tool::RedactBox;
+        ui.set_tool(s.tool.index());
+        drop(s);
+        refresh(&ui, &st);
+    });
+    cb!(on_delete_box, |ui, st, i: i32| {
+        let mut s = st.borrow_mut();
+        cancel_gesture(&mut s);
+        if let Ok(i) = usize::try_from(i) {
+            s.doc.focus_box(Some(i));
+            s.doc.delete_box(i);
+        }
+        s.edit_session = None;
+        drop(s);
+        refresh(&ui, &st);
+    });
     cb!(on_apply_preset, |ui, st, i: i32| {
         let (_, w, h) = CANVAS_PRESETS[i.clamp(0, CANVAS_PRESETS.len() as i32 - 1) as usize];
         new_doc(&ui, &st, blank(w, h));
@@ -3036,6 +3093,7 @@ fn wire(ui: &AppWindow, st: &S) {
         cancel_gesture(&mut st.borrow_mut());
         st.borrow_mut().edit_session = None;
         st.borrow_mut().tool = t;
+        st.borrow_mut().doc.focus_box(None);
         if matches!(t, Tool::RedactBox | Tool::RedactBrush) {
             ui.set_tab(4);
         }
@@ -3069,6 +3127,184 @@ fn sticker_insert(ui: &AppWindow, st: &S, id: &str, at: Option<(f32, f32)>) {
 #[cfg(test)]
 mod cursor_tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn redaction_delete_ui_selection_focus_and_stale_detection() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::Model;
+        use slint::platform::{Key, WindowEvent};
+        use studio_core::redact::RedactBox;
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        T::get(&ui).set_zh(false);
+        let st = Rc::new(RefCell::new(initial_state(
+            &Settings::default(),
+            false,
+            false,
+        )));
+        let mut auto = RedactBox::manual(20, 20, 30, 20);
+        auto.text = "sample@example.com".into();
+        auto.kind = Some(studio_core::redact::SensitiveKind::Email);
+        let manual = RedactBox::manual(100, 20, 30, 20);
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(200, 120);
+            s.doc.boxes = vec![auto.clone(), manual.clone()];
+            s.tool = Tool::RedactBox;
+            s.zoom = 2.0;
+            s.pan = (10.0, 15.0);
+        }
+        wire(&ui, &st);
+        ui.set_tool(Tool::RedactBox.index());
+        ui.set_tab(4);
+        refresh(&ui, &st);
+        ui.show().unwrap();
+        // Same image-coordinate transform as the actual pointer callback.
+        ui.invoke_canvas_pointer(0, 0, 70.0, 75.0, false, false);
+        ui.invoke_canvas_pointer(1, 0, 70.0, 75.0, false, false);
+        assert_eq!(st.borrow().doc.focused_box, Some(0));
+        assert_eq!(st.borrow().doc.boxes, vec![auto.clone(), manual.clone()]);
+        assert!(!st.borrow().doc.can_undo()); // selecting alone is not an edit
+
+        // A list row selects one editing target without toggling apply checkboxes.
+        ElementHandle::find_by_accessible_label(
+            &ui,
+            "Select redaction box: [Email] sample@example.com",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert!(ui.get_editor_key_focus());
+        let press = |key: Key| {
+            let text: SharedString = char::from(key).to_string().into();
+            ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        press(Key::Delete);
+        assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+        assert_eq!(ui.get_box_list().row_count(), 1);
+        assert_eq!(ui.get_focused_box(), -1);
+        let pixels = st.borrow().doc.image.clone();
+        press(Key::Delete); // held/repeated key must not delete other content
+        assert_eq!(st.borrow().doc.image, pixels);
+        assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.focused_box, Some(0));
+        assert_eq!(st.borrow().doc.boxes, vec![auto.clone(), manual.clone()]);
+        ui.invoke_action("redo".into());
+        assert_eq!(ui.get_box_list().row_count(), 1);
+        ui.invoke_delete_box(0);
+        assert!(!ui.get_show_boxes());
+        assert_eq!(ui.get_box_list().row_count(), 0);
+        ui.invoke_action("undo".into());
+
+        // Empty canvas, Escape and switching to a layer/tool clear box focus.
+        ui.invoke_select_box(0);
+        ui.invoke_canvas_pointer(0, 0, 360.0, 200.0, false, false);
+        ui.invoke_canvas_pointer(1, 0, 360.0, 200.0, false, false);
+        assert_eq!(st.borrow().doc.focused_box, None);
+        ui.invoke_select_box(0);
+        ui.invoke_key(char::from(Key::Escape).to_string().into(), false, false);
+        assert_eq!(st.borrow().doc.focused_box, None);
+        ui.invoke_select_box(0);
+        ui.invoke_tool_changed(Tool::Text.index());
+        assert_eq!(st.borrow().doc.focused_box, None);
+
+        // Text widgets must own Delete even at empty-string/cursor boundaries.
+        {
+            let mut s = st.borrow_mut();
+            s.doc.add_text(5.0, 60.0, "text".into());
+        }
+        ui.set_tab(1);
+        sync_layer_fields(&ui, &st.borrow());
+        refresh(&ui, &st);
+        st.borrow_mut().doc.focused_box = Some(0); // deliberate stale target
+        let editor = ElementHandle::find_by_accessible_label(&ui, "Text content")
+            .next()
+            .unwrap();
+        editor.mock_single_click(slint::platform::PointerEventButton::Left);
+        assert!(!ui.get_editor_key_focus());
+        for text in ["abc", ""] {
+            ui.set_l_text(text.into());
+            press(Key::End);
+            press(Key::Delete);
+            press(Key::Backspace);
+            assert_eq!(
+                ui.get_l_text().as_str(),
+                if text.is_empty() { "" } else { "ab" }
+            );
+            assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+            assert_eq!(st.borrow().doc.layers.len(), 1);
+        }
+        ui.set_tab(4);
+        let keyword = ElementHandle::find_by_accessible_label(&ui, "Redaction keyword")
+            .next()
+            .unwrap();
+        keyword.mock_single_click(slint::platform::PointerEventButton::Left);
+        press(Key::Delete);
+        press(Key::Backspace);
+        assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+        let box_label =
+            ElementHandle::find_by_accessible_label(&ui, "Select redaction box: (30×20)")
+                .next()
+                .unwrap();
+        box_label.invoke_accessible_default_action();
+        assert!(ui.get_editor_key_focus());
+        ui.set_qs_open(true);
+        assert!(ui.get_editor_key_focus());
+        assert!(!ui.invoke_key(char::from(Key::Delete).to_string().into(), false, false));
+        assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+        ui.set_qs_open(false);
+        ui.set_c2pa_open(true);
+        ui.set_c2pa_creator("abc".into());
+        let creator = ElementHandle::find_by_accessible_label(&ui, "C2PA creator")
+            .next()
+            .unwrap();
+        creator.mock_single_click(slint::platform::PointerEventButton::Left);
+        press(Key::End);
+        press(Key::Delete);
+        press(Key::Backspace);
+        assert_eq!(ui.get_c2pa_creator().as_str(), "ab");
+        assert_eq!(st.borrow().doc.boxes, vec![manual.clone()]);
+        ui.set_c2pa_open(false);
+
+        // OCR completion must not resurrect a removed box or replace an active gesture.
+        let (tx, rx) = channel();
+        let original = st.borrow().doc.boxes.clone();
+        let revision = st.borrow().doc.revision();
+        st.borrow_mut().job = Some(Job::Detect(revision, original.clone(), rx));
+        ui.invoke_delete_box(0);
+        tx.send(Ok(original.clone())).unwrap();
+        poll_jobs(&ui, &st);
+        assert!(st.borrow().doc.boxes.is_empty());
+        ui.invoke_action("undo".into());
+        let (tx, rx) = channel();
+        let mut s = st.borrow_mut();
+        s.job = Some(Job::Detect(s.doc.revision(), s.doc.boxes.clone(), rx));
+        s.gesture = Some(s.doc.begin_gesture());
+        drop(s);
+        tx.send(Ok(vec![auto])).unwrap();
+        poll_jobs(&ui, &st);
+        assert_eq!(st.borrow().doc.boxes, original);
+        // Right-click removal uses the same transform at a zoom below 100%.
+        {
+            let mut s = st.borrow_mut();
+            cancel_gesture(&mut s);
+            s.tool = Tool::RedactBox;
+            s.zoom = 0.5;
+            s.pan = (-5.0, 30.0);
+        }
+        ui.set_tool(Tool::RedactBox.index());
+        ui.invoke_canvas_pointer(0, 1, 52.5, 45.0, false, false);
+        ui.invoke_canvas_pointer(1, 1, 52.5, 45.0, false, false);
+        assert!(st.borrow().doc.boxes.is_empty());
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.boxes, vec![manual]);
+        ui.hide().unwrap();
+    }
 
     #[test]
     fn failed_c2pa_export_preserves_previous_output() {
