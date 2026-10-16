@@ -66,10 +66,12 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 
 1. Click **Detect text**. Text is detected locally with the [ocrs](https://github.com/robertknight/ocrs) models (bundled in the installer and archives, ~12 MB; downloaded once on first use when running from source).
 2. Boxes are drawn over the image. Lines recognised as phone numbers (TW + international), emails, Taiwan national IDs (checksum), credit cards (Luhn), URLs or addresses are pre-selected (red).
-3. Click a box to toggle, right-click to delete, drag with the Redact boxes tool to add, tick boxes in the list, or select by keyword.
+3. With the Redact boxes tool, click a box or its list label to select it (orange outline). Delete/Backspace, right-click or its row delete button removes only that box; Ctrl+Z undoes and Ctrl+Y redoes. Drag empty space to add a manual box. List checkboxes and keyword selection control which boxes are applied, independently of the orange editing selection. Delete does not remove boxes while editing text or while a dialog is open.
 4. Pick a style: **solid box (default, any colour)**, mosaic or blur, plus padding. Mosaic and blur can sometimes be partially reversed; use a solid box for secrets.
 5. Applying flattens layers into the pixels (destructive). Exports strip EXIF/XMP by default; tick "Keep EXIF/ICC metadata" in the Tools or Redact tab to keep it.
 6. Manual **Boxes** and **Redact brush** tools are included.
+
+Boxes are previews and are not saved in project files; apply them before saving the output. Deleting a preview box does not remove redaction already applied to image pixels.
 
 **Limitation:** detection is script-agnostic, so Chinese and English lines are both boxed, but *recognition* currently reads Latin letters, digits and symbols only. Chinese-only content (for example a Chinese street address) is not auto-selected and must be clicked manually.
 
