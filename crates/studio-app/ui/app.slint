@@ -194,6 +194,7 @@ export component AppWindow inherits Window {
     in property <bool> has-selection;
     in property <float> sel-x; in property <float> sel-y; in property <float> sel-w; in property <float> sel-h;
     in property <bool> sel-circle;
+    in property <string> selection-path;
     in property <bool> has-preview;
     in property <float> pv-x; in property <float> pv-y; in property <float> pv-w; in property <float> pv-h;
     in property <bool> has-layer-box;
@@ -222,6 +223,8 @@ export component AppWindow inherits Window {
     in-out property <color> color2: #ffffff;
     in property <[color]> palette;
     in-out property <float> stroke-width: 4;
+    in-out property <float> tape-width: 36;
+    in-out property <int> tape-pattern: 0;
     in-out property <int> shape-kind: 2;
     in-out property <bool> shape-filled;
     in-out property <float> fill-tolerance: 16;
@@ -260,7 +263,8 @@ export component AppWindow inherits Window {
     // adjust
     in-out property <int> rs-w; in-out property <int> rs-h;
     in-out property <bool> rs-keep: true;
-    in-out property <bool> select-circle;
+    in-out property <int> select-shape: 0;
+    in-out property <int> crop-mode: 0;
     in-out property <float> a-bright: 20; in-out property <float> a-contrast: 20; in-out property <float> a-sat: 20;
     in-out property <float> a-expo: 0.5; in-out property <float> a-blur: 2; in-out property <float> a-sharp: 1.5;
     in-out property <float> a-hue: 30; in-out property <float> a-sepia: 0.8; in-out property <float> a-vig: 0.5;
@@ -349,8 +353,8 @@ export component AppWindow inherits Window {
     in property <string> props-text;
     in-out property <bool> about-open;
     in-out property <bool> keys-open;
-    property <[string]> tool-keys: ["S", "P", "B", "L", "A", "K", "E", "F", "I", "T", "M", "C", "H", "U", "R", "Shift+R"];
-    property <[image]> tool-icons: [@image-url("icons/tool-select.svg"), @image-url("icons/tool-pencil.svg"), @image-url("icons/tool-brush.svg"), @image-url("icons/tool-highlighter.svg"), @image-url("icons/tool-airbrush.svg"), @image-url("icons/tool-calligraphy.svg"), @image-url("icons/tool-eraser.svg"), @image-url("icons/tool-fill.svg"), @image-url("icons/tool-picker.svg"), @image-url("icons/tool-text.svg"), @image-url("icons/tool-mosaic.svg"), @image-url("icons/tool-crop.svg"), @image-url("icons/tool-hand.svg"), @image-url("icons/tool-shapes.svg"), @image-url("icons/tool-redact-box.svg"), @image-url("icons/tool-redact-brush.svg")];
+    property <[string]> tool-keys: ["S", "P", "B", "L", "A", "K", "E", "F", "I", "T", "M", "C", "H", "U", "R", "Shift+R", "J"];
+    property <[image]> tool-icons: [@image-url("icons/tool-select.svg"), @image-url("icons/tool-pencil.svg"), @image-url("icons/tool-brush.svg"), @image-url("icons/tool-highlighter.svg"), @image-url("icons/tool-airbrush.svg"), @image-url("icons/tool-calligraphy.svg"), @image-url("icons/tool-eraser.svg"), @image-url("icons/tool-fill.svg"), @image-url("icons/tool-picker.svg"), @image-url("icons/tool-text.svg"), @image-url("icons/tool-mosaic.svg"), @image-url("icons/tool-crop.svg"), @image-url("icons/tool-hand.svg"), @image-url("icons/tool-shapes.svg"), @image-url("icons/tool-redact-box.svg"), @image-url("icons/tool-redact-brush.svg"), @image-url("icons/tool-tape.svg")];
 
     property <[MItem]> m-file: [
         { label: T.t("新增", "New"), act: "new", enabled: true, key: "Ctrl+N", icon: @image-url("icons/new.svg") },
@@ -399,7 +403,7 @@ export component AppWindow inherits Window {
         { label: T.t("檢視模式", "Viewer mode"), act: "toggle-mode", enabled: true, check: true, checked: root.view-mode }
     ];
     property <[MItem]> m-image: [
-        { label: T.t("裁切到選取區", "Crop to selection"), act: "crop", enabled: root.has-selection, key: "Enter", icon: @image-url("icons/crop.svg") },
+        { label: T.t("套用裁切模式", "Apply crop mode"), act: "crop", enabled: root.has-selection, key: "Enter", icon: @image-url("icons/crop.svg") },
         { label: T.t("調整影像大小…", "Resize image…"), act: "resize-dialog", enabled: true, key: "Ctrl+W", icon: @image-url("icons/resize.svg") },
         { label: T.t("畫布大小…", "Canvas size…"), act: "resize-dialog", enabled: true, key: "Ctrl+Shift+W", icon: @image-url("icons/canvas-size.svg") },
         { sep: true },
@@ -643,7 +647,7 @@ export component AppWindow inherits Window {
                     stroke: #0003;
                     stroke-width: 1px;
                 }
-                if root.has-selection: Rectangle {
+                if root.has-selection && root.selection-path == "": Rectangle {
                     x: root.pan-x + root.sel-x * root.zoom * 1px;
                     y: root.pan-y + root.sel-y * root.zoom * 1px;
                     width: root.sel-w * root.zoom * 1px;
@@ -652,6 +656,12 @@ export component AppWindow inherits Window {
                     border-color: #2f6fed;
                     border-radius: root.sel-circle ? self.width / 2 : 0;
                     background: #2f6fed18;
+                }
+                if root.has-selection && root.selection-path != "": Path {
+                    width: canvas-area.width; height: canvas-area.height;
+                    viewbox-width: canvas-area.width / 1px; viewbox-height: canvas-area.height / 1px;
+                    commands: root.selection-path;
+                    stroke: #2f6fed; stroke-width: 1.5px; fill: #2f6fed18;
                 }
                 if root.has-preview: Rectangle {
                     x: root.pan-x + root.pv-x * root.zoom * 1px;
@@ -773,7 +783,7 @@ export component AppWindow inherits Window {
                         IBtn { icon: @image-url("icons/save-as.svg"); size: 28px; tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
                         IBtn { icon: @image-url("icons/copy.svg"); size: 28px; tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
                         IBtn { icon: @image-url("icons/paste.svg"); size: 28px; tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
-                        IBtn { icon: @image-url("icons/crop.svg"); size: 28px; tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
+                        IBtn { icon: @image-url("icons/crop.svg"); size: 28px; tip: T.t("套用裁切模式 (Enter)", "Apply crop mode (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                         IBtn { icon: @image-url("icons/rot-right.svg"); size: 28px; tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
                         IBtn { icon: @image-url("icons/zoom-fit.svg"); size: 28px; tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
                         IBtn { icon: @image-url("icons/zoom-100.svg"); size: 28px; tip: T.t("實際大小 100% (1)", "Actual size 100% (1)"); clicked => { root.action("zoom-100"); } }
@@ -809,7 +819,7 @@ export component AppWindow inherits Window {
                         Rectangle { height: 1px; background: #e4e8ee; }
                         MenuRow { icon: @image-url("icons/select-all.svg"); label: T.t("全選", "Select all"); shortcut: "Ctrl+A"; clicked => { root.ctx-open = false; root.action("select-all"); } }
                         MenuRow { icon: @image-url("icons/deselect.svg"); label: T.t("取消選取", "Deselect"); shortcut: "Ctrl+D"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("deselect"); } }
-                        MenuRow { icon: @image-url("icons/crop.svg"); label: T.t("裁切到選取區", "Crop to selection"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
+                        MenuRow { icon: @image-url("icons/crop.svg"); label: T.t("套用裁切模式", "Apply crop mode"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
                         MenuRow { icon: @image-url("icons/layer-delete.svg"); label: T.t("刪除圖層", "Delete layer"); shortcut: "Del"; enabled: root.has-layer; clicked => { root.ctx-open = false; root.action("layer-delete"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
                         MenuRow { icon: @image-url("icons/rot-right.svg"); label: T.t("順時針旋轉 90°", "Rotate 90° right"); clicked => { root.ctx-open = false; root.action("rot-right"); } }
@@ -855,6 +865,13 @@ export component AppWindow inherits Window {
                                 spacing: 6px;
                                 Section { text: T.t("筆刷 / 形狀", "Brush / shape"); }
                                 LabeledSlider { label: T.t("粗細", "Width"); minimum: 1; maximum: 120; value <=> root.stroke-width; has-apply: false; }
+                                if root.tool == 16: VerticalLayout {
+                                    spacing: 6px;
+                                    Section { text: T.t("膠帶貼紙", "Tape stickers"); }
+                                    LabeledSlider { label: T.t("膠帶寬度", "Tape width"); minimum: 4; maximum: 200; value <=> root.tape-width; has-apply: false; }
+                                    ComboBox { current-index <=> root.tape-pattern; model: [T.t("粉紅條紋", "Pink stripes"), T.t("藍色圓點", "Blue dots"), T.t("薄荷格紋", "Mint gingham"), T.t("黃色星星", "Yellow stars"), T.t("紫色愛心", "Purple hearts"), T.t("珊瑚波浪", "Coral waves"), T.t("森林葉子", "Forest leaves"), T.t("海洋鑽石", "Ocean diamonds"), T.t("彩虹斜紋", "Rainbow stripes"), T.t("牛皮紙點點", "Kraft confetti")]; }
+                                    Text { text: T.t("拖曳貼上膠帶，每筆為可編輯圖層。", "Drag to apply tape; each stroke is an editable layer."); wrap: word-wrap; }
+                                }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Text { text: T.t("形狀", "Shape"); vertical-alignment: center; width: 78px; }
@@ -981,13 +998,18 @@ export component AppWindow inherits Window {
                                     IBtn { icon: @image-url("icons/flip-v.svg"); tip: T.t("垂直翻轉", "Flip vertical"); clicked => { root.action("flip-v"); } }
                                 }
                                 Section { text: T.t("選取 / 裁切", "Select / crop"); }
-                                CheckBox { text: T.t("圓形選取", "Circular selection"); checked <=> root.select-circle; }
+                                Text { text: T.t("選取外框", "Selection outline"); }
+                                ComboBox { model: [T.t("矩形", "Rectangle"), T.t("圓形", "Circle"), T.t("自訂外框（拖曳繪製）", "Freehand outline (drag)")]; current-index <=> root.select-shape; }
+                                Text { text: T.t("裁切模式", "Crop mode"); }
+                                ComboBox { model: [T.t("保留選取內容", "Keep selected content"), T.t("移除選取內容", "Remove selected content")]; current-index <=> root.crop-mode; }
+                                Text { text: T.t("自訂外框放開滑鼠後自動閉合；移除部分為透明。", "Release to close a freehand outline; removed pixels become transparent."); wrap: word-wrap; }
+                                Button { text: T.t("套用裁切 (Enter)", "Apply crop (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                                 HorizontalLayout {
                                     spacing: 3px;
                                     alignment: start;
                                     IBtn { icon: @image-url("icons/select-all.svg"); tip: T.t("全選 (Ctrl+A)", "Select all (Ctrl+A)"); clicked => { root.action("select-all"); } }
                                     IBtn { icon: @image-url("icons/deselect.svg"); tip: T.t("取消選取 (Ctrl+D)", "Deselect (Ctrl+D)"); enabled: root.has-selection; clicked => { root.action("deselect"); } }
-                                    IBtn { icon: @image-url("icons/crop.svg"); tip: T.t("裁切到選取區 (Enter)", "Crop to selection (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
+                                    IBtn { icon: @image-url("icons/crop.svg"); tip: T.t("套用裁切模式 (Enter)", "Apply crop mode (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                                 }
                                 Section { text: T.t("尺寸", "Size"); }
                                 HorizontalLayout {
@@ -1478,14 +1500,14 @@ export component AppWindow inherits Window {
                 KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
                 KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }
                 KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
-                KeyRow { keys: "Enter / Esc"; what: T.t("裁切到選取區 / 取消選取或關閉對話框", "Crop to selection / clear selection or close dialog"); }
+                KeyRow { keys: "Enter / Esc"; what: T.t("套用裁切模式 / 取消選取或關閉對話框", "Apply crop mode / clear selection or close dialog"); }
                 KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }
                 KeyRow { keys: "Ctrl+Shift+E"; what: T.t("合併所有圖層", "Merge all layers"); }
                 KeyRow { keys: T.t("方向鍵", "Arrows"); what: T.t("移動圖層（Shift 一次 10px）；無圖層時切換上一張/下一張", "Nudge layer (Shift = 10px); with no layer, previous/next image"); }
                 Text { text: T.t("工具", "Tools"); font-weight: 700; color: #1f3b63; }
                 KeyRow { keys: "S P B L A K"; what: T.t("選取、鉛筆、筆刷、螢光筆、噴槍、書法筆", "Select, pencil, brush, highlighter, airbrush, calligraphy"); }
                 KeyRow { keys: "E F I T M"; what: T.t("橡皮擦、油漆桶、滴管、文字、馬賽克筆", "Eraser, fill, picker, text, mosaic"); }
-                KeyRow { keys: "C H U R Shift+R"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷", "Crop, pan, shapes, redact box, redact brush"); }
+                KeyRow { keys: "C H U R Shift+R J"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷、膠帶貼紙", "Crop, pan, shapes, redact box, redact brush, tape stickers"); }
                 KeyRow { keys: "X"; what: T.t("交換色 1 / 色 2", "Swap colour 1 / 2"); }
                 KeyRow { keys: T.t("中鍵拖曳 / Ctrl+滾輪", "Middle-drag / Ctrl+wheel"); what: T.t("平移 / 縮放", "Pan / zoom"); }
                 Text { text: T.t("選單", "Menus"); font-weight: 700; color: #1f3b63; }

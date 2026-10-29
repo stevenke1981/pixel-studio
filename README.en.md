@@ -1,5 +1,10 @@
 # Pixel Studio
 
+## Crop and tape stickers
+
+- Select the Crop tool and choose a rectangle, circle, or freehand outline in the Adjust panel. Drag a freehand outline and release to close it. Choose whether to keep or remove the selected content, then press Enter or Apply crop. Removed pixels become transparent; keeping a nonrectangular selection trims to its bounds and makes the outside transparent. Masked crops flatten visible layers, which Undo restores. Export to PNG or another transparency-capable format to preserve transparency.
+- Select the Tape sticker brush, choose one of ten patterns and a width in the Tools panel, and drag to apply it. Each stroke is a separate editable layer that can be moved, adjusted, or undone. Tape is translucent decoration; use the redaction tool to conceal sensitive information.
+
 English ｜ [繁體中文](README.md)
 
 A Rust + [Slint](https://slint.dev) image editor that aims to **replace and surpass MS Paint**: painting, layers, stickers, social-media post images, offline auto-redaction and batch conversion, on Windows, Linux and macOS.

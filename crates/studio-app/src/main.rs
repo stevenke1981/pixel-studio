@@ -4,6 +4,7 @@ pub mod capture;
 mod doc;
 mod fonts;
 pub mod shell;
+mod tape;
 mod ui;
 
 use anyhow::Result;

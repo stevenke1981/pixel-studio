@@ -55,7 +55,7 @@ const PALETTE: [[u8; 3]; 28] = [
     [96, 125, 139],
 ];
 
-const TOOL_LABELS: [(&str, &str); 16] = [
+const TOOL_LABELS: [(&str, &str); 17] = [
     ("選取/移動", "Select/move"),
     ("鉛筆", "Pencil"),
     ("筆刷", "Brush"),
@@ -72,6 +72,7 @@ const TOOL_LABELS: [(&str, &str); 16] = [
     ("形狀", "Shapes"),
     ("打碼框", "Redact boxes"),
     ("打碼筆刷", "Redact brush"),
+    ("膠帶貼紙筆刷", "Tape sticker brush"),
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -593,6 +594,22 @@ fn sync_view(ui: &AppWindow, s: &State) {
         }
         None => ui.set_has_selection(false),
     }
+    let path = if s.doc.selection.is_some() && !s.doc.selection_path.is_empty() {
+        let mut path = String::new();
+        for (i, &(x, y)) in s.doc.selection_path.iter().enumerate() {
+            path.push_str(&format!(
+                "{} {} {} ",
+                if i == 0 { "M" } else { "L" },
+                s.pan.0 + x * s.zoom,
+                s.pan.1 + y * s.zoom
+            ));
+        }
+        path.push('Z');
+        path
+    } else {
+        String::new()
+    };
+    ui.set_selection_path(path.into());
     let pv = match s.drag {
         Drag::Shape { start, now } | Drag::RedactBox { start, now } => Some((start, now)),
         Drag::CanvasEdge { now, .. } => Some(((0.0, 0.0), now)),
@@ -1386,6 +1403,8 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
     s.tools.shape_filled = ui.get_shape_filled();
     s.tools.fill_tolerance = ui.get_fill_tolerance() as u8;
     s.tools.redact_brush_radius = ui.get_redact_radius();
+    s.tools.tape_width = ui.get_tape_width();
+    s.tools.tape_pattern = ui.get_tape_pattern().clamp(0, 9) as usize;
     s.tools.redact_color = s.tools.color1;
     s.tools.shape = [
         ShapeKind::Line,
@@ -1434,8 +1453,14 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                 }
             }
             match tool {
-                t if t.is_raster() || t == Tool::RedactBrush => {
+                t if t.is_raster() || t == Tool::RedactBrush || t == Tool::Tape => {
+                    if t == Tool::Tape && s.doc.sample(p.0, p.1).is_none() {
+                        return;
+                    }
                     s.gesture = Some(s.doc.begin_gesture());
+                    if t == Tool::Tape {
+                        s.doc.begin_tape_stroke();
+                    }
                     s.doc.stroke(t, p, p, secondary, &s.tools);
                     s.drag = Drag::Paint { last: p, secondary };
                 }
@@ -1523,6 +1548,13 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         s.gesture = Some(s.doc.begin_gesture());
                         s.doc.selected = None;
                         s.doc.selection = None;
+                        s.doc.selection_path.clear();
+                        if ui.get_select_shape() == 2 {
+                            s.doc.selection_path.push((
+                                p.0.clamp(0.0, s.doc.width() as f32),
+                                p.1.clamp(0.0, s.doc.height() as f32),
+                            ));
+                        }
                         s.drag = Drag::Select { start: p };
                     }
                 }
@@ -1536,14 +1568,38 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
             }
             Drag::Pan { mouse, pan } => s.pan = (pan.0 + mx - mouse.0, pan.1 + my - mouse.1),
             Drag::Select { start } => {
-                let circle = ui.get_select_circle() && tool == Tool::Select;
-                s.doc.selection = Some(Selection::from_points(
-                    start,
-                    p,
-                    circle,
-                    s.doc.width(),
-                    s.doc.height(),
-                ));
+                if !s.doc.selection_path.is_empty() {
+                    let point = (
+                        p.0.clamp(0.0, s.doc.width() as f32),
+                        p.1.clamp(0.0, s.doc.height() as f32),
+                    );
+                    let last = *s.doc.selection_path.last().unwrap();
+                    if (point.0 - last.0).hypot(point.1 - last.1) >= 1.0 {
+                        s.doc.selection_path.push(point);
+                    }
+                    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                    for &(x, y) in &s.doc.selection_path {
+                        x0 = x0.min(x);
+                        y0 = y0.min(y);
+                        x1 = x1.max(x);
+                        y1 = y1.max(y);
+                    }
+                    s.doc.selection = Some(Selection::from_points(
+                        (x0, y0),
+                        (x1, y1),
+                        false,
+                        s.doc.width(),
+                        s.doc.height(),
+                    ));
+                } else {
+                    s.doc.selection = Some(Selection::from_points(
+                        start,
+                        p,
+                        ui.get_select_shape() == 1,
+                        s.doc.width(),
+                        s.doc.height(),
+                    ));
+                }
             }
             Drag::Shape { start, .. } => {
                 let mut now = p;
@@ -1610,6 +1666,9 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
         },
         3 => cancel_gesture(s),
         1 => {
+            if tool == Tool::Tape && matches!(s.drag, Drag::Paint { .. }) {
+                s.doc.finish_tape_stroke();
+            }
             match s.drag {
                 Drag::Shape { start, now }
                     if (start.0 - now.0).abs() + (start.1 - now.1).abs() > 2.0 =>
@@ -1634,6 +1693,11 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         .is_some_and(|sel| sel.w < 2.0 || sel.h < 2.0)
                     {
                         s.doc.selection = None;
+                        s.doc.selection_path.clear();
+                    }
+                    if !s.doc.selection_path.is_empty() && s.doc.selection_path.len() < 3 {
+                        s.doc.selection = None;
+                        s.doc.selection_path.clear();
                     }
                     if tool == Tool::Crop && s.doc.selection.is_some() {
                         ui.set_status(
@@ -1969,7 +2033,17 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                     y,
                     width,
                     height,
-                }) => image::imageops::crop_imm(&flat, x, y, width, height).to_image(),
+                }) => {
+                    let mut cropped =
+                        image::imageops::crop_imm(&flat, x, y, width, height).to_image();
+                    let bitmap = s.doc.selection_bitmap();
+                    for (px, py, pixel) in cropped.enumerate_pixels_mut() {
+                        if bitmap.get_pixel(x + px, y + py).0[0] == 0 {
+                            *pixel = image::Rgba([0, 0, 0, 0]);
+                        }
+                    }
+                    cropped
+                }
                 _ => flat,
             };
             let r = arboard::Clipboard::new().and_then(|mut c| {
@@ -2102,6 +2176,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "flip-v" => with_doc(ui, st, |d| d.apply_transform(tr::flip_vertical)),
         "select-all" => with_doc(ui, st, |d| {
             d.focus_box(None);
+            d.selection_path.clear();
             d.selection = Some(Selection {
                 x: 0.0,
                 y: 0.0,
@@ -2112,10 +2187,28 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }),
         "deselect" => with_doc(ui, st, |d| {
             d.selection = None;
+            d.selection_path.clear();
             d.focus_box(None);
         }),
         "crop" => {
-            let ok = st.borrow_mut().doc.crop_to_selection();
+            let remove = ui.get_crop_mode() == 1;
+            let needs_flatten = {
+                let s = st.borrow();
+                !s.doc.layers.is_empty()
+                    && s.doc
+                        .selection
+                        .is_some_and(|sel| remove || sel.circle || !s.doc.selection_path.is_empty())
+            };
+            if needs_flatten && rfd::MessageDialog::new()
+                .set_title("Pixel Studio")
+                .set_description(tl(zh, "此裁切會合併可見圖層以產生透明區域；復原可還原圖層。繼續？", "This crop flattens visible layers to create transparency. Undo restores the layers. Continue?"))
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show() != rfd::MessageDialogResult::Yes { return; }
+            let ok = if remove {
+                st.borrow_mut().doc.crop_selection(true)
+            } else {
+                st.borrow_mut().doc.crop_to_selection()
+            };
             if !ok {
                 ui.set_status(
                     tl(
@@ -2813,6 +2906,7 @@ fn tool_for_key(t: &str, shift: bool) -> Option<i32> {
         ("u", false) => 13,
         ("r", false) => 14,
         ("r", true) => 15,
+        ("j", false) => 16,
         _ => return None,
     })
 }
@@ -2927,6 +3021,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             let mut s = st.borrow_mut();
             cancel_gesture(&mut s);
             s.doc.selection = None;
+            s.doc.selection_path.clear();
             s.doc.selected = None;
             s.doc.focus_box(None);
             s.drag = Drag::None;
@@ -3094,6 +3189,12 @@ fn wire(ui: &AppWindow, st: &S) {
         st.borrow_mut().edit_session = None;
         st.borrow_mut().tool = t;
         st.borrow_mut().doc.focus_box(None);
+        if t == Tool::Tape {
+            ui.set_tab(0);
+        }
+        if t == Tool::Crop {
+            ui.set_tab(2);
+        }
         if matches!(t, Tool::RedactBox | Tool::RedactBrush) {
             ui.set_tab(4);
         }
@@ -3127,6 +3228,61 @@ fn sticker_insert(ui: &AppWindow, st: &S, id: &str, at: Option<(f32, f32)>) {
 #[cfg(test)]
 mod cursor_tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn crop_and_tape_pointer_workflow() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        T::get(&ui).set_zh(false);
+        let st = Rc::new(RefCell::new(initial_state(
+            &Settings::default(),
+            false,
+            false,
+        )));
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(100, 100);
+            s.zoom = 1.0;
+            s.pan = (0.0, 0.0);
+        }
+        wire(&ui, &st);
+        ui.show().unwrap();
+        ui.set_tool(Tool::Crop.index());
+        ui.invoke_tool_changed(Tool::Crop.index());
+        ui.set_select_shape(2);
+        ui.set_crop_mode(1);
+        ui.invoke_canvas_pointer(0, 0, 10.0, 10.0, false, false);
+        ui.invoke_canvas_pointer(2, 0, 80.0, 10.0, false, false);
+        ui.invoke_canvas_pointer(2, 0, 10.0, 80.0, false, false);
+        ui.invoke_canvas_pointer(1, 0, 10.0, 80.0, false, false);
+        assert!(ui.get_has_selection());
+        assert!(!ui.get_selection_path().is_empty());
+        ui.invoke_action("crop".into());
+        assert_eq!(st.borrow().doc.image.get_pixel(20, 20).0[3], 0);
+        assert_eq!(st.borrow().doc.image.get_pixel(80, 80).0[3], 255);
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.image.get_pixel(20, 20).0[3], 255);
+        {
+            let mut s = st.borrow_mut();
+            s.zoom = 1.0;
+            s.pan = (0.0, 0.0);
+        }
+        ui.set_tool(Tool::Tape.index());
+        ui.invoke_tool_changed(Tool::Tape.index());
+        ui.set_tape_pattern(4);
+        ui.invoke_canvas_pointer(0, 0, 20.0, 50.0, false, false);
+        ui.invoke_canvas_pointer(2, 0, 70.0, 50.0, false, false);
+        ui.invoke_canvas_pointer(1, 0, 70.0, 50.0, false, false);
+        assert_eq!(st.borrow().doc.layers.len(), 1);
+        assert_ne!(
+            st.borrow().doc.flattened().to_rgba8().get_pixel(50, 50).0,
+            [255, 255, 255, 255]
+        );
+        ui.invoke_action("undo".into());
+        assert!(st.borrow().doc.layers.is_empty());
+        ui.hide().unwrap();
+    }
 
     #[test]
     #[cfg(feature = "ui-testing")]

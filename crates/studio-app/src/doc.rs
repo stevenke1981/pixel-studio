@@ -36,10 +36,11 @@ pub enum Tool {
     Shapes,
     RedactBox,
     RedactBrush,
+    Tape,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 16] = [
+    pub const ALL: [Tool; 17] = [
         Tool::Select,
         Tool::Pencil,
         Tool::Brush,
@@ -56,6 +57,7 @@ impl Tool {
         Tool::Shapes,
         Tool::RedactBox,
         Tool::RedactBrush,
+        Tool::Tape,
     ];
     pub fn index(self) -> i32 {
         Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as i32
@@ -176,6 +178,7 @@ pub struct Snapshot {
     selected: Option<usize>,
     revision: u64,
     selection: Option<Selection>,
+    selection_path: Vec<(f32, f32)>,
     boxes: Vec<RedactBox>,
     focused_box: Option<usize>,
 }
@@ -191,6 +194,8 @@ pub struct ToolSettings {
     pub fill_tolerance: u8,
     pub redact_color: [u8; 4],
     pub redact_brush_radius: f32,
+    pub tape_width: f32,
+    pub tape_pattern: usize,
 }
 
 impl Default for ToolSettings {
@@ -204,6 +209,8 @@ impl Default for ToolSettings {
             fill_tolerance: 16,
             redact_color: [0, 0, 0, 255],
             redact_brush_radius: 12.0,
+            tape_width: 36.0,
+            tape_pattern: 0,
         }
     }
 }
@@ -214,6 +221,7 @@ pub struct Doc {
     pub layers: Vec<ComposeLayer>,
     pub selected: Option<usize>,
     pub selection: Option<Selection>,
+    pub selection_path: Vec<(f32, f32)>,
     pub path: Option<PathBuf>,
     pub font_bytes: Option<Vec<u8>>,
     pub boxes: Vec<RedactBox>,
@@ -243,6 +251,7 @@ impl Doc {
             layers: Vec::new(),
             selected: None,
             selection: None,
+            selection_path: Vec::new(),
             path: None,
             font_bytes: None,
             boxes: Vec::new(),
@@ -274,6 +283,7 @@ impl Doc {
         self.layers.clear();
         self.selected = None;
         self.selection = None;
+        self.selection_path.clear();
         self.boxes.clear();
         self.focused_box = None;
         self.undo.clear();
@@ -312,6 +322,7 @@ impl Doc {
             selected: self.selected,
             revision: self.revision,
             selection: self.selection,
+            selection_path: self.selection_path.clone(),
             boxes: self.boxes.clone(),
             focused_box: self.focused_box,
         }
@@ -351,6 +362,7 @@ impl Doc {
         self.layers = s.layers;
         self.selected = s.selected.filter(|i| *i < self.layers.len());
         self.selection = s.selection;
+        self.selection_path = s.selection_path;
         self.boxes = s.boxes;
         self.focused_box = s.focused_box.filter(|i| *i < self.boxes.len());
         self.overlay_dirty = true;
@@ -490,6 +502,41 @@ impl Doc {
 
     // ------------------------------------------------------------ painting
 
+    pub fn begin_tape_stroke(&mut self) {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(self.width(), self.height()));
+        let mut layer = ImageLayer::new("Tape".into(), image);
+        layer.x = 0;
+        layer.y = 0;
+        self.layers.push(ComposeLayer::Image(layer));
+        self.selected = None;
+        self.layers_changed();
+    }
+
+    pub fn finish_tape_stroke(&mut self) {
+        if let Some(ComposeLayer::Image(layer)) = self.layers.last_mut()
+            && let Some(image) = layer.image.as_rgba8()
+        {
+            let (mut x0, mut y0, mut x1, mut y1) = (image.width(), image.height(), 0, 0);
+            for (x, y, pixel) in image.enumerate_pixels() {
+                if pixel.0[3] != 0 {
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x + 1);
+                    y1 = y1.max(y + 1);
+                }
+            }
+            if x1 > x0 && y1 > y0 {
+                let cropped = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
+                layer.x = x0 as i32;
+                layer.y = y0 as i32;
+                layer.width = cropped.width();
+                layer.height = cropped.height();
+                layer.image = DynamicImage::ImageRgba8(cropped);
+            }
+            self.layers_changed();
+        }
+    }
+
     /// Apply one raster stroke segment. Returns false for non-raster tools.
     pub fn stroke(
         &mut self,
@@ -500,6 +547,16 @@ impl Doc {
         s: &ToolSettings,
     ) -> bool {
         use studio_core::drawing as d;
+        if tool == Tool::Tape {
+            if let Some(ComposeLayer::Image(layer)) = self.layers.last_mut()
+                && let Some(image) = layer.image.as_mut_rgba8()
+            {
+                crate::tape::draw_segment(image, from, to, s.tape_width, s.tape_pattern);
+                self.layers_changed();
+                return true;
+            }
+            return false;
+        }
         let (x0, y0, x1, y1) = (
             from.0.round() as i32,
             from.1.round() as i32,
@@ -615,7 +672,19 @@ impl Doc {
             .and_then(|s| s.mask(self.width(), self.height()))
         {
             Some(m) if edited.width() == src.width() && edited.height() == src.height() => {
-                studio_core::transform::apply_selection_mask(&src, &edited, m)
+                if self.selection_path.is_empty() {
+                    studio_core::transform::apply_selection_mask(&src, &edited, m)
+                } else {
+                    let mut out = src.to_rgba8();
+                    let changed = edited.to_rgba8();
+                    let bitmap = self.selection_bitmap();
+                    for (x, y, pixel) in out.enumerate_pixels_mut() {
+                        if bitmap.get_pixel(x, y).0[0] != 0 {
+                            *pixel = *changed.get_pixel(x, y);
+                        }
+                    }
+                    DynamicImage::ImageRgba8(out)
+                }
             }
             _ => edited,
         };
@@ -633,6 +702,7 @@ impl Doc {
         self.focused_box = None;
         self.overlay_dirty = true;
         self.selection = None;
+        self.selection_path.clear();
         self.set_image(out);
     }
 
@@ -645,39 +715,128 @@ impl Doc {
         self.mark(IRect::full(self.width(), self.height()));
     }
 
-    pub fn crop_to_selection(&mut self) -> bool {
+    /// Test a pixel centre against the current selection, including freehand paths.
+    pub fn selection_contains(&self, x: u32, y: u32) -> bool {
         let Some(sel) = self.selection else {
             return false;
         };
-        let Some(
-            SelectionMask::Rectangle {
-                x,
-                y,
-                width,
-                height,
+        let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+        if !self.selection_path.is_empty() {
+            let points = &self.selection_path;
+            let mut inside = false;
+            let mut prev = points[points.len() - 1];
+            for &point in points {
+                if (point.1 > py) != (prev.1 > py)
+                    && px < (prev.0 - point.0) * (py - point.1) / (prev.1 - point.1) + point.0
+                {
+                    inside = !inside;
+                }
+                prev = point;
             }
-            | SelectionMask::Circle {
-                x,
-                y,
-                diameter: width @ height,
-            },
-        ) = Selection {
+            inside
+        } else if sel.circle {
+            let r = sel.w / 2.0;
+            let (dx, dy) = (px - sel.x - r, py - sel.y - r);
+            dx * dx + dy * dy <= r * r
+        } else {
+            px >= sel.x && py >= sel.y && px < sel.x + sel.w && py < sel.y + sel.h
+        }
+    }
+
+    /// Rasterize freehand paths by scanline, avoiding a polygon test per pixel.
+    pub fn selection_bitmap(&self) -> image::GrayImage {
+        let mut bitmap = image::GrayImage::new(self.width(), self.height());
+        if self.selection_path.is_empty() {
+            for (x, y, pixel) in bitmap.enumerate_pixels_mut() {
+                if self.selection_contains(x, y) {
+                    *pixel = image::Luma([255]);
+                }
+            }
+        } else {
+            let points = &self.selection_path;
+            for y in 0..self.height() {
+                let py = y as f32 + 0.5;
+                let mut crossings = Vec::new();
+                let mut prev = points[points.len() - 1];
+                for &point in points {
+                    if (point.1 > py) != (prev.1 > py) {
+                        crossings.push(
+                            (prev.0 - point.0) * (py - point.1) / (prev.1 - point.1) + point.0,
+                        );
+                    }
+                    prev = point;
+                }
+                crossings.sort_by(f32::total_cmp);
+                for pair in crossings.as_chunks::<2>().0 {
+                    let start = (pair[0] - 0.5).ceil().max(0.0) as u32;
+                    let end = ((pair[1] - 0.5).ceil().max(0.0) as u32).min(self.width());
+                    for x in start.min(self.width())..end {
+                        bitmap.put_pixel(x, y, image::Luma([255]));
+                    }
+                }
+            }
+        }
+        bitmap
+    }
+
+    /// Keep the selection or remove it from the visible composition. Masked
+    /// operations flatten layers so transparent pixels cannot reveal them.
+    pub fn crop_selection(&mut self, remove: bool) -> bool {
+        let Some(sel) = self.selection else {
+            return false;
+        };
+        let Some(SelectionMask::Rectangle {
+            x,
+            y,
+            width,
+            height,
+        }) = (Selection {
             circle: false,
             ..sel
-        }
+        })
         .mask(self.width(), self.height())
         else {
             return false;
         };
         self.checkpoint();
-        let cropped = image::imageops::crop_imm(&self.image, x, y, width, height).to_image();
-        for l in &mut self.layers {
-            move_layer(l, -(x as i32), -(y as i32));
+        if !remove && !sel.circle && self.selection_path.is_empty() {
+            let cropped = image::imageops::crop_imm(&self.image, x, y, width, height).to_image();
+            for layer in &mut self.layers {
+                move_layer(layer, -(x as i32), -(y as i32));
+            }
+            for b in &mut self.boxes {
+                b.x -= x as i32;
+                b.y -= y as i32;
+            }
+            self.overlay_dirty = true;
+            self.set_image(cropped);
+        } else {
+            let mut out = self.flattened().to_rgba8();
+            let bitmap = self.selection_bitmap();
+            for py in 0..out.height() {
+                for px in 0..out.width() {
+                    if (bitmap.get_pixel(px, py).0[0] != 0) == remove {
+                        out.put_pixel(px, py, Rgba([0, 0, 0, 0]));
+                    }
+                }
+            }
+            if !remove {
+                out = image::imageops::crop_imm(&out, x, y, width, height).to_image();
+            }
+            self.layers.clear();
+            self.selected = None;
+            self.boxes.clear();
+            self.focused_box = None;
+            self.overlay_dirty = true;
+            self.set_image(out);
         }
         self.selection = None;
-        self.overlay_dirty = true;
-        self.set_image(cropped);
+        self.selection_path.clear();
         true
+    }
+
+    pub fn crop_to_selection(&mut self) -> bool {
+        self.crop_selection(false)
     }
 
     /// Resize the canvas (not the pixels), filling new area with colour 2.
@@ -918,6 +1077,7 @@ impl Doc {
         if self.focused_box.is_some() {
             self.selected = None;
             self.selection = None;
+            self.selection_path.clear();
         }
     }
 
@@ -1527,6 +1687,102 @@ mod tests {
         if let ComposeLayer::Text(t) = &d.layers[0] {
             assert_eq!((t.x, t.y), (2, 2));
         }
+    }
+
+    #[test]
+    fn crop_shapes_keep_or_remove_pixels_and_undo() {
+        let selection = Selection {
+            x: 1.0,
+            y: 1.0,
+            w: 4.0,
+            h: 4.0,
+            circle: false,
+        };
+        let mut d = Doc::new(6, 6);
+        d.selection = Some(selection);
+        d.selection_path = vec![(1.0, 1.0), (5.0, 1.0), (1.0, 5.0)];
+        assert!(d.crop_selection(false));
+        assert_eq!(d.image.dimensions(), (4, 4));
+        assert_eq!(d.image.get_pixel(0, 0).0, [255, 255, 255, 255]);
+        assert_eq!(d.image.get_pixel(3, 3).0[3], 0);
+        assert!(d.undo());
+        assert_eq!(d.image.dimensions(), (6, 6));
+        assert_eq!(d.selection_path.len(), 3);
+        assert!(d.crop_selection(true));
+        assert_eq!(d.image.dimensions(), (6, 6));
+        assert_eq!(d.image.get_pixel(1, 1).0[3], 0);
+        assert_eq!(d.image.get_pixel(4, 4).0[3], 255);
+        assert!(d.undo());
+        assert_eq!(d.image.get_pixel(1, 1).0[3], 255);
+    }
+
+    #[test]
+    fn circle_crop_masks_corners_and_preserves_visible_layers_on_undo() {
+        let mut d = Doc::new(8, 8);
+        let mut layer = ImageLayer::new(
+            "layer".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([10, 20, 30, 255]))),
+        );
+        layer.x = 0;
+        layer.y = 0;
+        d.push_layer(ComposeLayer::Image(layer));
+        d.selection = Some(Selection {
+            x: 1.0,
+            y: 1.0,
+            w: 6.0,
+            h: 6.0,
+            circle: true,
+        });
+        assert!(d.crop_to_selection());
+        assert!(d.layers.is_empty());
+        assert_eq!(d.image.get_pixel(0, 0).0[3], 0);
+        assert_eq!(d.image.get_pixel(3, 3).0, [10, 20, 30, 255]);
+        assert!(d.undo());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.image.dimensions(), (8, 8));
+    }
+
+    #[test]
+    fn rectangle_crop_remove_keeps_canvas_and_transparency() {
+        let mut d = Doc::new(6, 6);
+        d.selection = Some(Selection {
+            x: 2.0,
+            y: 1.0,
+            w: 2.0,
+            h: 3.0,
+            circle: false,
+        });
+        assert!(d.crop_selection(true));
+        assert_eq!(d.image.dimensions(), (6, 6));
+        assert_eq!(d.image.get_pixel(2, 1).0[3], 0);
+        assert_eq!(d.image.get_pixel(1, 1).0[3], 255);
+    }
+
+    #[test]
+    fn tape_stroke_covers_existing_layers_and_undoes_as_one_edit() {
+        let mut d = Doc::new(80, 60);
+        let mut layer = ImageLayer::new(
+            "under".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(80, 60, Rgba([0, 0, 0, 255]))),
+        );
+        layer.x = 0;
+        layer.y = 0;
+        d.push_layer(ComposeLayer::Image(layer));
+        let before = d.begin_gesture();
+        d.begin_tape_stroke();
+        let settings = ToolSettings::default();
+        d.stroke(Tool::Tape, (10.0, 30.0), (60.0, 30.0), false, &settings);
+        d.finish_tape_stroke();
+        d.commit_gesture(before);
+        assert_eq!(d.layers.len(), 2);
+        let flat = d.flattened().to_rgba8();
+        assert!(flat.get_pixel(30, 30).0[0] > 100);
+        assert_eq!(flat.get_pixel(30, 0).0, [0, 0, 0, 255]);
+        assert!(d.undo());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.flattened().to_rgba8().get_pixel(30, 30).0, [0, 0, 0, 255]);
+        assert!(d.redo());
+        assert_eq!(d.layers.len(), 2);
     }
 
     #[test]
