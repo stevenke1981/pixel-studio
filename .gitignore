@@ -3,6 +3,7 @@
 *.tmp
 *.log
 .opencode/
+.sites-runtime/
 
 models/
 installer/ChineseTraditional.isl

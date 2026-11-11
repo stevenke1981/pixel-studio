@@ -10,12 +10,30 @@ mod ui;
 use anyhow::Result;
 
 /// Parsed command line: `pixel-studio [--edit|--view] [FILE]`,
-/// `--register-shell`, `--unregister-shell`, `--version`.
+/// `--register-shell`, `--unregister-shell`, `--version`, `--help`.
 #[derive(Debug, Default, PartialEq)]
 pub struct Args {
     pub file: Option<std::path::PathBuf>,
     pub view: bool,
 }
+
+const HELP_TEXT: &str = "\
+Pixel Studio — Rust + Slint image editor
+
+Usage:
+  pixel-studio [--edit|--view] [FILE]
+  pixel-studio --register-shell
+  pixel-studio --unregister-shell
+  pixel-studio --version
+  pixel-studio --help
+
+Options:
+  --edit               Open FILE in editor mode (default)
+  --view               Open FILE in viewer mode
+  --register-shell     Register current-user shell context menu & Open With entries
+  --unregister-shell   Remove current-user shell context menu & Open With entries
+  -V, --version        Print version and exit
+  -h, --help           Print help and exit";
 
 fn console_print(msg: &str) {
     #[cfg(windows)]
@@ -65,6 +83,10 @@ fn main() -> Result<()> {
             }
             Some("--version" | "-V") => {
                 console_print(&format!("pixel-studio {}", env!("CARGO_PKG_VERSION")));
+                return Ok(());
+            }
+            Some("--help" | "-h") => {
+                console_print(HELP_TEXT);
                 return Ok(());
             }
             Some("--view") => args.view = true,

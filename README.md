@@ -84,7 +84,31 @@
 
 **限制：** 文字「偵測」不分語言，中文和英文都能框出來；但文字「辨識」目前只認得英文字母、數字和符號，所以純中文內容（例如中文地址）不會被自動預選，需要手動點選。
 
-命令列：`studio-cli redact 輸入.png 輸出.png [--style solid|mosaic|blur] [--keyword 字詞] [--all] [--keep-metadata]`
+命令列：`studio-cli [--json] redact 輸入.png [輸出.png] [--style solid|mosaic|blur] [--keyword 字詞] [--all] [--keep-metadata]`
+
+## 命令列工具（`studio-cli`）
+
+所有核心影像處理功能皆可透過 `studio-cli` 無頭執行，並支援 `--json` 輸出結構化 JSON（方便自動化腳本與 AI Agent 呼叫）：
+
+```bash
+studio-cli [--json] info 輸入.png
+studio-cli [--json] convert 輸入.png [輸出.webp] --format webp [--quality 92]
+studio-cli [--json] filter 輸入.png [輸出.png] [--rotate 90|180|270] [--flip-h] [--flip-v] \
+  [--brightness 10] [--contrast 15] [--saturation 10] [--exposure 0.5] [--hue 30] \
+  [--sepia 0.5] [--vignette 0.3] [--temperature 20] [--tint -10] [--auto-contrast] \
+  [--posterize 8] [--blur 2.0] [--sharpen 1.5] [--grayscale] [--invert]
+studio-cli [--json] resize 輸入.png [輸出.png] --width 1080 --height 1080 [--fit | --canvas --background "#FFFFFFFF"]
+studio-cli [--json] crop 輸入.png [輸出.png] --x 0 --y 0 --width 800 --height 600
+studio-cli [--json] blur-region 輸入.png [輸出.png] --x 100 --y 100 --width 200 --height 80 [--sigma 12]
+studio-cli [--json] redact 輸入.png [輸出.png] [--style solid|mosaic|blur] [--keyword 字詞] [--all]
+studio-cli [--json] pano360 輸入.jpg [輸出.jpg] [--mode pad|crop|stretch]
+studio-cli [--json] c2pa-info 輸入.jpg
+studio-cli [--json] c2pa-remove-file 輸入.jpg 輸出.jpg
+studio-cli [--json] c2pa-add 輸入資料夾 輸出資料夾 [--title 標題] [--creator 作者]
+studio-cli [--json] c2pa-remove 輸入資料夾 輸出資料夾
+studio-cli [--json] batch 輸入資料夾 輸出資料夾 --format webp [--max-width 1920] [--watermark-text 浮水印]
+studio-cli [--json] gif 輸入資料夾 輸出.gif [--delay-ms 120]
+```
 
 ## 右鍵選單與檔案關聯
 

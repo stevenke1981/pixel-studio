@@ -1,10 +1,5 @@
 # Pixel Studio
 
-## Crop and tape stickers
-
-- Select the Crop tool and choose a rectangle, circle, or freehand outline in the Adjust panel. Drag a freehand outline and release to close it. Choose whether to keep or remove the selected content, then press Enter or Apply crop. Removed pixels become transparent; keeping a nonrectangular selection trims to its bounds and makes the outside transparent. Masked crops flatten visible layers, which Undo restores. Export to PNG or another transparency-capable format to preserve transparency.
-- Select the Tape sticker brush, choose one of ten patterns and a width in the Tools panel, and drag to apply it. Each stroke is a separate editable layer that can be moved, adjusted, or undone. Tape is translucent decoration; use the redaction tool to conceal sensitive information.
-
 English ｜ [繁體中文](README.md)
 
 A Rust + [Slint](https://slint.dev) image editor that aims to **replace and surpass MS Paint**: painting, layers, stickers, social-media post images, offline auto-redaction and batch conversion, on Windows, Linux and macOS.
@@ -17,6 +12,11 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 ![Main window](docs/slint-main.png)
 ![Sticker library](docs/slint-stickers.png)
 ![Auto redact: detected text boxes, red = pre-selected sensitive data](docs/slint-redact.png)
+
+## Crop and tape stickers
+
+- Select the Crop tool and choose a rectangle, circle, or freehand outline in the Adjust panel. Drag a freehand outline and release to close it. Choose whether to keep or remove the selected content, then press Enter or Apply crop. Removed pixels become transparent; keeping a nonrectangular selection trims to its bounds and makes the outside transparent. Masked crops flatten visible layers, which Undo restores. Export to PNG or another transparency-capable format to preserve transparency.
+- Select the Tape sticker brush, choose one of ten patterns and a width in the Tools panel, and drag to apply it. Each stroke is a separate editable layer that can be moved, adjusted, or undone. Tape is translucent decoration; use the redaction tool to conceal sensitive information.
 
 ## v0.4.1: individual redaction deletion and editing safety
 
@@ -84,7 +84,31 @@ Boxes are previews and are not saved in project files; apply them before saving 
 
 **Limitation:** detection is script-agnostic, so Chinese and English lines are both boxed, but *recognition* currently reads Latin letters, digits and symbols only. Chinese-only content (for example a Chinese street address) is not auto-selected and must be clicked manually.
 
-CLI: `studio-cli redact in.png out.png [--style solid|mosaic|blur] [--keyword WORD] [--all] [--keep-metadata]`
+CLI: `studio-cli [--json] redact in.png [out.png] [--style solid|mosaic|blur] [--keyword WORD] [--all] [--keep-metadata]`
+
+## Command-line interface (`studio-cli`)
+
+Every core image operation is available headlessly via `studio-cli`, with `--json` for structured machine-readable output:
+
+```bash
+studio-cli [--json] info in.png
+studio-cli [--json] convert in.png [out.webp] --format webp [--quality 92]
+studio-cli [--json] filter in.png [out.png] [--rotate 90|180|270] [--flip-h] [--flip-v] \
+  [--brightness 10] [--contrast 15] [--saturation 10] [--exposure 0.5] [--hue 30] \
+  [--sepia 0.5] [--vignette 0.3] [--temperature 20] [--tint -10] [--auto-contrast] \
+  [--posterize 8] [--blur 2.0] [--sharpen 1.5] [--grayscale] [--invert]
+studio-cli [--json] resize in.png [out.png] --width 1080 --height 1080 [--fit | --canvas --background "#FFFFFFFF"]
+studio-cli [--json] crop in.png [out.png] --x 0 --y 0 --width 800 --height 600
+studio-cli [--json] blur-region in.png [out.png] --x 100 --y 100 --width 200 --height 80 [--sigma 12]
+studio-cli [--json] redact in.png [out.png] [--style solid|mosaic|blur] [--keyword WORD] [--all]
+studio-cli [--json] pano360 in.jpg [out.jpg] [--mode pad|crop|stretch]
+studio-cli [--json] c2pa-info in.jpg
+studio-cli [--json] c2pa-remove-file in.jpg out.jpg
+studio-cli [--json] c2pa-add in_dir out_dir [--title Title] [--creator Creator]
+studio-cli [--json] c2pa-remove in_dir out_dir
+studio-cli [--json] batch in_dir out_dir --format webp [--max-width 1920] [--watermark-text Text]
+studio-cli [--json] gif frames_dir out.gif [--delay-ms 120]
+```
 
 ## Shell menu and file associations
 

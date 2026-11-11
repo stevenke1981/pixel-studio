@@ -6825,6 +6825,8 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
+ "image",
+ "serde_json",
  "studio-core",
 ]
 
