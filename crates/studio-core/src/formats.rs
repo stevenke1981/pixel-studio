@@ -3,6 +3,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SupportedFormat {
     Jpeg,
+    Jfif,
     Png,
     Webp,
     Bmp,
@@ -12,8 +13,9 @@ pub enum SupportedFormat {
 }
 
 impl SupportedFormat {
-    pub const ALL: [SupportedFormat; 7] = [
+    pub const ALL: [SupportedFormat; 8] = [
         SupportedFormat::Jpeg,
+        SupportedFormat::Jfif,
         SupportedFormat::Png,
         SupportedFormat::Webp,
         SupportedFormat::Bmp,
@@ -29,6 +31,7 @@ impl SupportedFormat {
             .as_str()
         {
             "jpg" | "jpeg" => Some(Self::Jpeg),
+            "jfif" => Some(Self::Jfif),
             "png" => Some(Self::Png),
             "webp" => Some(Self::Webp),
             "bmp" => Some(Self::Bmp),
@@ -48,7 +51,7 @@ impl SupportedFormat {
 
     pub fn image_format(self) -> image::ImageFormat {
         match self {
-            Self::Jpeg => image::ImageFormat::Jpeg,
+            Self::Jpeg | Self::Jfif => image::ImageFormat::Jpeg,
             Self::Png => image::ImageFormat::Png,
             Self::Webp => image::ImageFormat::WebP,
             Self::Bmp => image::ImageFormat::Bmp,
@@ -61,6 +64,7 @@ impl SupportedFormat {
     pub fn label(self) -> &'static str {
         match self {
             Self::Jpeg => "JPEG",
+            Self::Jfif => "JFIF",
             Self::Png => "PNG",
             Self::Webp => "WEBP",
             Self::Bmp => "BMP",
@@ -73,6 +77,7 @@ impl SupportedFormat {
     pub fn extension(self) -> &'static str {
         match self {
             Self::Jpeg => "jpg",
+            Self::Jfif => "jfif",
             Self::Png => "png",
             Self::Webp => "webp",
             Self::Bmp => "bmp",
@@ -117,6 +122,14 @@ mod tests {
         assert_eq!(
             SupportedFormat::from_extension("JPEG"),
             Some(SupportedFormat::Jpeg)
+        );
+        assert_eq!(
+            SupportedFormat::from_extension("jfif"),
+            Some(SupportedFormat::Jfif)
+        );
+        assert_eq!(
+            SupportedFormat::from_extension(".JFIF"),
+            Some(SupportedFormat::Jfif)
         );
         assert_eq!(
             SupportedFormat::from_extension(".png"),

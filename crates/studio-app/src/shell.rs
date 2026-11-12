@@ -15,7 +15,7 @@ pub const PROG_ID: &str = "PixelStudio.Image";
 pub const EXE_NAME: &str = "pixel-studio.exe";
 
 pub const EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "bmp", "gif", "ico", "webp", "tif", "tiff",
+    "png", "jpg", "jpeg", "jfif", "bmp", "gif", "ico", "webp", "tif", "tiff",
 ];
 
 pub const MIME_TYPES: &[&str] = &[
@@ -206,7 +206,7 @@ pub fn linux_files(exe: &str) -> Vec<GenFile> {
         ".local/share/applications/pixel-studio.desktop".into(),
         format!(
             "[Desktop Entry]\nType=Application\nName={APP_NAME}\nName[zh_TW]=Pixel Studio 像素工作室\nGenericName=Image Editor\nGenericName[zh_TW]=圖片編輯器\n\
-Comment=Paint, edit and convert images (PNG, JPEG, WebP, GIF, BMP, ICO)\nExec={q} %F\nIcon=applications-graphics\nTerminal=false\n\
+Comment=Paint, edit and convert images (PNG, JPEG, JFIF, WebP, GIF, BMP, ICO, TIFF)\nExec={q} %F\nIcon=applications-graphics\nTerminal=false\n\
 Categories=Graphics;2DGraphics;RasterGraphics;Viewer;\nMimeType={mimes}\nActions=Edit;View;\n\n\
 [Desktop Action Edit]\nName=Edit with Pixel Studio\nName[zh_TW]=用 Pixel Studio 編輯\nExec={q} --edit %F\n\n\
 [Desktop Action View]\nName=Open with Pixel Studio\nName[zh_TW]=用 Pixel Studio 開啟\nExec={q} --view %F\n"

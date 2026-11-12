@@ -25,8 +25,29 @@ pub struct C2paManifestDraft {
     pub action: String,
 }
 
+fn is_jfif(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("jfif"))
+}
+
+fn c2pa_format_for_path(path: &Path) -> Option<String> {
+    if is_jfif(path) {
+        Some("image/jpeg".to_owned())
+    } else {
+        c2pa::format_from_path(path)
+    }
+}
+
 pub fn inspect_c2pa(path: impl AsRef<Path>) -> Result<C2paInfo> {
-    let reader = match Reader::default().with_file(path.as_ref()) {
+    let path = path.as_ref();
+    let reader_res = if is_jfif(path) {
+        let mut file = std::fs::File::open(path)?;
+        Reader::default().with_stream("image/jpeg", &mut file)
+    } else {
+        Reader::default().with_file(path)
+    };
+    let reader = match reader_res {
         Ok(reader) => reader,
         Err(c2pa::Error::JumbfNotFound) => {
             return Ok(C2paInfo::default());
@@ -72,7 +93,7 @@ pub fn write_c2pa_manifest(
         )));
     }
 
-    let format = c2pa::format_from_path(dest)
+    let format = c2pa_format_for_path(dest)
         .ok_or_else(|| PhotoError::UnsupportedFormat(dest.to_path_buf()))?;
     let signer = EphemeralSigner::new("studio-app.local").map_err(c2pa_error)?;
     let mut builder = Builder::default()
@@ -110,6 +131,33 @@ pub fn write_c2pa_manifest(
         )
         .map_err(c2pa_error)?;
 
+    if is_jfif(source) || is_jfif(dest) {
+        let src_format = c2pa_format_for_path(source)
+            .ok_or_else(|| PhotoError::UnsupportedFormat(source.to_path_buf()))?;
+        if src_format != format {
+            return Err(PhotoError::InvalidInput(
+                "Source and destination file formats must match".to_owned(),
+            ));
+        }
+        if let Some(output_dir) = dest.parent()
+            && !output_dir.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(output_dir)?;
+        }
+        let mut src_file = std::fs::File::open(source)?;
+        let mut dst_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(dest)?;
+        if let Err(err) = builder.sign(&signer, &format, &mut src_file, &mut dst_file) {
+            drop(dst_file);
+            let _ = std::fs::remove_file(dest);
+            return Err(c2pa_error(err));
+        }
+        return Ok(());
+    }
+
     builder
         .sign_file(&signer, source, dest)
         .map(|_| ())
@@ -124,6 +172,22 @@ pub fn remove_c2pa_manifest(source: impl AsRef<Path>, dest: impl AsRef<Path>) ->
             "C2PA output already exists: {}",
             dest.display()
         )));
+    }
+
+    if is_jfif(dest) {
+        let temp_jpg = dest.with_extension("c2pa_strip.jpg");
+        let _ = std::fs::remove_file(&temp_jpg);
+        std::fs::copy(source, &temp_jpg)?;
+        let res = match c2pa::jumbf_io::remove_jumbf_from_file(&temp_jpg) {
+            Ok(()) | Err(c2pa::Error::JumbfNotFound) => Ok(()),
+            Err(error) => Err(c2pa_error(error)),
+        };
+        if let Err(err) = res {
+            let _ = std::fs::remove_file(&temp_jpg);
+            return Err(err);
+        }
+        std::fs::rename(&temp_jpg, dest)?;
+        return Ok(());
     }
 
     std::fs::copy(source, dest)?;

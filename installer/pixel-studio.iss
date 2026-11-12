@@ -50,12 +50,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [CustomMessages]
 chinesetraditional.GroupIntegration=整合：
 chinesetraditional.TaskShell=在檔案總管右鍵選單加入「用 Pixel Studio 編輯／開啟」
-chinesetraditional.TaskAssoc=加入圖片的「開啟檔案」清單（PNG、JPEG、WebP、GIF、BMP、ICO、TIFF；不變更預設程式）
+chinesetraditional.TaskAssoc=加入圖片的「開啟檔案」清單（PNG、JPEG、JFIF、WebP、GIF、BMP、ICO、TIFF；不變更預設程式）
 chinesetraditional.TaskDefault=將 Pixel Studio 設為 PNG 與 WebP 的預設程式
 chinesetraditional.ImageType=Pixel Studio 圖片
 english.GroupIntegration=Integration:
 english.TaskShell=Add "Edit / Open with Pixel Studio" to the Explorer right-click menu
-english.TaskAssoc=Add Pixel Studio to "Open with" for images (PNG, JPEG, WebP, GIF, BMP, ICO, TIFF; keeps your default app)
+english.TaskAssoc=Add Pixel Studio to "Open with" for images (PNG, JPEG, JFIF, WebP, GIF, BMP, ICO, TIFF; keeps your default app)
 english.TaskDefault=Make Pixel Studio the default app for PNG and WebP
 english.ImageType=Pixel Studio Image
 
@@ -90,6 +90,8 @@ Root: HKA; Subkey: "Software\Classes\.jpg\OpenWithProgids"; ValueType: string; V
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".jpg"; ValueData: ""; Tasks: assoc setdefault
 Root: HKA; Subkey: "Software\Classes\.jpeg\OpenWithProgids"; ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc setdefault
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".jpeg"; ValueData: ""; Tasks: assoc setdefault
+Root: HKA; Subkey: "Software\Classes\.jfif\OpenWithProgids"; ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc setdefault
+Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".jfif"; ValueData: ""; Tasks: assoc setdefault
 Root: HKA; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc setdefault
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".webp"; ValueData: ""; Tasks: assoc setdefault
 Root: HKA; Subkey: "Software\Classes\.gif\OpenWithProgids"; ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc setdefault

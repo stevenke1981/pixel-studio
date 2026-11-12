@@ -139,7 +139,7 @@ fn encode_staged(
     let file = File::create(output)?;
     let mut writer = BufWriter::new(file);
 
-    if format == SupportedFormat::Jpeg {
+    if matches!(format, SupportedFormat::Jpeg | SupportedFormat::Jfif) {
         let rgb = image.to_rgb8();
         let encoder = JpegEncoder::new_with_quality(&mut writer, quality.clamp(1, 100));
         encoder.write_image(
@@ -242,6 +242,7 @@ mod tests {
     #[test]
     fn jpeg_does_not_support_alpha() {
         assert!(!SupportedFormat::Jpeg.supports_alpha());
+        assert!(!SupportedFormat::Jfif.supports_alpha());
         assert!(SupportedFormat::Png.supports_alpha());
     }
 }

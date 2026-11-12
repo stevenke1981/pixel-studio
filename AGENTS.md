@@ -10,7 +10,7 @@ Designed to be **Human-First** (bilingual `zh-TW` / `en` GUI, intuitive Paint-su
   - `batch.rs` — parallel batch conversion, resize, watermark, and C2PA batch sign/remove.
   - `c2pa_metadata.rs` — C2PA content credentials inspection (`inspect_c2pa`), signing (`write_c2pa_manifest`), and removal (`remove_c2pa_manifest`).
   - `compose.rs` — non-destructive layer composition (`TextLayer`, `ImageLayer`, `ShapeLayer` with `Line`, `Arrow`, `Rectangle`, `Ellipse`, `Triangle`).
-  - `convert.rs` & `formats.rs` — format conversion (`png`, `jpg`, `bmp`, `gif`, `ico`, `webp` lossless/lossy, `tiff`).
+  - `convert.rs` & `formats.rs` — format conversion (`png`, `jpg`, `jfif`, `bmp`, `gif`, `ico`, `webp` lossless/lossy, `tiff`).
   - `drawing.rs` — raster canvas tools (pencil, brush, highlighter, airbrush, calligraphy, eraser, flood fill, color picker, rectangle/circle/ellipse, mosaic).
   - `filters.rs` — `Filter` trait, `FilterPipeline`, and filter structs/functions (`Rotate180`, `HueAdjust`/`adjust_hue`, `Sepia`/`sepia`, `Vignette`/`vignette`, `TemperatureAdjust`/`adjust_temperature`, `TintAdjust`/`adjust_tint`, `AutoContrast`/`auto_contrast`, `Posterize`/`posterize`).
   - `gif.rs` — animated GIF encoder from image sequences.
@@ -63,7 +63,7 @@ cargo run -p studio-cli -- --json filter input.png output.png --rotate 90 --brig
 cargo run -p studio-cli -- --json resize input.png output.png --width 1080 --height 1080 --fit
 cargo run -p studio-cli -- --json resize input.png output.png --width 1200 --height 800 --canvas --background "#FFFFFFFF"
 
-# Convert format (png, jpg, bmp, gif, ico, webp, tiff)
+# Convert format (png, jpg, jfif, bmp, gif, ico, webp, tiff)
 cargo run -p studio-cli -- --json convert input.png output.webp --format webp --quality 90
 
 # Crop or blur a rectangular region
