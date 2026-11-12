@@ -221,7 +221,7 @@ fn detect_zh(settings: &Settings) -> bool {
         .unwrap_or(false)
 }
 
-const FORMATS: [SupportedFormat; 7] = SupportedFormat::ALL;
+const FORMATS: [SupportedFormat; 8] = SupportedFormat::ALL;
 
 fn blank(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(w, h, image::Rgba([255; 4])))
@@ -775,7 +775,7 @@ fn image_filter(d: rfd::FileDialog) -> rfd::FileDialog {
     d.add_filter(
         "Images",
         &[
-            "png", "jpg", "jpeg", "webp", "bmp", "gif", "ico", "tif", "tiff",
+            "png", "jpg", "jpeg", "jfif", "webp", "bmp", "gif", "ico", "tif", "tiff",
         ],
     )
 }
@@ -1016,7 +1016,10 @@ fn c2pa_save_copy(ui: &AppWindow, st: &S) {
         None => studio_core::naming::timestamp_name(fmt.extension()),
     };
     let Some(mut out) = rfd::FileDialog::new()
-        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "tif", "tiff"])
+        .add_filter(
+            "Images",
+            &["jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff"],
+        )
         .set_file_name(name)
         .save_file()
     else {
@@ -1066,7 +1069,10 @@ fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
         return;
     };
     let Some(mut out) = rfd::FileDialog::new()
-        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "tif", "tiff"])
+        .add_filter(
+            "Images",
+            &["jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff"],
+        )
         .set_file_name(name_with_suffix(&src, "_no_c2pa"))
         .save_file()
     else {
@@ -2592,7 +2598,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }
         "pano-run" => {
             if let Some(out) = rfd::FileDialog::new()
-                .add_filter("JPEG", &["jpg"])
+                .add_filter("JPEG", &["jpg", "jpeg", "jfif"])
                 .set_file_name(studio_core::naming::timestamp_name("jpg"))
                 .save_file()
             {

@@ -67,7 +67,7 @@
 | 快速文字樣式（外框、陰影標題） | ✗ | ✓ |
 | 自動打碼 | ✗ | ✓ 離線文字偵測，自動預選電話、Email、身分證、信用卡、網址、地址 |
 | 剪貼簿貼上成新圖片、螢幕截圖 | 部分 | ✓ |
-| 格式 | PNG/JPEG/BMP/GIF/TIFF/HEIC | PNG、JPEG、BMP、GIF、ICO、WebP（無損＋有損品質）、TIFF |
+| 格式 | PNG/JPEG/BMP/GIF/TIFF/HEIC | PNG、JPEG、JFIF、BMP、GIF、ICO、WebP（無損＋有損品質）、TIFF |
 | 批次轉檔、GIF 動畫、360° 全景、C2PA 內容憑證 | ✗ | ✓ |
 | 右鍵選單、開啟檔案清單 | 系統內建 | ✓「用 Pixel Studio 編輯／開啟」，不搶預設程式 |
 

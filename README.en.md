@@ -67,7 +67,7 @@ Select, delete and undo individual automatic or manual redaction boxes, independ
 | Quick text styles (outlined / shadowed titles) | ✗ | ✓ |
 | Auto redaction | ✗ | ✓ offline text detection, pre-selects phones, emails, TW IDs, cards, URLs, addresses |
 | Paste clipboard as a new image, screenshots | partial | ✓ |
-| Formats | PNG/JPEG/BMP/GIF/TIFF/HEIC | PNG, JPEG, BMP, GIF, ICO, WebP (lossless + lossy with quality), TIFF |
+| Formats | PNG/JPEG/BMP/GIF/TIFF/HEIC | PNG, JPEG, JFIF, BMP, GIF, ICO, WebP (lossless + lossy with quality), TIFF |
 | Batch convert, animated GIF, 360° panorama, C2PA | ✗ | ✓ |
 | Right-click menu, Open With | built in | ✓ "Edit / Open with Pixel Studio", never hijacks your default app |
 

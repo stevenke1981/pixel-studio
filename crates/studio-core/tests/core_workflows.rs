@@ -270,6 +270,58 @@ fn batch_removes_c2pa_manifest_from_image_copies() {
     let _ = fs::remove_dir_all(dir);
 }
 
+#[test]
+fn jfif_round_trips_and_supports_c2pa() {
+    let dir = temp_dir("jfif_round_trips_and_supports_c2pa");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("input.png");
+    let jfif = dir.join("photo.jfif");
+    let signed = dir.join("photo_c2pa.jfif");
+    let stripped = dir.join("photo_no_c2pa.jfif");
+    DynamicImage::ImageRgba8(RgbaImage::new(24, 16))
+        .save(&input)
+        .unwrap();
+
+    let result = convert_image(
+        &input,
+        &jfif,
+        ConvertOptions {
+            format: SupportedFormat::Jfif,
+            quality: 90,
+            background: [255, 255, 255, 255],
+        },
+    )
+    .unwrap();
+    assert_eq!(result.format, SupportedFormat::Jfif);
+    let info = inspect_image(&jfif).unwrap();
+    assert_eq!(info.format, SupportedFormat::Jfif);
+    assert_eq!((info.width, info.height), (24, 16));
+    assert!(!inspect_c2pa(&jfif).unwrap().present);
+
+    write_c2pa_manifest(
+        &jfif,
+        &signed,
+        &C2paManifestDraft {
+            title: "JFIF photo".to_string(),
+            creator: "Pixel Studio".to_string(),
+            action: "Converted to JFIF".to_string(),
+        },
+    )
+    .unwrap();
+    let c2pa = inspect_c2pa(&signed).unwrap();
+    assert!(c2pa.present);
+    assert_eq!(c2pa.title.as_deref(), Some("JFIF photo"));
+
+    remove_c2pa_manifest(&signed, &stripped).unwrap();
+    assert!(!inspect_c2pa(&stripped).unwrap().present);
+    assert_eq!(
+        inspect_image(&stripped).unwrap().format,
+        SupportedFormat::Jfif
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
