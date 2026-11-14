@@ -122,27 +122,41 @@ component MenuRow inherits Rectangle {
     }
 }
 
-// Modal dialog shell: dims the window, centred card with a title and a close icon.
-component Dialog inherits Rectangle {
+// Modal dialog card chrome: dims the window, centred clipped card with a title and a close icon.
+component DialogShell inherits Rectangle {
     in property <string> title;
     in property <length> card-width: 420px;
+    in property <length> content-preferred-height: 0px;
     callback close();
     background: #0006;
     TouchArea { }
     Rectangle {
         width: min(root.card-width, root.width - 40px);
-        height: min(dl.preferred-height, root.height - 40px);
+        height: min(hdr.preferred-height + root.content-preferred-height + 42px, root.height - 40px);
+        clip: true;
         background: white;
         border-radius: 8px;
         drop-shadow-blur: 16px;
         drop-shadow-color: #0006;
-        dl := VerticalLayout {
+        VerticalLayout {
             padding: 16px;
             spacing: 10px;
-            HorizontalLayout {
+            hdr := HorizontalLayout {
                 Text { text: root.title; font-size: 16px; font-weight: 700; color: #1f3b63; horizontal-stretch: 1; vertical-alignment: center; }
                 IBtn { icon: @image-url("icons/close.svg"); size: 28px; tip: T.t("關閉 (Esc)", "Close (Esc)"); clicked => { root.close(); } }
             }
+            @children
+        }
+    }
+}
+
+// Scrollable modal dialog shell for arbitrary stacked content.
+component Dialog inherits DialogShell {
+    content-preferred-height: body.preferred-height;
+    ScrollView {
+        vertical-stretch: 1;
+        body := VerticalLayout {
+            spacing: 10px;
             @children
         }
     }
@@ -162,13 +176,100 @@ component LabeledSlider inherits HorizontalLayout {
     in property <float> minimum: 0;
     in property <float> maximum: 100;
     in property <int> decimals: 0;
+    in property <bool> enabled: true;
     callback apply();
+    callback edited(float);
     in property <bool> has-apply: true;
     spacing: 6px;
-    Text { text: label; width: 78px; vertical-alignment: center; overflow: elide; }
-    Slider { minimum: root.minimum; maximum: root.maximum; value <=> root.value; }
-    Text { width: 40px; vertical-alignment: center; text: root.decimals == 0 ? round(root.value) : round(root.value * 10) / 10; }
-    if has-apply: IBtn { icon: @image-url("icons/apply.svg"); size: 28px; tip: T.t("套用", "Apply ") + root.label; clicked => { root.apply(); } }
+    Text { text: label; width: 78px; vertical-alignment: center; overflow: elide; opacity: root.enabled ? 1.0 : 0.5; }
+    Slider {
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value <=> root.value;
+        enabled: root.enabled;
+        changed(v) => { root.edited(v); }
+    }
+    Text { width: 40px; vertical-alignment: center; opacity: root.enabled ? 1.0 : 0.5; text: root.decimals == 0 ? round(root.value) : round(root.value * 10) / 10; }
+    if has-apply: IBtn { icon: @image-url("icons/apply.svg"); size: 28px; tip: T.t("套用", "Apply ") + root.label; enabled: root.enabled; clicked => { root.apply(); } }
+}
+
+component FormatQualityPanel inherits VerticalLayout {
+    in property <bool> supports-quality;
+    in property <bool> is-webp;
+    in property <string> hint;
+    in property <bool> compact: false;
+    in-out property <float> quality;
+    in-out property <bool> webp-lossless;
+    callback quality-edited(float);
+    callback lossless-toggled();
+    spacing: 6px;
+    if root.hint != "": Text {
+        text: root.hint;
+        wrap: word-wrap;
+        font-size: 11px;
+        color: #55606c;
+    }
+    if root.supports-quality: LabeledSlider {
+        label: T.t("品質", "Quality");
+        minimum: 1;
+        maximum: 100;
+        value <=> root.quality;
+        enabled: !(root.is-webp && root.webp-lossless);
+        has-apply: false;
+        edited(v) => { root.quality-edited(v); }
+    }
+    if root.is-webp: CheckBox {
+        text: root.compact ? T.t("WebP 無損", "WebP lossless") : T.t("WebP 無損壓縮（Quality = 100）", "WebP lossless (Quality = 100)");
+        checked <=> root.webp-lossless;
+        toggled => { root.lossless-toggled(); }
+    }
+}
+
+component AlphaBgPanel inherits VerticalLayout {
+    in property <string> message;
+    in property <color> note-color: #55606c;
+    in property <length> label-width: 84px;
+    in-out property <int> mode;
+    in property <color> custom-color;
+    in-out property <string> hex-text;
+    callback mode-selected();
+    callback hex-edited();
+    spacing: 6px;
+    if root.message != "": Text {
+        text: root.message;
+        wrap: word-wrap;
+        font-size: 11px;
+        color: root.note-color;
+    }
+    HorizontalLayout {
+        spacing: 6px;
+        Text { text: T.t("背景色", "Background"); width: root.label-width; vertical-alignment: center; }
+        ComboBox {
+            model: [
+                T.t("白色 (#FFFFFF)", "White (#FFFFFF)"),
+                T.t("黑色 (#000000)", "Black (#000000)"),
+                T.t("色 1", "Colour 1"),
+                T.t("色 2", "Colour 2"),
+                T.t("自訂 Hex", "Custom Hex"),
+            ];
+            current-index <=> root.mode;
+            selected => { root.mode-selected(); }
+        }
+        Rectangle {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: #88929e;
+            background: root.custom-color;
+        }
+        LineEdit {
+            width: 78px;
+            placeholder-text: "#FFFFFF";
+            text <=> root.hex-text;
+            edited => { root.hex-edited(); }
+        }
+    }
 }
 
 export component AppWindow inherits Window {
@@ -238,6 +339,21 @@ export component AppWindow inherits Window {
     in property <[string]> format-names;
     in-out property <float> quality: 90;
     in-out property <bool> webp-lossless: true;
+    in-out property <int> save-dialog-mode: 0; // 0 QuickSave, 1 SaveAs, 2 ExportCopy, 3 ConvertFile
+    in-out property <int> alpha-bg-mode: 0; // 0 White, 1 Black, 2 Colour 1, 3 Colour 2, 4 Custom
+    in-out property <color> alpha-bg-custom: #ffffff;
+    in-out property <string> alpha-bg-hex: "#FFFFFF";
+    in property <bool> export-supports-quality: false;
+    in property <bool> export-supports-alpha: true;
+    in property <bool> export-supports-c2pa: true;
+    in property <bool> export-is-webp: false;
+    in property <string> export-format-hint;
+    in property <bool> export-alpha-present: false;
+    in property <string> convert-src-label;
+    in property <bool> convert-src-has-file: false;
+    in property <string> export-target-preview;
+    in property <bool> qs-format-locked: false;
+    in property <bool> qs-prompts-file: false;
 
     // canvas presets / text styles
     in property <[string]> preset-names;
@@ -304,6 +420,15 @@ export component AppWindow inherits Window {
     // batch
     in-out property <string> batch-in; in-out property <string> batch-out;
     in-out property <int> batch-format: 0;
+    in-out property <float> batch-quality: 90;
+    in-out property <bool> batch-webp-lossless: false;
+    in property <bool> batch-supports-quality: true;
+    in property <bool> batch-supports-alpha: true;
+    in property <bool> batch-is-webp: true;
+    in property <string> batch-format-hint;
+    in-out property <int> batch-alpha-bg-mode: 0;
+    in-out property <color> batch-alpha-bg-custom: #ffffff;
+    in-out property <string> batch-alpha-bg-hex: "#FFFFFF";
     in-out property <int> batch-max-w: 0; in-out property <int> batch-max-h: 0;
     in-out property <string> batch-watermark;
     in property <string> batch-progress;
@@ -367,6 +492,7 @@ export component AppWindow inherits Window {
         { label: T.t("另存新檔…", "Save as…"), act: "save-as", enabled: true, key: "Ctrl+Shift+S", icon: @image-url("icons/save-as.svg") },
         { label: T.t("儲存專案…", "Save project…"), act: "save-project", enabled: true, icon: @image-url("icons/project-save.svg") },
         { label: T.t("匯出…", "Export…"), act: "export", enabled: true, key: "Ctrl+E", icon: @image-url("icons/export.svg") },
+        { label: T.t("轉換圖片檔案…", "Convert image file…"), act: "convert-file", enabled: true, key: "Ctrl+Shift+C", icon: @image-url("icons/swap.svg") },
         { sep: true },
         { label: T.t("列印…", "Print…"), act: "print", enabled: true, key: "Ctrl+P", icon: @image-url("icons/print.svg") },
         { label: T.t("內容…", "Properties…"), act: "properties", enabled: true, key: "Alt+Enter", icon: @image-url("icons/properties.svg") },
@@ -437,6 +563,7 @@ export component AppWindow inherits Window {
         { label: T.t("自動打碼", "Auto redact"), act: "tab:4", enabled: true, icon: @image-url("icons/tab-redact.svg") },
         { label: T.t("C2PA 內容憑證…", "C2PA content credentials…"), act: "c2pa-dialog", enabled: true, icon: @image-url("icons/c2pa.svg") },
         { sep: true },
+        { label: T.t("轉換圖片檔案…", "Convert image file…"), act: "convert-file", enabled: true, key: "Ctrl+Shift+C", icon: @image-url("icons/swap.svg") },
         { label: T.t("批次轉檔", "Batch convert"), act: "tab:6", enabled: true, icon: @image-url("icons/tab-batch.svg") },
         { label: T.t("GIF 動畫", "Animated GIF"), act: "tab:6", enabled: true, icon: @image-url("icons/gif.svg") },
         { label: T.t("360° 全景", "360° panorama"), act: "tab:6", enabled: true, icon: @image-url("icons/panorama.svg") },
@@ -546,6 +673,8 @@ export component AppWindow inherits Window {
                 IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("開啟資料夾", "Open folder"); clicked => { root.action("open-folder"); } }
                 IBtn { icon: @image-url("icons/save.svg"); tip: T.t("儲存 (Ctrl+S)", "Save (Ctrl+S)"); clicked => { root.action("save"); } }
                 IBtn { icon: @image-url("icons/save-as.svg"); tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
+                IBtn { icon: @image-url("icons/export.svg"); tip: T.t("匯出 / 轉檔複本 (Ctrl+E)", "Export converted copy (Ctrl+E)"); clicked => { root.action("export"); } }
+                IBtn { icon: @image-url("icons/swap.svg"); tip: T.t("轉換圖片檔案… (Ctrl+Shift+C)", "Convert image file… (Ctrl+Shift+C)"); clicked => { root.action("convert-file"); } }
                 IBtn { icon: @image-url("icons/project-open.svg"); tip: T.t("開啟專案", "Open project"); clicked => { root.action("open-project"); } }
                 IBtn { icon: @image-url("icons/project-save.svg"); tip: T.t("儲存專案", "Save project"); clicked => { root.action("save-project"); } }
                 Rectangle { width: 1px; background: #dde2e8; }
@@ -883,14 +1012,26 @@ export component AppWindow inherits Window {
                                 CheckBox { text: T.t("形狀填滿（色 2）", "Fill shapes (colour 2)"); checked <=> root.shape-filled; }
                                 LabeledSlider { label: T.t("填滿容差", "Fill tolerance"); minimum: 0; maximum: 128; value <=> root.fill-tolerance; has-apply: false; }
                                 CheckBox { text: T.t("放大時顯示像素格線", "Pixel grid when zoomed in"); checked <=> root.show-grid; toggled => { root.action("grid"); } }
-                                Section { text: T.t("匯出", "Export"); }
+                                Section { text: T.t("匯出 / 轉檔", "Export / Convert"); }
                                 HorizontalLayout {
                                     spacing: 6px;
-                                    ComboBox { model: root.format-names; current-index <=> root.export-format; }
+                                    ComboBox {
+                                        model: root.format-names;
+                                        current-index <=> root.export-format;
+                                        selected => { root.action("export-format-changed"); }
+                                    }
                                     IBtn { icon: @image-url("icons/export.svg"); tip: T.t("匯出… (Ctrl+E)", "Export… (Ctrl+E)"); clicked => { root.action("export"); } }
+                                    IBtn { icon: @image-url("icons/swap.svg"); tip: T.t("轉換圖片檔案… (Ctrl+Shift+C)", "Convert image file… (Ctrl+Shift+C)"); clicked => { root.action("convert-file"); } }
                                 }
-                                LabeledSlider { label: T.t("品質", "Quality"); minimum: 1; maximum: 100; value <=> root.quality; has-apply: false; }
-                                CheckBox { text: T.t("WebP 無損", "WebP lossless"); checked <=> root.webp-lossless; }
+                                FormatQualityPanel {
+                                    supports-quality: root.export-supports-quality;
+                                    is-webp: root.export-is-webp;
+                                    compact: true;
+                                    quality <=> root.quality;
+                                    webp-lossless <=> root.webp-lossless;
+                                    quality-edited(v) => { root.action("export-quality-edited"); }
+                                    lossless-toggled => { root.action("webp-lossless-toggled"); }
+                                }
                                 CheckBox { text: T.t("保留 EXIF/ICC 中繼資料", "Keep EXIF/ICC metadata"); checked <=> root.keep-metadata; }
                                 Section { text: T.t("社群畫布尺寸", "Social canvas presets"); }
                                 for p[i] in root.preset-names: Button { text: p; clicked => { root.apply-preset(i); } }
@@ -1181,7 +1322,30 @@ export component AppWindow inherits Window {
                                 Section { text: T.t("批次轉檔 / 縮圖 / 浮水印", "Batch convert / resize / watermark"); }
                                 HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-in; placeholder-text: T.t("來源資料夾", "Input folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇來源資料夾…", "Choose input folder…"); clicked => { root.action("batch-in"); } } }
                                 HorizontalLayout { spacing: 3px; LineEdit { text <=> root.batch-out; placeholder-text: T.t("輸出資料夾", "Output folder"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇輸出資料夾…", "Choose output folder…"); clicked => { root.action("batch-out"); } } }
-                                ComboBox { model: root.format-names; current-index <=> root.batch-format; }
+                                ComboBox {
+                                    model: root.format-names;
+                                    current-index <=> root.batch-format;
+                                    selected => { root.action("batch-format-changed"); }
+                                }
+                                FormatQualityPanel {
+                                    supports-quality: root.batch-supports-quality;
+                                    is-webp: root.batch-is-webp;
+                                    hint: root.batch-format-hint;
+                                    compact: true;
+                                    quality <=> root.batch-quality;
+                                    webp-lossless <=> root.batch-webp-lossless;
+                                    quality-edited(v) => { root.action("batch-quality-edited"); }
+                                    lossless-toggled => { root.action("batch-webp-lossless-toggled"); }
+                                }
+                                if !root.batch-supports-alpha: AlphaBgPanel {
+                                    label-width: 72px;
+                                    message: T.t("非透明格式將混合至下方背景色：", "Non-alpha formats composite over:");
+                                    mode <=> root.batch-alpha-bg-mode;
+                                    custom-color: root.batch-alpha-bg-custom;
+                                    hex-text <=> root.batch-alpha-bg-hex;
+                                    mode-selected => { root.action("batch-alpha-bg-changed"); }
+                                    hex-edited => { root.action("batch-alpha-bg-hex"); }
+                                }
                                 HorizontalLayout {
                                     spacing: 4px;
                                     Text { text: T.t("最大寬高(0=不限)", "Max W×H (0=any)"); vertical-alignment: center; }
@@ -1340,32 +1504,135 @@ export component AppWindow inherits Window {
             }
         }
     }
-    // ---------------- quick-save prompt (first quick save of a document)
-    if root.qs-open: Rectangle {
-        background: #0006;
-        TouchArea { }
-        Rectangle {
-            width: 380px;
-            height: qsl.preferred-height;
-            background: white;
-            border-radius: 8px;
-            drop-shadow-blur: 16px;
-            drop-shadow-color: #0006;
+    // ---------------- unified save / save-as / export / convert modal
+    if root.qs-open: DialogShell {
+        title: root.save-dialog-mode == 0 ? T.t("快速儲存設定", "Quick save settings") :
+               root.save-dialog-mode == 1 ? T.t("另存新檔（選擇格式與選項）", "Save as (choose format & options)") :
+               root.save-dialog-mode == 2 ? T.t("匯出轉換複本", "Export converted copy") :
+               T.t("轉換圖片檔案格式", "Convert image file format");
+        card-width: 460px;
+        content-preferred-height: qsl.preferred-height + qsf.preferred-height + 10px;
+        close => { root.qs-open = false; }
+        ScrollView {
+            vertical-stretch: 1;
             qsl := VerticalLayout {
-                padding: 16px;
-                spacing: 10px;
-                Section { text: T.t("快速儲存設定", "Quick save settings"); }
-                Text { text: T.t("只會在第一次快速儲存時詢問；之後 Ctrl+S 直接覆寫。", "Asked only on the first quick save; after that Ctrl+S overwrites directly."); wrap: word-wrap; font-size: 11px; color: #555; }
-                Text { text: root.qs-target; wrap: word-wrap; font-size: 11px; }
-                HorizontalLayout { spacing: 6px; Text { text: T.t("格式", "Format"); width: 78px; vertical-alignment: center; } ComboBox { model: root.format-names; current-index <=> root.export-format; } }
-                LabeledSlider { label: T.t("品質", "Quality"); minimum: 1; maximum: 100; value <=> root.quality; has-apply: false; }
-                CheckBox { text: T.t("WebP 無損", "WebP lossless"); checked <=> root.webp-lossless; }
+                spacing: 8px;
+                if root.save-dialog-mode == 3: VerticalLayout {
+                    spacing: 6px;
+                    Text { text: T.t("來源影像", "Source image"); font-weight: 700; font-size: 12px; color: #1f3b63; }
+                    Rectangle {
+                        background: #f4f6f9;
+                        border-radius: 5px;
+                        height: csl.preferred-height + 12px;
+                        csl := Text {
+                            x: 8px;
+                            y: 6px;
+                            width: parent.width - 16px;
+                            text: root.convert-src-label;
+                            font-size: 11px;
+                            color: #1d2a3a;
+                            wrap: word-wrap;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            text: T.t("選擇來源檔案…", "Choose source file…");
+                            clicked => { root.action("convert-pick-input"); }
+                        }
+                        if root.convert-src-has-file: Button {
+                            text: T.t("使用目前影像", "Use current image");
+                            clicked => { root.action("convert-use-current"); }
+                        }
+                    }
+                }
+                Text {
+                    text: root.save-dialog-mode == 0 ? T.t("只會在第一次快速儲存時詢問；之後 Ctrl+S 直接覆寫。", "Asked only on the first quick save; after that Ctrl+S overwrites directly.") :
+                          root.save-dialog-mode == 1 ? T.t("另存新檔並將目前文件更新為新檔案路徑。", "Saves to a new path and updates the active document path.") :
+                          root.save-dialog-mode == 2 ? T.t("僅匯出複本，不會更動目前編輯中的文件或圖層。", "Exports a converted copy without altering the open document or its layers.") :
+                          T.t("直接轉換來源檔案為目標格式，不影響目前開啟的畫布。", "Converts directly to the target format without disturbing the open canvas.");
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: #555;
+                }
+                if root.save-dialog-mode == 0 && root.qs-target != "": Text {
+                    text: root.qs-target;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: #33475b;
+                }
+                if root.save-dialog-mode != 0 && root.export-target-preview != "": Text {
+                    text: T.t("建議檔名：", "Suggested filename: ") + root.export-target-preview;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: #1f3b63;
+                }
                 HorizontalLayout {
                     spacing: 6px;
-                    alignment: end;
-                    Button { text: T.t("取消", "Cancel"); clicked => { root.qs-open = false; } }
-                    Button { text: T.t("儲存", "Save"); primary: true; clicked => { root.qs-open = false; root.action("quick-save-confirm"); } }
+                    Text { text: T.t("目標格式", "Target format"); width: 84px; vertical-alignment: center; }
+                    ComboBox {
+                        model: root.format-names;
+                        current-index <=> root.export-format;
+                        enabled: !(root.save-dialog-mode == 0 && root.qs-format-locked);
+                        selected => { root.action("export-format-changed"); }
+                    }
                 }
+                if root.save-dialog-mode == 0 && root.qs-format-locked: Text {
+                    text: T.t("Ctrl+S 會以原格式覆寫目前檔案；若要更換格式或檔名，請使用「另存新檔…」或「匯出…」。", "Ctrl+S overwrites this file in its existing format. Use Save as… or Export… to change format.");
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: #55606c;
+                }
+                FormatQualityPanel {
+                    supports-quality: root.export-supports-quality;
+                    is-webp: root.export-is-webp;
+                    hint: root.export-format-hint;
+                    compact: false;
+                    quality <=> root.quality;
+                    webp-lossless <=> root.webp-lossless;
+                    quality-edited(v) => { root.action("export-quality-edited"); }
+                    lossless-toggled => { root.action("webp-lossless-toggled"); }
+                }
+                if !root.export-supports-alpha: AlphaBgPanel {
+                    label-width: 84px;
+                    message: root.export-alpha-present
+                        ? T.t("目前影像含有透明像素；此格式不支援透明通道，將混合為下方背景色：", "Image contains transparency; this format has no alpha and will composite over:")
+                        : T.t("此格式不支援透明通道（若含透明區域將混合為下方背景色）：", "This format does not support alpha (transparent pixels composite over):");
+                    note-color: root.export-alpha-present ? #b45309 : #55606c;
+                    mode <=> root.alpha-bg-mode;
+                    custom-color: root.alpha-bg-custom;
+                    hex-text <=> root.alpha-bg-hex;
+                    mode-selected => { root.action("alpha-bg-changed"); }
+                    hex-edited => { root.action("alpha-bg-hex"); }
+                }
+                CheckBox {
+                    text: T.t("保留 EXIF/ICC 中繼資料（JPEG/JFIF/PNG/WebP）", "Keep EXIF/ICC metadata (JPEG/JFIF/PNG/WebP)");
+                    checked <=> root.keep-metadata;
+                }
+                CheckBox {
+                    text: T.t("儲存時寫入 C2PA 內容憑證", "Write C2PA content credentials on save");
+                    checked <=> root.c2pa-on-save;
+                    enabled: root.export-supports-c2pa;
+                }
+                if !root.export-supports-c2pa: Text {
+                    text: T.t("C2PA 僅支援 JPEG、JFIF、PNG、WebP 與 TIFF；此格式會略過簽署。", "C2PA supports JPEG, JFIF, PNG, WebP, and TIFF only; signing is skipped for this format.");
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: #6b7785;
+                }
+            }
+        }
+        qsf := HorizontalLayout {
+            spacing: 6px;
+            alignment: end;
+            Button { text: T.t("取消", "Cancel"); clicked => { root.qs-open = false; } }
+            Button {
+                text: root.save-dialog-mode == 0 ? (root.qs-prompts-file ? T.t("儲存…", "Save…") : T.t("儲存", "Save")) :
+                      root.save-dialog-mode == 1 ? T.t("另存新檔…", "Save as…") :
+                      root.save-dialog-mode == 2 ? T.t("匯出…", "Export…") :
+                      T.t("轉換並儲存…", "Convert & save…");
+                primary: true;
+                clicked => { root.qs-open = false; root.action("quick-save-confirm"); }
             }
         }
     }
@@ -1376,6 +1643,7 @@ export component AppWindow inherits Window {
         Rectangle {
             width: min(620px, root.width - 40px);
             height: min(c2l.preferred-height, root.height - 40px);
+            clip: true;
             background: white;
             border-radius: 8px;
             drop-shadow-blur: 16px;
@@ -1483,37 +1751,35 @@ export component AppWindow inherits Window {
         title: T.t("鍵盤快捷鍵", "Keyboard shortcuts");
         card-width: 640px;
         close => { root.keys-open = false; }
-        ScrollView {
-            min-height: 420px;
-            VerticalLayout {
-                spacing: 5px;
-                Text { text: T.t("檔案 / 編輯", "File / edit"); font-weight: 700; color: #1f3b63; }
-                KeyRow { keys: "Ctrl+N / Ctrl+O"; what: T.t("新增 / 開啟", "New / open"); }
-                KeyRow { keys: "Ctrl+S / Ctrl+Shift+S"; what: T.t("快速儲存 / 另存新檔", "Quick save / save as"); }
-                KeyRow { keys: "Ctrl+E / Ctrl+P"; what: T.t("匯出 / 列印", "Export / print"); }
-                KeyRow { keys: "Alt+Enter / Alt+F4"; what: T.t("內容 / 結束", "Properties / exit"); }
-                KeyRow { keys: "Ctrl+Z / Ctrl+Y"; what: T.t("復原 / 重做（Ctrl+Shift+Z 也可重做）", "Undo / redo (Ctrl+Shift+Z also redoes)"); }
-                KeyRow { keys: "Ctrl+X / Ctrl+C"; what: T.t("剪下 / 複製", "Cut / copy"); }
-                KeyRow { keys: "Ctrl+V / Ctrl+Shift+V"; what: T.t("貼上為新影像 / 貼上為圖層", "Paste as new image / paste as layer"); }
-                KeyRow { keys: "Ctrl+A / Ctrl+D / Del"; what: T.t("全選 / 取消選取 / 刪除（打碼框、圖層或選取區）", "Select all / deselect / delete (redaction box, layer or selection)"); }
-                Text { text: T.t("檢視 / 影像 / 圖層", "View / image / layer"); font-weight: 700; color: #1f3b63; }
-                KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
-                KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }
-                KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
-                KeyRow { keys: "Enter / Esc"; what: T.t("套用裁切模式 / 取消選取或關閉對話框", "Apply crop mode / clear selection or close dialog"); }
-                KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }
-                KeyRow { keys: "Ctrl+Shift+E"; what: T.t("合併所有圖層", "Merge all layers"); }
-                KeyRow { keys: T.t("方向鍵", "Arrows"); what: T.t("移動圖層（Shift 一次 10px）；無圖層時切換上一張/下一張", "Nudge layer (Shift = 10px); with no layer, previous/next image"); }
-                Text { text: T.t("工具", "Tools"); font-weight: 700; color: #1f3b63; }
-                KeyRow { keys: "S P B L A K"; what: T.t("選取、鉛筆、筆刷、螢光筆、噴槍、書法筆", "Select, pencil, brush, highlighter, airbrush, calligraphy"); }
-                KeyRow { keys: "E F I T M"; what: T.t("橡皮擦、油漆桶、滴管、文字、馬賽克筆", "Eraser, fill, picker, text, mosaic"); }
-                KeyRow { keys: "C H U R Shift+R J"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷、膠帶貼紙", "Crop, pan, shapes, redact box, redact brush, tape stickers"); }
-                KeyRow { keys: "X"; what: T.t("交換色 1 / 色 2", "Swap colour 1 / 2"); }
-                KeyRow { keys: T.t("中鍵拖曳 / Ctrl+滾輪", "Middle-drag / Ctrl+wheel"); what: T.t("平移 / 縮放", "Pan / zoom"); }
-                Text { text: T.t("選單", "Menus"); font-weight: 700; color: #1f3b63; }
-                KeyRow { keys: "Alt+F E V I L T H"; what: T.t("開啟檔案、編輯、檢視、影像、圖層、工具、說明選單；方向鍵移動、Enter 執行、Esc 關閉", "Open File, Edit, View, Image, Layer, Tools, Help; arrows move, Enter runs, Esc closes"); }
-                KeyRow { keys: "F1"; what: T.t("這個視窗", "This window"); }
-            }
+        VerticalLayout {
+            spacing: 5px;
+            Text { text: T.t("檔案 / 編輯", "File / edit"); font-weight: 700; color: #1f3b63; }
+            KeyRow { keys: "Ctrl+N / Ctrl+O"; what: T.t("新增 / 開啟", "New / open"); }
+            KeyRow { keys: "Ctrl+S / Ctrl+Shift+S"; what: T.t("快速儲存 / 另存新檔", "Quick save / save as"); }
+            KeyRow { keys: "Ctrl+E / Ctrl+Shift+C"; what: T.t("匯出 / 轉換圖片檔案", "Export / convert image file"); }
+            KeyRow { keys: "Ctrl+P"; what: T.t("列印", "Print"); }
+            KeyRow { keys: "Alt+Enter / Alt+F4"; what: T.t("內容 / 結束", "Properties / exit"); }
+            KeyRow { keys: "Ctrl+Z / Ctrl+Y"; what: T.t("復原 / 重做（Ctrl+Shift+Z 也可重做）", "Undo / redo (Ctrl+Shift+Z also redoes)"); }
+            KeyRow { keys: "Ctrl+X / Ctrl+C"; what: T.t("剪下 / 複製", "Cut / copy"); }
+            KeyRow { keys: "Ctrl+V / Ctrl+Shift+V"; what: T.t("貼上為新影像 / 貼上為圖層", "Paste as new image / paste as layer"); }
+            KeyRow { keys: "Ctrl+A / Ctrl+D / Del"; what: T.t("全選 / 取消選取 / 刪除（打碼框、圖層或選取區）", "Select all / deselect / delete (redaction box, layer or selection)"); }
+            Text { text: T.t("檢視 / 影像 / 圖層", "View / image / layer"); font-weight: 700; color: #1f3b63; }
+            KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
+            KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }
+            KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
+            KeyRow { keys: "Enter / Esc"; what: T.t("套用裁切模式 / 取消選取或關閉對話框", "Apply crop mode / clear selection or close dialog"); }
+            KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }
+            KeyRow { keys: "Ctrl+Shift+E"; what: T.t("合併所有圖層", "Merge all layers"); }
+            KeyRow { keys: T.t("方向鍵", "Arrows"); what: T.t("移動圖層（Shift 一次 10px）；無圖層時切換上一張/下一張", "Nudge layer (Shift = 10px); with no layer, previous/next image"); }
+            Text { text: T.t("工具", "Tools"); font-weight: 700; color: #1f3b63; }
+            KeyRow { keys: "S P B L A K"; what: T.t("選取、鉛筆、筆刷、螢光筆、噴槍、書法筆", "Select, pencil, brush, highlighter, airbrush, calligraphy"); }
+            KeyRow { keys: "E F I T M"; what: T.t("橡皮擦、油漆桶、滴管、文字、馬賽克筆", "Eraser, fill, picker, text, mosaic"); }
+            KeyRow { keys: "C H U R Shift+R J"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷、膠帶貼紙", "Crop, pan, shapes, redact box, redact brush, tape stickers"); }
+            KeyRow { keys: "X"; what: T.t("交換色 1 / 色 2", "Swap colour 1 / 2"); }
+            KeyRow { keys: T.t("中鍵拖曳 / Ctrl+滾輪", "Middle-drag / Ctrl+wheel"); what: T.t("平移 / 縮放", "Pan / zoom"); }
+            Text { text: T.t("選單", "Menus"); font-weight: 700; color: #1f3b63; }
+            KeyRow { keys: "Alt+F E V I L T H"; what: T.t("開啟檔案、編輯、檢視、影像、圖層、工具、說明選單；方向鍵移動、Enter 執行、Esc 關閉", "Open File, Edit, View, Image, Layer, Tools, Help; arrows move, Enter runs, Esc closes"); }
+            KeyRow { keys: "F1"; what: T.t("這個視窗", "This window"); }
         }
     }
     // ---------------- shared tooltip (always on top)

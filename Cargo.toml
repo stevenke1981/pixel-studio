@@ -19,7 +19,7 @@ base64 = "0.22.1"
 c2pa = { version = "0.85.0", default-features = false, features = ["file_io", "rust_native_crypto"] }
 chrono = "0.4.42"
 clap = { version = "4.6.1", features = ["derive"] }
-image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp", "ico"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp", "ico", "tga", "qoi"] }
 imageproc = { version = "0.26.2", default-features = false, features = ["rayon", "text"] }
 rayon = "1.11.0"
 rfd = "0.15.4"

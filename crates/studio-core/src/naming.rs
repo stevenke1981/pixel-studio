@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Local, NaiveDateTime};
 
+use crate::SupportedFormat;
+
 /// Name for a given moment, e.g. `pixelstudio_20261015_164305.png`.
 pub fn timestamp_name_at(at: NaiveDateTime, ext: &str) -> String {
     format!(
@@ -31,6 +33,19 @@ pub fn timestamp_path_in(dir: &Path, ext: &str) -> PathBuf {
         n += 1;
     }
     p
+}
+
+/// Suggest an output filename for saving or converting to `target_format`.
+/// Preserves the source file's UTF-8 stem when available, falling back to a timestamped name.
+pub fn suggested_output_name(source: Option<&Path>, target_format: SupportedFormat) -> String {
+    if let Some(stem) = source
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+    {
+        return format!("{stem}.{}", target_format.extension());
+    }
+    timestamp_name(target_format.extension())
 }
 
 #[cfg(test)]
@@ -69,5 +84,21 @@ mod tests {
         let b = timestamp_path_in(&dir, "png");
         assert_ne!(a, b);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn suggests_output_name_from_source_stem_or_timestamp() {
+        assert_eq!(
+            suggested_output_name(Some(Path::new("a/photo.png")), SupportedFormat::Jfif),
+            "photo.jfif"
+        );
+        assert_eq!(
+            suggested_output_name(Some(Path::new("dir/shot.tar.gz")), SupportedFormat::Qoi),
+            "shot.tar.qoi"
+        );
+        let fallback = suggested_output_name(None, SupportedFormat::Jpeg);
+        assert!(fallback.starts_with("pixelstudio_") && fallback.ends_with(".jpg"));
+        let empty_fallback = suggested_output_name(Some(Path::new("")), SupportedFormat::Tga);
+        assert!(empty_fallback.starts_with("pixelstudio_") && empty_fallback.ends_with(".tga"));
     }
 }

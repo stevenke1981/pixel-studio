@@ -134,7 +134,9 @@ enum BatchMsg {
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct Settings {
+    #[serde(default)]
     lang: Option<String>,
+    #[serde(default)]
     keep_metadata: bool,
     #[serde(default)]
     show_grid: bool,
@@ -150,9 +152,24 @@ struct Settings {
     show_rulers: bool,
     #[serde(default)]
     hide_status: bool,
+    #[serde(default)]
+    export_format: Option<String>,
+    #[serde(default)]
+    export_quality: Option<u8>,
+    #[serde(default)]
+    webp_lossless: Option<bool>,
+    #[serde(default)]
+    alpha_bg: Option<[u8; 4]>,
+    #[serde(default)]
+    alpha_bg_mode: i32,
+    #[serde(default)]
+    last_save_dir: Option<PathBuf>,
 }
 
 fn settings_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
     dirs::config_dir().map(|d| d.join("pixel-studio").join("settings.json"))
 }
 
@@ -194,6 +211,20 @@ pub struct State {
     recent: Vec<PathBuf>,
     rulers: bool,
     status_bar: bool,
+    convert_input: Option<PathBuf>,
+    convert_input_has_alpha: Option<bool>,
+    last_save_dir: Option<PathBuf>,
+    save_dialog_mode: i32,
+    alpha_bg: [u8; 4],
+    alpha_bg_mode: i32,
+    export_format: SupportedFormat,
+    export_quality: u8,
+    webp_lossless: bool,
+    batch_format: SupportedFormat,
+    batch_quality: u8,
+    batch_webp_lossless: bool,
+    batch_alpha_bg: [u8; 4],
+    batch_alpha_bg_mode: i32,
 }
 
 type S = Rc<RefCell<State>>;
@@ -221,7 +252,50 @@ fn detect_zh(settings: &Settings) -> bool {
         .unwrap_or(false)
 }
 
-const FORMATS: [SupportedFormat; 8] = SupportedFormat::ALL;
+const FORMATS: &[SupportedFormat] = &SupportedFormat::ALL;
+
+fn format_at(idx: i32) -> SupportedFormat {
+    FORMATS[idx.clamp(0, FORMATS.len() as i32 - 1) as usize]
+}
+
+fn format_index(fmt: SupportedFormat) -> i32 {
+    FORMATS.iter().position(|f| *f == fmt).unwrap_or(0) as i32
+}
+
+fn parse_hex_rgba(hex: &str) -> Option<[u8; 4]> {
+    let v = hex.trim().trim_start_matches('#');
+    if v.len() != 6 && v.len() != 8 {
+        return None;
+    }
+    let p = |i: usize| v.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok());
+    Some([p(0)?, p(2)?, p(4)?, if v.len() == 8 { p(6)? } else { 255 }])
+}
+
+fn format_rgba_hex(c: [u8; 4]) -> String {
+    if c[3] == 255 {
+        format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+    } else {
+        format!("#{:02X}{:02X}{:02X}{:02X}", c[0], c[1], c[2], c[3])
+    }
+}
+
+fn resolve_alpha_bg(mode: i32, color1: [u8; 4], color2: [u8; 4], custom: [u8; 4]) -> [u8; 4] {
+    match mode {
+        0 => [255, 255, 255, 255],
+        1 => [0, 0, 0, 255],
+        2 => color1,
+        3 => color2,
+        _ => custom,
+    }
+}
+
+fn suggested_save_dir(source_path: Option<&Path>, last_dir: Option<&Path>) -> Option<PathBuf> {
+    source_path
+        .and_then(Path::parent)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| last_dir.filter(|p| !p.as_os_str().is_empty()))
+        .map(Path::to_path_buf)
+}
 
 fn blank(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(w, h, image::Rgba([255; 4])))
@@ -269,6 +343,24 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
             .collect(),
         rulers: settings.show_rulers,
         status_bar: !settings.hide_status,
+        convert_input: None,
+        convert_input_has_alpha: None,
+        last_save_dir: settings.last_save_dir.clone(),
+        save_dialog_mode: 0,
+        alpha_bg: settings.alpha_bg.unwrap_or([255, 255, 255, 255]),
+        alpha_bg_mode: settings.alpha_bg_mode.clamp(0, 4),
+        export_format: settings
+            .export_format
+            .as_deref()
+            .and_then(SupportedFormat::from_extension)
+            .unwrap_or(SupportedFormat::Png),
+        export_quality: settings.export_quality.unwrap_or(90).clamp(1, 100),
+        webp_lossless: settings.webp_lossless.unwrap_or(true),
+        batch_format: SupportedFormat::Webp,
+        batch_quality: 90,
+        batch_webp_lossless: false,
+        batch_alpha_bg: [255, 255, 255, 255],
+        batch_alpha_bg_mode: 0,
     }
 }
 
@@ -296,7 +388,6 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             "about" => ui.set_about_open(true),
             "keys" => ui.set_keys_open(true),
             "resize" => ui.set_rs_open(true),
-            "quicksave" => ui.set_qs_open(true),
             _ => {}
         }
     }
@@ -327,18 +418,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             .map(|f| SharedString::from(f.label()))
             .collect::<Vec<_>>(),
     )));
-    ui.set_export_format(
-        FORMATS
-            .iter()
-            .position(|f| *f == SupportedFormat::Png)
-            .unwrap_or(0) as i32,
-    );
-    ui.set_batch_format(
-        FORMATS
-            .iter()
-            .position(|f| *f == SupportedFormat::Webp)
-            .unwrap_or(0) as i32,
-    );
+    init_export_ui(&ui, &state.borrow());
     ui.set_rs_w(1080);
     ui.set_rs_h(720);
     set_language_models(&ui, &state.borrow());
@@ -346,6 +426,9 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 
     if let Some(file) = args.file {
         open_path(&ui, &state, &file);
+    }
+    if std::env::var("PIXEL_STUDIO_DIALOG").is_ok_and(|d| d == "quicksave") {
+        open_save_modal(&ui, &state, 0);
     }
     if let Ok(t) = std::env::var("PIXEL_STUDIO_TAB").map(|t| t.parse::<i32>().unwrap_or(0)) {
         ui.set_tab(t);
@@ -415,6 +498,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         });
     }
     ui.run()?;
+    sync_state_from_export_ui(&ui, &mut state.borrow_mut());
     save_settings(&state.borrow());
     Ok(())
 }
@@ -434,6 +518,12 @@ fn save_settings(s: &State) {
             recent: s.recent.clone(),
             show_rulers: s.rulers,
             hide_status: !s.status_bar,
+            export_format: Some(s.export_format.extension().to_owned()),
+            export_quality: Some(s.export_quality),
+            webp_lossless: Some(s.webp_lossless),
+            alpha_bg: Some(s.alpha_bg),
+            alpha_bg_mode: s.alpha_bg_mode,
+            last_save_dir: s.last_save_dir.clone(),
         };
         let _ = std::fs::write(p, serde_json::to_string_pretty(&st).unwrap_or_default());
     }
@@ -771,13 +861,534 @@ fn zoom_at(st: &S, factor: f32, at: (f32, f32)) {
 
 // ------------------------------------------------------------------- file ops
 
-fn image_filter(d: rfd::FileDialog) -> rfd::FileDialog {
-    d.add_filter(
-        "Images",
-        &[
-            "png", "jpg", "jpeg", "jfif", "webp", "bmp", "gif", "ico", "tif", "tiff",
-        ],
-    )
+fn open_image_filter(mut d: rfd::FileDialog, zh: bool) -> rfd::FileDialog {
+    for (label, exts) in SupportedFormat::open_filter_entries(zh) {
+        d = d.add_filter(label, exts);
+    }
+    d
+}
+
+fn save_image_filters(
+    mut d: rfd::FileDialog,
+    preferred: SupportedFormat,
+    zh: bool,
+    c2pa_only: bool,
+) -> rfd::FileDialog {
+    for (label, exts) in SupportedFormat::save_filter_entries(preferred, zh, c2pa_only) {
+        d = d.add_filter(label, exts);
+    }
+    d
+}
+
+fn suggested_save_dialog(
+    preferred_fmt: SupportedFormat,
+    source_path: Option<&Path>,
+    last_dir: Option<&Path>,
+) -> rfd::FileDialog {
+    let name = studio_core::naming::suggested_output_name(source_path, preferred_fmt);
+    let mut d = rfd::FileDialog::new().set_file_name(name);
+    if let Some(dir) = suggested_save_dir(source_path, last_dir)
+        && dir.is_dir()
+    {
+        d = d.set_directory(dir);
+    }
+    d
+}
+
+#[derive(Clone, Copy)]
+enum FormatPanel {
+    Export,
+    Batch,
+}
+
+impl FormatPanel {
+    fn format_idx(self, ui: &AppWindow) -> i32 {
+        match self {
+            Self::Export => ui.get_export_format(),
+            Self::Batch => ui.get_batch_format(),
+        }
+    }
+
+    fn quality_val(self, ui: &AppWindow) -> f32 {
+        match self {
+            Self::Export => ui.get_quality(),
+            Self::Batch => ui.get_batch_quality(),
+        }
+    }
+
+    fn set_quality_val(self, ui: &AppWindow, q: f32) {
+        match self {
+            Self::Export => ui.set_quality(q),
+            Self::Batch => ui.set_batch_quality(q),
+        }
+    }
+
+    fn lossless_val(self, ui: &AppWindow) -> bool {
+        match self {
+            Self::Export => ui.get_webp_lossless(),
+            Self::Batch => ui.get_batch_webp_lossless(),
+        }
+    }
+
+    fn set_lossless_val(self, ui: &AppWindow, v: bool) {
+        match self {
+            Self::Export => ui.set_webp_lossless(v),
+            Self::Batch => ui.set_batch_webp_lossless(v),
+        }
+    }
+
+    fn alpha_mode_val(self, ui: &AppWindow) -> i32 {
+        match self {
+            Self::Export => ui.get_alpha_bg_mode(),
+            Self::Batch => ui.get_batch_alpha_bg_mode(),
+        }
+    }
+
+    fn set_alpha_mode_val(self, ui: &AppWindow, mode: i32) {
+        match self {
+            Self::Export => ui.set_alpha_bg_mode(mode),
+            Self::Batch => ui.set_batch_alpha_bg_mode(mode),
+        }
+    }
+
+    fn alpha_hex_val(self, ui: &AppWindow) -> String {
+        match self {
+            Self::Export => ui.get_alpha_bg_hex().into(),
+            Self::Batch => ui.get_batch_alpha_bg_hex().into(),
+        }
+    }
+
+    fn set_alpha_hex_val(self, ui: &AppWindow, hex: &str) {
+        match self {
+            Self::Export => ui.set_alpha_bg_hex(hex.into()),
+            Self::Batch => ui.set_batch_alpha_bg_hex(hex.into()),
+        }
+    }
+
+    fn set_alpha_custom_val(self, ui: &AppWindow, color: Color) {
+        match self {
+            Self::Export => ui.set_alpha_bg_custom(color),
+            Self::Batch => ui.set_batch_alpha_bg_custom(color),
+        }
+    }
+
+    fn state_mut(
+        self,
+        s: &mut State,
+    ) -> (
+        &mut SupportedFormat,
+        &mut u8,
+        &mut bool,
+        &mut i32,
+        &mut [u8; 4],
+    ) {
+        match self {
+            Self::Export => (
+                &mut s.export_format,
+                &mut s.export_quality,
+                &mut s.webp_lossless,
+                &mut s.alpha_bg_mode,
+                &mut s.alpha_bg,
+            ),
+            Self::Batch => (
+                &mut s.batch_format,
+                &mut s.batch_quality,
+                &mut s.batch_webp_lossless,
+                &mut s.batch_alpha_bg_mode,
+                &mut s.batch_alpha_bg,
+            ),
+        }
+    }
+
+    fn state_ref(self, s: &State) -> (SupportedFormat, u8, bool, i32, [u8; 4]) {
+        match self {
+            Self::Export => (
+                s.export_format,
+                s.export_quality,
+                s.webp_lossless,
+                s.alpha_bg_mode,
+                s.alpha_bg,
+            ),
+            Self::Batch => (
+                s.batch_format,
+                s.batch_quality,
+                s.batch_webp_lossless,
+                s.batch_alpha_bg_mode,
+                s.batch_alpha_bg,
+            ),
+        }
+    }
+
+    fn init_ui(self, ui: &AppWindow, s: &State) {
+        let (fmt, _q, lossless, alpha_mode, alpha_bg) = self.state_ref(s);
+        match self {
+            Self::Export => {
+                ui.set_export_format(format_index(fmt));
+                ui.set_keep_metadata(s.keep_metadata);
+            }
+            Self::Batch => {
+                ui.set_batch_format(format_index(fmt));
+            }
+        }
+        self.set_lossless_val(ui, lossless);
+        self.set_alpha_mode_val(ui, alpha_mode);
+        let eff_bg = resolve_alpha_bg(alpha_mode, s.tools.color1, s.tools.color2, alpha_bg);
+        self.set_alpha_custom_val(ui, to_color(eff_bg));
+        self.set_alpha_hex_val(ui, &format_rgba_hex(eff_bg));
+        self.sync_ui(ui, s);
+    }
+
+    fn sync_state_from_ui(self, ui: &AppWindow, s: &mut State) {
+        let new_fmt = format_at(self.format_idx(ui));
+        let slider_q = self.quality_val(ui).round().clamp(1.0, 100.0) as u8;
+        let ui_lossless = self.lossless_val(ui);
+        let ui_alpha_mode = self.alpha_mode_val(ui).clamp(0, 4);
+        let ui_hex = self.alpha_hex_val(ui);
+
+        let (stored_fmt, stored_q, stored_lossless, stored_alpha_mode, stored_alpha_bg) =
+            self.state_mut(s);
+        let prev_fmt = *stored_fmt;
+        // Preserve lossy quality when the slider was only showing 100 because WebP lossless locked it.
+        let was_locked_lossless = prev_fmt == SupportedFormat::Webp && *stored_lossless;
+        if prev_fmt == SupportedFormat::Webp {
+            *stored_lossless = ui_lossless;
+        }
+        if !was_locked_lossless {
+            if new_fmt == prev_fmt && new_fmt == SupportedFormat::Webp && slider_q >= 100 {
+                *stored_lossless = true;
+            } else {
+                *stored_q = slider_q;
+            }
+        }
+        *stored_fmt = new_fmt;
+        *stored_alpha_mode = ui_alpha_mode;
+        if ui_alpha_mode == 4
+            && let Some(c) = parse_hex_rgba(&ui_hex)
+        {
+            *stored_alpha_bg = c;
+        }
+        if matches!(self, Self::Export) {
+            s.keep_metadata = ui.get_keep_metadata();
+        }
+    }
+
+    fn effective_alpha_bg(self, ui: &AppWindow, s: &State) -> [u8; 4] {
+        let mode = self.alpha_mode_val(ui).clamp(0, 4);
+        let (_, _, _, _, saved_bg) = self.state_ref(s);
+        let custom = if mode == 4 {
+            let hex = self.alpha_hex_val(ui);
+            parse_hex_rgba(&hex).unwrap_or(saved_bg)
+        } else {
+            saved_bg
+        };
+        resolve_alpha_bg(mode, s.tools.color1, s.tools.color2, custom)
+    }
+
+    fn sync_ui(self, ui: &AppWindow, s: &State) {
+        let fmt = format_at(self.format_idx(ui));
+        let (_, stored_q, stored_lossless, _, _) = self.state_ref(s);
+        let displayed_q = if fmt == SupportedFormat::Webp && stored_lossless {
+            100.0
+        } else if fmt == SupportedFormat::Webp {
+            stored_q.min(99) as f32
+        } else {
+            stored_q as f32
+        };
+        self.set_lossless_val(ui, stored_lossless);
+        self.set_quality_val(ui, displayed_q);
+        let eff_bg = self.effective_alpha_bg(ui, s);
+        self.set_alpha_custom_val(ui, to_color(eff_bg));
+
+        match self {
+            Self::Export => {
+                ui.set_export_supports_quality(fmt.supports_quality());
+                ui.set_export_supports_alpha(fmt.supports_alpha());
+                ui.set_export_supports_c2pa(fmt.supports_c2pa());
+                ui.set_export_is_webp(fmt == SupportedFormat::Webp);
+                ui.set_export_format_hint(format_capability_hint(fmt, s.zh).into());
+                let alpha_present = if s.save_dialog_mode == 3 && s.convert_input.is_some() {
+                    s.convert_input_has_alpha.unwrap_or(false)
+                } else {
+                    s.doc.has_alpha_pixels()
+                };
+                ui.set_export_alpha_present(alpha_present);
+
+                if s.save_dialog_mode == 0 {
+                    let locked_path = s
+                        .doc
+                        .path
+                        .as_ref()
+                        .filter(|p| SupportedFormat::from_path(p).is_some());
+                    ui.set_qs_format_locked(locked_path.is_some());
+                    ui.set_qs_prompts_file(locked_path.is_none());
+                    let target_text = match locked_path {
+                        Some(p) => {
+                            format!("{} {}", tl(s.zh, "覆寫：", "Overwrite:"), p.display())
+                        }
+                        None => format!(
+                            "{} {}",
+                            tl(s.zh, "新檔名：", "New file:"),
+                            studio_core::naming::suggested_output_name(s.doc.path.as_deref(), fmt)
+                        ),
+                    };
+                    ui.set_qs_target(target_text.into());
+                    ui.set_export_target_preview(SharedString::new());
+                } else {
+                    ui.set_qs_format_locked(false);
+                    ui.set_qs_prompts_file(true);
+                    ui.set_qs_target(SharedString::new());
+                    let preview_src = if s.save_dialog_mode == 3 {
+                        s.convert_input.as_deref().or(s.doc.path.as_deref())
+                    } else {
+                        s.doc.path.as_deref()
+                    };
+                    let preview = studio_core::naming::suggested_output_name(preview_src, fmt);
+                    ui.set_export_target_preview(preview.into());
+                }
+            }
+            Self::Batch => {
+                ui.set_batch_supports_quality(fmt.supports_quality());
+                ui.set_batch_supports_alpha(fmt.supports_alpha());
+                ui.set_batch_is_webp(fmt == SupportedFormat::Webp);
+                ui.set_batch_format_hint(format_capability_hint(fmt, s.zh).into());
+            }
+        }
+    }
+
+    fn handle_quality_edited(self, ui: &AppWindow, s: &mut State) {
+        let fmt = format_at(self.format_idx(ui));
+        let v = self.quality_val(ui).round().clamp(1.0, 100.0) as u8;
+        let (_, stored_q, stored_lossless, _, _) = self.state_mut(s);
+        if fmt == SupportedFormat::Webp {
+            if v >= 100 {
+                *stored_lossless = true;
+                *stored_q = (*stored_q).clamp(1, 99);
+                self.set_lossless_val(ui, true);
+            } else {
+                *stored_lossless = false;
+                *stored_q = v;
+                self.set_lossless_val(ui, false);
+            }
+        } else {
+            *stored_q = v;
+        }
+    }
+
+    fn handle_lossless_toggled(self, ui: &AppWindow, s: &mut State) {
+        let fmt = format_at(self.format_idx(ui));
+        let lossless = self.lossless_val(ui);
+        let (_, stored_q, stored_lossless, _, _) = self.state_mut(s);
+        *stored_lossless = lossless;
+        if fmt == SupportedFormat::Webp {
+            if lossless {
+                *stored_q = (*stored_q).clamp(1, 99);
+                self.set_quality_val(ui, 100.0);
+            } else {
+                *stored_q = (*stored_q).clamp(1, 99);
+                self.set_quality_val(ui, *stored_q as f32);
+            }
+        }
+    }
+
+    fn handle_alpha_changed(self, ui: &AppWindow, s: &mut State) {
+        let c1 = s.tools.color1;
+        let c2 = s.tools.color2;
+        let mode = self.alpha_mode_val(ui).clamp(0, 4);
+        let hex = self.alpha_hex_val(ui);
+        let (_, _, _, stored_mode, stored_bg) = self.state_mut(s);
+        let prev_mode = *stored_mode;
+        *stored_mode = mode;
+        if mode == 4 {
+            if prev_mode == 4 {
+                if let Some(c) = parse_hex_rgba(&hex) {
+                    *stored_bg = c;
+                }
+            } else {
+                let prev_eff = resolve_alpha_bg(prev_mode, c1, c2, *stored_bg);
+                if hex.eq_ignore_ascii_case(&format_rgba_hex(prev_eff)) {
+                    self.set_alpha_hex_val(ui, &format_rgba_hex(*stored_bg));
+                } else if let Some(c) = parse_hex_rgba(&hex) {
+                    *stored_bg = c;
+                }
+            }
+        } else {
+            let eff = resolve_alpha_bg(mode, c1, c2, *stored_bg);
+            self.set_alpha_hex_val(ui, &format_rgba_hex(eff));
+        }
+        let eff = self.effective_alpha_bg(ui, s);
+        self.set_alpha_custom_val(ui, to_color(eff));
+    }
+
+    fn handle_alpha_hex(self, ui: &AppWindow, s: &mut State) {
+        let hex = self.alpha_hex_val(ui);
+        if let Some(c) = parse_hex_rgba(&hex) {
+            let (_, _, _, stored_mode, stored_bg) = self.state_mut(s);
+            *stored_bg = c;
+            *stored_mode = 4;
+            self.set_alpha_mode_val(ui, 4);
+            self.set_alpha_custom_val(ui, to_color(c));
+        }
+    }
+
+    fn options_for_format(
+        self,
+        ui: &AppWindow,
+        s: &State,
+        format: SupportedFormat,
+    ) -> ConvertOptions {
+        let q = self.quality_val(ui).round().clamp(1.0, 100.0) as u8;
+        let lossless = self.lossless_val(ui);
+        ConvertOptions {
+            format,
+            quality: studio_core::effective_quality(format, q, lossless),
+            background: self.effective_alpha_bg(ui, s),
+        }
+    }
+}
+
+fn init_export_ui(ui: &AppWindow, s: &State) {
+    FormatPanel::Export.init_ui(ui, s);
+    FormatPanel::Batch.init_ui(ui, s);
+}
+
+fn sync_state_from_export_ui(ui: &AppWindow, s: &mut State) {
+    FormatPanel::Export.sync_state_from_ui(ui, s);
+}
+
+fn sync_export_format_ui(ui: &AppWindow, s: &State) {
+    FormatPanel::Export.sync_ui(ui, s);
+}
+
+fn format_capability_hint(fmt: SupportedFormat, zh: bool) -> String {
+    match fmt {
+        SupportedFormat::Jpeg => tl(
+            zh,
+            "有損壓縮 · 不支援透明 · 支援品質 / EXIF / C2PA",
+            "Lossy · No alpha · Supports Quality / EXIF / C2PA",
+        ),
+        SupportedFormat::Jfif => tl(
+            zh,
+            "JFIF (JPEG) 有損壓縮 · 不支援透明 · 支援品質 / EXIF / C2PA",
+            "JFIF (JPEG) lossy · No alpha · Supports Quality / EXIF / C2PA",
+        ),
+        SupportedFormat::Png => tl(
+            zh,
+            "無損壓縮 · 保留透明 · 支援 EXIF / C2PA",
+            "Lossless · Alpha preserved · Supports EXIF / C2PA",
+        ),
+        SupportedFormat::Webp => tl(
+            zh,
+            "無損 / 有損 · 保留透明 · 支援品質 / EXIF / C2PA",
+            "Lossless / lossy · Alpha preserved · Supports Quality / EXIF / C2PA",
+        ),
+        SupportedFormat::Bmp => tl(
+            zh,
+            "無壓縮點陣圖 · 不支援透明 · 混合至背景色",
+            "Uncompressed bitmap · No alpha · Flattens to background",
+        ),
+        SupportedFormat::Tiff => tl(
+            zh,
+            "無損壓縮 · 保留透明 · 支援 C2PA",
+            "Lossless · Alpha preserved · Supports C2PA",
+        ),
+        SupportedFormat::Gif => tl(
+            zh,
+            "單張 GIF（256 色調色盤）· 支援透明",
+            "Single-frame GIF (256 colors) · Alpha supported",
+        ),
+        SupportedFormat::Ico => tl(
+            zh,
+            "Windows 圖示（自動等比縮放 ≤ 256×256 px）· 保留透明",
+            "Windows icon (auto-scaled ≤ 256×256 px) · Alpha preserved",
+        ),
+        SupportedFormat::Tga => tl(
+            zh,
+            "Truevision TGA（RLE 無損）· 保留透明",
+            "Truevision TGA (RLE lossless) · Alpha preserved",
+        ),
+        SupportedFormat::Qoi => tl(
+            zh,
+            "Quite OK Image（高速無損）· 保留透明",
+            "Quite OK Image (fast lossless) · Alpha preserved",
+        ),
+    }
+}
+
+fn sync_batch_format_ui(ui: &AppWindow, s: &State) {
+    FormatPanel::Batch.sync_ui(ui, s);
+}
+
+fn refresh_convert_source_ui(ui: &AppWindow, s: &mut State) {
+    if let Some(path) = s.convert_input.clone() {
+        let label = match studio_core::inspect_image(&path) {
+            Ok(info) => {
+                s.convert_input_has_alpha = Some(matches!(
+                    info.color_type.as_str(),
+                    "La8" | "Rgba8" | "La16" | "Rgba16" | "Rgba32F"
+                ));
+                format!(
+                    "{} ({} · {}×{} · {:.1} KB)",
+                    path.display(),
+                    info.format.label(),
+                    info.width,
+                    info.height,
+                    info.file_size as f64 / 1024.0
+                )
+            }
+            Err(_) => {
+                s.convert_input_has_alpha = None;
+                path.display().to_string()
+            }
+        };
+        ui.set_convert_src_label(label.into());
+        ui.set_convert_src_has_file(true);
+    } else {
+        s.convert_input_has_alpha = None;
+        let edited = if s.doc.is_modified() {
+            tl(s.zh, "（已編輯，未存檔）", " (edited)")
+        } else {
+            String::new()
+        };
+        let label = format!(
+            "{} ({}×{} px){}",
+            tl(s.zh, "目前畫布影像", "Current canvas image"),
+            s.doc.width(),
+            s.doc.height(),
+            edited
+        );
+        ui.set_convert_src_label(label.into());
+        ui.set_convert_src_has_file(false);
+    }
+}
+
+fn open_save_modal(ui: &AppWindow, st: &S, mode: i32) {
+    {
+        let mut s = st.borrow_mut();
+        s.save_dialog_mode = mode;
+        ui.set_save_dialog_mode(mode);
+        let path = s.doc.path.clone();
+        if matches!(mode, 0 | 1)
+            && let Some(f) = path.as_deref().and_then(SupportedFormat::from_path)
+        {
+            s.export_format = f;
+            ui.set_export_format(format_index(f));
+        }
+        if mode == 3 {
+            s.convert_input = if !s.doc.is_modified()
+                && path
+                    .as_deref()
+                    .and_then(SupportedFormat::from_path)
+                    .is_some()
+            {
+                path.clone()
+            } else {
+                None
+            };
+            refresh_convert_source_ui(ui, &mut s);
+        }
+        sync_export_format_ui(ui, &s);
+    }
+    ui.set_qs_open(true);
 }
 
 fn open_path(ui: &AppWindow, st: &S, path: &Path) {
@@ -815,6 +1426,7 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
             {
                 let mut s = st.borrow_mut();
                 s.doc.load(img, Some(path.to_path_buf()));
+                s.doc.source_metadata = studio_core::metadata::read_metadata(path);
                 if let Some(dir) = path.parent() {
                     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
                         .map(|rd| {
@@ -843,73 +1455,214 @@ fn open_path(ui: &AppWindow, st: &S, path: &Path) {
     }
 }
 
-fn convert_options(ui: &AppWindow, idx: i32) -> ConvertOptions {
-    let format = FORMATS[idx.clamp(0, FORMATS.len() as i32 - 1) as usize];
-    format_options(ui, format)
+fn format_options(ui: &AppWindow, s: &State, format: SupportedFormat) -> ConvertOptions {
+    FormatPanel::Export.options_for_format(ui, s, format)
 }
 
-fn format_options(ui: &AppWindow, format: SupportedFormat) -> ConvertOptions {
-    let mut q = ui.get_quality().round().clamp(1.0, 100.0) as u8;
-    if format == SupportedFormat::Webp {
-        q = if ui.get_webp_lossless() {
-            100
-        } else {
-            q.min(99)
-        };
-    }
-    ConvertOptions {
-        format,
-        quality: q,
-        background: [255, 255, 255, 255],
-    }
+fn batch_convert_options(ui: &AppWindow, s: &State) -> ConvertOptions {
+    FormatPanel::Batch.options_for_format(ui, s, format_at(ui.get_batch_format()))
 }
 
-fn save_to(ui: &AppWindow, st: &S, out: &Path) -> bool {
-    let (img, src, keep, zh) = {
-        let s = st.borrow();
+fn copy_to_staged(src: &Path, staged: &Path) -> anyhow::Result<()> {
+    let mut reader = std::fs::File::open(src)?;
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(staged)?;
+    std::io::copy(&mut reader, &mut writer)?;
+    Ok(())
+}
+
+fn save_to(
+    ui: &AppWindow,
+    st: &S,
+    out: &Path,
+    explicit_format: SupportedFormat,
+    update_doc: bool,
+) -> bool {
+    let (img, source_meta, keep, zh, opts, apply_c2pa, skip_c2pa_note, draft) = {
+        let mut s = st.borrow_mut();
+        sync_state_from_export_ui(ui, &mut s);
+        let opts = format_options(ui, &s, explicit_format);
+        let c2pa_req = ui.get_c2pa_on_save();
         (
             s.doc.flattened(),
-            s.doc.path.clone(),
+            s.doc.source_metadata.clone(),
             ui.get_keep_metadata(),
             s.zh,
+            opts,
+            c2pa_req && explicit_format.supports_c2pa(),
+            c2pa_req && !explicit_format.supports_c2pa(),
+            c2pa_draft(ui),
         )
     };
-    st.borrow_mut().keep_metadata = keep;
-    let format = SupportedFormat::from_path(out).unwrap_or(SupportedFormat::Png);
-    let opts = format_options(ui, format);
-    let r = studio_core::atomic_file::write_with(out, |staged| -> anyhow::Result<()> {
-        if ui.get_c2pa_on_save() {
-            save_with_c2pa(
-                &img,
-                staged,
-                opts,
-                &c2pa_draft(ui),
-                src.as_deref().filter(|_| keep),
-            )?;
-        } else {
-            studio_core::save_dynamic_image(&img, staged, opts)?;
-            // Metadata must be applied before signing, never after it.
-            if keep && let Some(src) = &src {
-                studio_core::metadata::copy_metadata(src, staged)?;
-            }
-        }
-        Ok(())
-    });
+    let keep_meta = keep && explicit_format.supports_exif_icc();
+    let r = if apply_c2pa {
+        save_with_c2pa(
+            &img,
+            out,
+            opts,
+            &draft,
+            source_meta.as_ref().filter(|_| keep_meta),
+        )
+    } else if keep_meta && let Some(meta) = &source_meta {
+        studio_core::atomic_file::write_with(out, |staged| -> anyhow::Result<()> {
+            let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
+            let tmp = staged.with_extension(format!("meta.{ext}"));
+            let inner = (|| -> anyhow::Result<()> {
+                studio_core::save_dynamic_image(&img, &tmp, opts)?;
+                studio_core::metadata::apply_metadata(meta, &tmp)?;
+                copy_to_staged(&tmp, staged)
+            })();
+            let _ = std::fs::remove_file(tmp);
+            inner
+        })
+    } else {
+        studio_core::save_dynamic_image(&img, out, opts)
+            .map(|_| ())
+            .map_err(anyhow::Error::from)
+    };
     match r {
         Ok(()) => {
-            ui.set_status(format!("{} {}", tl(zh, "已儲存：", "Saved:"), out.display()).into());
+            let size_kb = std::fs::metadata(out)
+                .map(|m| m.len() as f64 / 1024.0)
+                .unwrap_or(0.0);
+            let mut msg = format!(
+                "{} {} ({} · {}×{}, {:.1} KB)",
+                if update_doc {
+                    tl(zh, "已儲存：", "Saved:")
+                } else {
+                    tl(zh, "已匯出：", "Exported:")
+                },
+                out.display(),
+                explicit_format.label(),
+                img.width(),
+                img.height(),
+                size_kb
+            );
+            if skip_c2pa_note {
+                msg.push_str(&tl(
+                    zh,
+                    "（此格式不支援 C2PA，已略過簽署）",
+                    " (C2PA unsupported for this format; skipped)",
+                ));
+            }
+            ui.set_status(msg.into());
+            st.borrow_mut().last_save_dir = out
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(Path::to_path_buf);
             push_recent(ui, st, out);
-            st.borrow_mut().doc.path = Some(out.to_path_buf());
-            let mut s = st.borrow_mut();
-            s.edit_session = None;
-            // A flattened export does not preserve editable layers.
-            if s.doc.layers.is_empty() {
-                s.doc.mark_saved();
+            if update_doc {
+                {
+                    let mut s = st.borrow_mut();
+                    s.doc.path = Some(out.to_path_buf());
+                    s.doc.source_metadata = studio_core::metadata::read_metadata(out);
+                    s.edit_session = None;
+                    // A flattened export does not preserve editable layers.
+                    if s.doc.layers.is_empty() {
+                        s.doc.mark_saved();
+                    }
+                    s.c2pa_info = studio_core::inspect_c2pa(out).unwrap_or_default();
+                }
+                {
+                    let s = st.borrow();
+                    ui.set_has_source(true);
+                    ui.set_c2pa_present(s.c2pa_info.present);
+                    ui.set_c2pa_raw(s.c2pa_info.raw_json.clone().unwrap_or_default().into());
+                }
+                refresh_info(ui, st);
+                refresh(ui, st);
             }
             true
         }
         Err(e) => {
             ui.set_status(format!("{} {e}", tl(zh, "儲存失敗：", "Save failed:")).into());
+            false
+        }
+    }
+}
+
+fn convert_file_to(
+    ui: &AppWindow,
+    st: &S,
+    src: &Path,
+    out: &Path,
+    actual_fmt: SupportedFormat,
+) -> bool {
+    let (keep, zh, opts, apply_c2pa, skip_c2pa_note, draft) = {
+        let mut s = st.borrow_mut();
+        sync_state_from_export_ui(ui, &mut s);
+        let opts = format_options(ui, &s, actual_fmt);
+        let c2pa_req = ui.get_c2pa_on_save();
+        (
+            ui.get_keep_metadata(),
+            s.zh,
+            opts,
+            c2pa_req && actual_fmt.supports_c2pa(),
+            c2pa_req && !actual_fmt.supports_c2pa(),
+            c2pa_draft(ui),
+        )
+    };
+    let keep_meta = keep && actual_fmt.supports_exif_icc();
+    let res: anyhow::Result<(Option<SupportedFormat>, u32, u32, u64)> = if apply_c2pa {
+        let mut meta = None;
+        studio_core::atomic_file::write_with(out, |staged| -> anyhow::Result<()> {
+            let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
+            let tmp = staged.with_extension(format!("convert_src.{ext}"));
+            let signed = staged.with_extension(format!("convert_c2pa.{ext}"));
+            let inner = (|| -> anyhow::Result<()> {
+                let conv = studio_core::convert_image_with_options(src, &tmp, opts, keep_meta)?;
+                studio_core::write_c2pa_manifest(&tmp, &signed, &draft)?;
+                copy_to_staged(&signed, staged)?;
+                let size = std::fs::metadata(&signed)?.len();
+                meta = Some((conv.source_format, conv.width, conv.height, size));
+                Ok(())
+            })();
+            let _ = std::fs::remove_file(tmp);
+            let _ = std::fs::remove_file(signed);
+            inner
+        })
+        .and_then(|()| {
+            meta.ok_or_else(|| anyhow::anyhow!("missing conversion metadata after C2PA signing"))
+        })
+    } else {
+        studio_core::convert_image_with_options(src, out, opts, keep_meta)
+            .map(|conv| (conv.source_format, conv.width, conv.height, conv.file_size))
+            .map_err(anyhow::Error::from)
+    };
+
+    match res {
+        Ok((src_fmt, w, h, file_size)) => {
+            st.borrow_mut().last_save_dir = out
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(Path::to_path_buf);
+            push_recent(ui, st, out);
+            let src_label = src_fmt.map(|f| f.label()).unwrap_or("IMAGE");
+            let kb = file_size as f64 / 1024.0;
+            let mut msg = format!(
+                "{} {} → {} ({}×{}, {:.1} KB) — {}",
+                tl(zh, "已轉換：", "Converted:"),
+                src_label,
+                actual_fmt.label(),
+                w,
+                h,
+                kb,
+                out.display()
+            );
+            if skip_c2pa_note {
+                msg.push_str(&tl(
+                    zh,
+                    "（此格式不支援 C2PA，已略過簽署）",
+                    " (C2PA unsupported for this format; skipped)",
+                ));
+            }
+            ui.set_status(msg.into());
+            true
+        }
+        Err(e) => {
+            ui.set_status(format!("{} {e}", tl(zh, "轉換失敗：", "Conversion failed:")).into());
             false
         }
     }
@@ -974,68 +1727,157 @@ fn save_with_c2pa(
     out: &Path,
     opts: ConvertOptions,
     draft: &C2paManifestDraft,
-    metadata_source: Option<&Path>,
+    source_meta: Option<&studio_core::metadata::SourceMetadata>,
 ) -> anyhow::Result<()> {
     studio_core::atomic_file::write_with(out, |staged| {
         let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
         // The staging filename is randomly reserved by tempfile.
         let tmp = staged.with_extension(format!("source.{ext}"));
+        let signed = staged.with_extension(format!("c2pa.{ext}"));
         let result = (|| -> anyhow::Result<()> {
             studio_core::save_dynamic_image(img, &tmp, opts)?;
-            if let Some(source) = metadata_source {
-                studio_core::metadata::copy_metadata(source, &tmp)?;
+            if let Some(meta) = source_meta {
+                studio_core::metadata::apply_metadata(meta, &tmp)?;
             }
-            std::fs::remove_file(staged)?; // C2PA requires a new destination.
-            studio_core::write_c2pa_manifest(&tmp, staged, draft)?;
-            Ok(())
+            studio_core::write_c2pa_manifest(&tmp, &signed, draft)?;
+            copy_to_staged(&signed, staged)
         })();
         let _ = std::fs::remove_file(tmp);
+        let _ = std::fs::remove_file(signed);
         result
     })
 }
 
-fn name_with_suffix(path: &Path, suffix: &str) -> String {
-    let stem = path.file_stem().and_then(|v| v.to_str()).unwrap_or("image");
-    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("jpg");
-    format!("{stem}{suffix}.{ext}")
+fn name_with_suffix_ext(path: Option<&Path>, suffix: &str, ext: &str) -> String {
+    match path
+        .and_then(|p| p.file_stem())
+        .and_then(|v| v.to_str())
+        .filter(|s| !s.is_empty())
+    {
+        Some(stem) => format!("{stem}{suffix}.{ext}"),
+        None => studio_core::naming::timestamp_name(ext),
+    }
 }
 
 fn same_existing_path(a: &Path, b: &Path) -> bool {
     matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
+fn resolve_c2pa_removal_target(
+    raw: &Path,
+    src: &Path,
+    src_fmt: Option<SupportedFormat>,
+) -> Result<PathBuf, String> {
+    if let Some(out_fmt) = SupportedFormat::from_path(raw) {
+        if let Some(sfmt) = src_fmt
+            && out_fmt != sfmt
+        {
+            return Err(format!(
+                "container format must match source (.{}), got .{}",
+                src.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or(sfmt.extension()),
+                out_fmt.extension()
+            ));
+        }
+        return Ok(raw.to_path_buf());
+    }
+    let src_ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .or_else(|| src_fmt.map(|f| f.extension()))
+        .unwrap_or("jpg");
+    let mut out = raw.to_path_buf();
+    let has_nonempty_ext = raw
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| !e.is_empty());
+    if !has_nonempty_ext {
+        out.set_extension(src_ext);
+    } else {
+        let mut os = out.into_os_string();
+        os.push(".");
+        os.push(src_ext);
+        out = PathBuf::from(os);
+    }
+    Ok(out)
+}
+
+fn remove_c2pa_atomic(src: &Path, out: &Path) -> studio_core::Result<()> {
+    studio_core::atomic_file::write_with(out, |staged| -> anyhow::Result<()> {
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .or_else(|| out.extension().and_then(|e| e.to_str()))
+            .unwrap_or("tmp");
+        // Write to a fresh sibling file so we never unlink/recreate `staged` while
+        // `NamedTempFile` holds an open Windows handle to it.
+        let stripped = staged.with_extension(format!("noc2pa.{ext}"));
+        let inner = (|| -> anyhow::Result<()> {
+            studio_core::remove_c2pa_manifest(src, &stripped)?;
+            copy_to_staged(&stripped, staged)
+        })();
+        let _ = std::fs::remove_file(&stripped);
+        inner
+    })
+    .map_err(|e| studio_core::PhotoError::InvalidInput(e.to_string()))
+}
+
 /// "Add C2PA": render the current (edited) image and save a signed copy.
 fn c2pa_save_copy(ui: &AppWindow, st: &S) {
-    let (img, src, zh) = {
-        let s = st.borrow();
-        (s.doc.flattened(), s.doc.path.clone(), s.zh)
-    };
-    let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
-    let name = match &src {
-        Some(p) => name_with_suffix(p, "_c2pa"),
-        None => studio_core::naming::timestamp_name(fmt.extension()),
-    };
-    let Some(mut out) = rfd::FileDialog::new()
-        .add_filter(
-            "Images",
-            &["jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff"],
+    let (img, src, source_meta, last_dir, keep, zh) = {
+        let mut s = st.borrow_mut();
+        sync_state_from_export_ui(ui, &mut s);
+        (
+            s.doc.flattened(),
+            s.doc.path.clone(),
+            s.doc.source_metadata.clone(),
+            s.last_save_dir.clone(),
+            ui.get_keep_metadata(),
+            s.zh,
         )
-        .set_file_name(name)
-        .save_file()
-    else {
+    };
+    let fmt = format_at(ui.get_export_format());
+    let preferred = if fmt.supports_c2pa() {
+        fmt
+    } else {
+        SupportedFormat::Jpeg
+    };
+    let name = name_with_suffix_ext(src.as_deref(), "_c2pa", preferred.extension());
+    let Some(raw) = save_image_filters(
+        suggested_save_dialog(preferred, src.as_deref(), last_dir.as_deref()).set_file_name(name),
+        preferred,
+        zh,
+        true,
+    )
+    .save_file() else {
         return;
     };
-    if out.extension().is_none() {
-        out.set_extension(fmt.extension());
+    let (out, format) = studio_core::resolve_save_target(raw, preferred);
+    if !format.supports_c2pa() {
+        ui.set_status(
+            format!(
+                "{} {}",
+                tl(zh, "此格式不支援 C2PA：", "C2PA is unsupported for format:"),
+                format.label()
+            )
+            .into(),
+        );
+        return;
     }
-    let format = SupportedFormat::from_path(&out).unwrap_or(fmt);
-    let r = save_with_c2pa(
-        &img,
-        &out,
-        format_options(ui, format),
-        &c2pa_draft(ui),
-        None,
-    );
+    let opts = format_options(ui, &st.borrow(), format);
+    let meta = source_meta
+        .as_ref()
+        .filter(|_| keep && format.supports_exif_icc());
+    let r = save_with_c2pa(&img, &out, opts, &c2pa_draft(ui), meta);
+    if r.is_ok() {
+        st.borrow_mut().last_save_dir = out
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf);
+        push_recent(ui, st, &out);
+    }
     ui.set_status(
         match r {
             Ok(()) => format!(
@@ -1053,9 +1895,9 @@ fn c2pa_save_copy(ui: &AppWindow, st: &S) {
 
 /// "Remove C2PA": copy the source bytes without the manifest (same extension, new file).
 fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
-    let (src, zh) = {
+    let (src, last_dir, zh) = {
         let s = st.borrow();
-        (s.doc.path.clone(), s.zh)
+        (s.doc.path.clone(), s.last_save_dir.clone(), s.zh)
     };
     let Some(src) = src else {
         ui.set_status(
@@ -1068,19 +1910,52 @@ fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
         );
         return;
     };
-    let Some(mut out) = rfd::FileDialog::new()
-        .add_filter(
-            "Images",
-            &["jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff"],
-        )
-        .set_file_name(name_with_suffix(&src, "_no_c2pa"))
-        .save_file()
-    else {
+    let src_fmt = SupportedFormat::from_path(&src)
+        .or_else(|| studio_core::inspect_image(&src).ok().map(|i| i.format));
+    if !src_fmt.is_some_and(|f| f.supports_c2pa()) {
+        ui.set_status(
+            tl(
+                zh,
+                "來源檔案格式不支援 C2PA 憑證。",
+                "Source file format does not support C2PA credentials.",
+            )
+            .into(),
+        );
+        return;
+    }
+    let preferred = src_fmt.unwrap_or(SupportedFormat::Jpeg);
+    let src_ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .unwrap_or(preferred.extension());
+    let name = name_with_suffix_ext(Some(&src), "_no_c2pa", src_ext);
+    let Some(raw) = save_image_filters(
+        suggested_save_dialog(preferred, Some(&src), last_dir.as_deref()).set_file_name(name),
+        preferred,
+        zh,
+        true,
+    )
+    .save_file() else {
         return;
     };
-    if let Some(ext) = src.extension() {
-        out.set_extension(ext);
-    }
+    let out = match resolve_c2pa_removal_target(&raw, &src, src_fmt) {
+        Ok(p) => p,
+        Err(reason) => {
+            ui.set_status(
+                format!(
+                    "{} {reason}",
+                    tl(
+                        zh,
+                        "移除 C2PA 須保留與來源相同的格式：",
+                        "Removing C2PA must keep the source format:"
+                    )
+                )
+                .into(),
+            );
+            return;
+        }
+    };
     if same_existing_path(&src, &out) {
         ui.set_status(
             tl(
@@ -1092,10 +1967,14 @@ fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
         );
         return;
     }
-    let result = studio_core::atomic_file::write_with(&out, |staged| -> studio_core::Result<()> {
-        std::fs::remove_file(staged)?;
-        studio_core::remove_c2pa_manifest(&src, staged)
-    });
+    let result = remove_c2pa_atomic(&src, &out);
+    if result.is_ok() {
+        st.borrow_mut().last_save_dir = out
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf);
+        push_recent(ui, st, &out);
+    }
     ui.set_status(
         match result {
             Ok(()) => format!(
@@ -1133,9 +2012,11 @@ fn refresh_info(ui: &AppWindow, st: &S) {
                 i.file_size as f64 / 1024.0
             );
         }
+        let has_exif = s.doc.source_metadata.as_ref().is_some_and(|m| m.has_exif())
+            || studio_core::metadata::has_exif(p);
         info += &format!(
             "EXIF: {}\n",
-            if studio_core::metadata::has_exif(p) {
+            if has_exif {
                 tl(zh, "有", "yes")
             } else {
                 tl(zh, "無", "no")
@@ -1836,7 +2717,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             );
         }
         "open" => {
-            if let Some(p) = image_filter(rfd::FileDialog::new())
+            if let Some(p) = open_image_filter(rfd::FileDialog::new(), zh)
                 .add_filter("Pixel Studio Project", &["pixel-project"])
                 .pick_file()
             {
@@ -1906,52 +2787,118 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             };
             match path {
                 Some(p) if ok && SupportedFormat::from_path(&p).is_some() => {
-                    save_to(ui, st, &p);
+                    let fmt = SupportedFormat::from_path(&p).unwrap_or(SupportedFormat::Png);
+                    save_to(ui, st, &p, fmt, true);
                 }
-                _ => {
-                    if let Some(f) = path.as_deref().and_then(SupportedFormat::from_path)
-                        && let Some(i) = FORMATS.iter().position(|x| *x == f)
-                    {
-                        ui.set_export_format(i as i32);
-                    }
-                    ui.set_qs_target(
-                        match &path {
-                            Some(p) => {
-                                format!("{} {}", tl(zh, "覆寫：", "Overwrite:"), p.display())
-                            }
-                            None => format!(
-                                "{} {}",
-                                tl(zh, "新檔名：", "New file:"),
-                                studio_core::naming::timestamp_name("…")
-                            ),
-                        }
-                        .into(),
-                    );
-                    ui.set_qs_open(true);
-                }
+                _ => open_save_modal(ui, st, 0),
             }
             return;
         }
         "quick-save-confirm" => {
-            let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
-            let path = st.borrow().doc.path.clone();
-            let target = match path {
-                Some(p) if SupportedFormat::from_path(&p) == Some(fmt) => Some(p),
-                other => {
-                    let dir = other
-                        .as_ref()
-                        .and_then(|p| p.parent().map(Path::to_path_buf));
-                    let mut d = rfd::FileDialog::new()
-                        .set_file_name(studio_core::naming::timestamp_name(fmt.extension()));
-                    if let Some(dir) = dir {
-                        d = d.set_directory(dir);
-                    }
-                    image_filter(d).save_file()
-                }
+            let (mode, chosen_fmt, path, convert_src, last_dir) = {
+                let mut s = st.borrow_mut();
+                sync_state_from_export_ui(ui, &mut s);
+                (
+                    s.save_dialog_mode,
+                    s.export_format,
+                    s.doc.path.clone(),
+                    s.convert_input.clone(),
+                    s.last_save_dir.clone(),
+                )
             };
-            if let Some(p) = target {
-                let saved = save_to(ui, st, &p);
-                st.borrow_mut().quick_ok = saved;
+            match mode {
+                0 => {
+                    let target = match path {
+                        Some(p) if SupportedFormat::from_path(&p).is_some() => {
+                            let orig_fmt = SupportedFormat::from_path(&p).unwrap_or(chosen_fmt);
+                            Some((p, orig_fmt))
+                        }
+                        other => {
+                            let d = save_image_filters(
+                                suggested_save_dialog(
+                                    chosen_fmt,
+                                    other.as_deref(),
+                                    last_dir.as_deref(),
+                                ),
+                                chosen_fmt,
+                                zh,
+                                false,
+                            );
+                            d.save_file()
+                                .map(|p| studio_core::resolve_save_target(p, chosen_fmt))
+                        }
+                    };
+                    if let Some((out, actual_fmt)) = target {
+                        let saved = save_to(ui, st, &out, actual_fmt, true);
+                        let mut s = st.borrow_mut();
+                        s.quick_ok = saved;
+                        if saved {
+                            s.export_format = actual_fmt;
+                            ui.set_export_format(format_index(actual_fmt));
+                            sync_export_format_ui(ui, &s);
+                        }
+                    }
+                }
+                1 => {
+                    let d = save_image_filters(
+                        suggested_save_dialog(chosen_fmt, path.as_deref(), last_dir.as_deref()),
+                        chosen_fmt,
+                        zh,
+                        false,
+                    );
+                    if let Some(raw) = d.save_file() {
+                        let (out, actual_fmt) = studio_core::resolve_save_target(raw, chosen_fmt);
+                        let saved = save_to(ui, st, &out, actual_fmt, true);
+                        let mut s = st.borrow_mut();
+                        s.quick_ok = saved;
+                        if saved {
+                            s.export_format = actual_fmt;
+                            ui.set_export_format(format_index(actual_fmt));
+                            sync_export_format_ui(ui, &s);
+                        }
+                    }
+                }
+                2 => {
+                    let d = save_image_filters(
+                        suggested_save_dialog(chosen_fmt, path.as_deref(), last_dir.as_deref()),
+                        chosen_fmt,
+                        zh,
+                        false,
+                    );
+                    if let Some(raw) = d.save_file() {
+                        let (out, actual_fmt) = studio_core::resolve_save_target(raw, chosen_fmt);
+                        let saved = save_to(ui, st, &out, actual_fmt, false);
+                        if saved {
+                            let mut s = st.borrow_mut();
+                            s.export_format = actual_fmt;
+                            ui.set_export_format(format_index(actual_fmt));
+                            sync_export_format_ui(ui, &s);
+                        }
+                    }
+                }
+                _ => {
+                    let src_for_name = convert_src.as_deref().or(path.as_deref());
+                    let d = save_image_filters(
+                        suggested_save_dialog(chosen_fmt, src_for_name, last_dir.as_deref()),
+                        chosen_fmt,
+                        zh,
+                        false,
+                    );
+                    if let Some(raw) = d.save_file() {
+                        let (out, actual_fmt) = studio_core::resolve_save_target(raw, chosen_fmt);
+                        let saved = if let Some(ref src) = convert_src {
+                            convert_file_to(ui, st, src, &out, actual_fmt)
+                        } else {
+                            save_to(ui, st, &out, actual_fmt, false)
+                        };
+                        if saved {
+                            let mut s = st.borrow_mut();
+                            s.export_format = actual_fmt;
+                            ui.set_export_format(format_index(actual_fmt));
+                            sync_export_format_ui(ui, &s);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -1960,13 +2907,97 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             ui.set_show_grid(on);
             st.borrow_mut().show_grid = on;
         }
-        "save-as" | "export" => {
-            let fmt = FORMATS[ui.get_export_format().clamp(0, FORMATS.len() as i32 - 1) as usize];
-            let d = rfd::FileDialog::new()
-                .set_file_name(studio_core::naming::timestamp_name(fmt.extension()));
-            if let Some(p) = image_filter(d).save_file() {
-                save_to(ui, st, &p);
+        "save-as" => {
+            open_save_modal(ui, st, 1);
+            return;
+        }
+        "export" => {
+            open_save_modal(ui, st, 2);
+            return;
+        }
+        "convert-file" => {
+            open_save_modal(ui, st, 3);
+            return;
+        }
+        "convert-pick-input" => {
+            let mut d = open_image_filter(rfd::FileDialog::new(), zh);
+            let start_dir = {
+                let s = st.borrow();
+                suggested_save_dir(
+                    s.convert_input.as_deref().or(s.doc.path.as_deref()),
+                    s.last_save_dir.as_deref(),
+                )
+            };
+            if let Some(dir) = start_dir
+                && dir.is_dir()
+            {
+                d = d.set_directory(dir);
             }
+            if let Some(p) = d.pick_file() {
+                let mut s = st.borrow_mut();
+                s.convert_input = Some(p);
+                refresh_convert_source_ui(ui, &mut s);
+                sync_export_format_ui(ui, &s);
+            }
+            return;
+        }
+        "convert-use-current" => {
+            let mut s = st.borrow_mut();
+            s.convert_input = None;
+            refresh_convert_source_ui(ui, &mut s);
+            sync_export_format_ui(ui, &s);
+            return;
+        }
+        "export-format-changed" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Export.sync_state_from_ui(ui, &mut s);
+            FormatPanel::Export.sync_ui(ui, &s);
+            return;
+        }
+        "export-quality-edited" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Export.handle_quality_edited(ui, &mut s);
+            return;
+        }
+        "webp-lossless-toggled" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Export.handle_lossless_toggled(ui, &mut s);
+            return;
+        }
+        "alpha-bg-changed" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Export.handle_alpha_changed(ui, &mut s);
+            return;
+        }
+        "alpha-bg-hex" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Export.handle_alpha_hex(ui, &mut s);
+            return;
+        }
+        "batch-format-changed" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Batch.sync_state_from_ui(ui, &mut s);
+            FormatPanel::Batch.sync_ui(ui, &s);
+            return;
+        }
+        "batch-quality-edited" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Batch.handle_quality_edited(ui, &mut s);
+            return;
+        }
+        "batch-webp-lossless-toggled" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Batch.handle_lossless_toggled(ui, &mut s);
+            return;
+        }
+        "batch-alpha-bg-changed" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Batch.handle_alpha_changed(ui, &mut s);
+            return;
+        }
+        "batch-alpha-bg-hex" => {
+            let mut s = st.borrow_mut();
+            FormatPanel::Batch.handle_alpha_hex(ui, &mut s);
             return;
         }
         "undo" => with_doc(ui, st, |d| {
@@ -2162,7 +3193,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             sync_layer_fields(ui, &st.borrow());
         }
         "add-image" => {
-            if let Some(p) = image_filter(rfd::FileDialog::new()).pick_file() {
+            if let Some(p) = open_image_filter(rfd::FileDialog::new(), zh).pick_file() {
                 match studio_core::load_dynamic_image(&p) {
                     Ok(img) => {
                         let n = p
@@ -2554,7 +3585,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             return;
         }
         "gif-pick" => {
-            if let Some(mut f) = image_filter(rfd::FileDialog::new()).pick_files() {
+            if let Some(mut f) = open_image_filter(rfd::FileDialog::new(), zh).pick_files() {
                 f.sort();
                 ui.set_gif_frames(format!("{} {}", f.len(), tl(zh, "張影格", "frames")).into());
                 st.borrow_mut().gif_frames = f;
@@ -2718,7 +3749,7 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
     let watermark: String = ui.get_batch_watermark().into();
     let opts = BatchOptions {
         output_dir: out.clone(),
-        convert: convert_options(ui, ui.get_batch_format()),
+        convert: batch_convert_options(ui, &st.borrow()),
         max_width: (ui.get_batch_max_w() > 0).then_some(ui.get_batch_max_w() as u32),
         max_height: (ui.get_batch_max_h() > 0).then_some(ui.get_batch_max_h() as u32),
         watermark_text: (!watermark.trim().is_empty()).then_some(watermark),
@@ -2953,6 +3984,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             "n" => "new",
             "v" if shift => "paste-layer",
             "v" => "paste",
+            "c" if shift => "convert-file",
             "c" => "copy",
             "a" => "select-all",
             "d" => "deselect",
@@ -3211,6 +4243,11 @@ fn wire(ui: &AppWindow, st: &S) {
         s.zh = i == 0;
         T::get(&ui).set_zh(s.zh);
         set_language_models(&ui, &s);
+        if s.save_dialog_mode == 3 {
+            refresh_convert_source_ui(&ui, &mut s);
+        }
+        sync_export_format_ui(&ui, &s);
+        sync_batch_format_ui(&ui, &s);
         save_settings(&s);
     });
 }
@@ -3544,6 +4581,785 @@ mod cursor_tests {
                 point
             ),
             2
+        );
+    }
+}
+
+#[cfg(test)]
+mod save_convert_tests {
+    use super::*;
+
+    #[test]
+    fn parse_hex_and_alpha_bg_helpers() {
+        assert_eq!(parse_hex_rgba("#112233"), Some([0x11, 0x22, 0x33, 255]));
+        assert_eq!(parse_hex_rgba("aabbccdd"), Some([0xAA, 0xBB, 0xCC, 0xDD]));
+        assert_eq!(parse_hex_rgba("#12345"), None);
+        assert_eq!(parse_hex_rgba("not-hex"), None);
+
+        assert_eq!(format_rgba_hex([0x11, 0x22, 0x33, 255]), "#112233");
+        assert_eq!(format_rgba_hex([0x11, 0x22, 0x33, 0x80]), "#11223380");
+
+        let c1 = [200, 10, 20, 255];
+        let c2 = [10, 20, 200, 255];
+        let custom = [30, 40, 50, 255];
+        assert_eq!(resolve_alpha_bg(0, c1, c2, custom), [255, 255, 255, 255]);
+        assert_eq!(resolve_alpha_bg(1, c1, c2, custom), [0, 0, 0, 255]);
+        assert_eq!(resolve_alpha_bg(2, c1, c2, custom), c1);
+        assert_eq!(resolve_alpha_bg(3, c1, c2, custom), c2);
+        assert_eq!(resolve_alpha_bg(4, c1, c2, custom), custom);
+    }
+
+    #[test]
+    fn suggested_save_dir_and_open_filters() {
+        assert_eq!(
+            suggested_save_dir(
+                Some(Path::new("photo.png")),
+                Some(Path::new("D:/last_exports"))
+            ),
+            Some(PathBuf::from("D:/last_exports"))
+        );
+        assert_eq!(
+            suggested_save_dir(
+                Some(Path::new("D:/src_dir/photo.png")),
+                Some(Path::new("D:/last_exports"))
+            ),
+            Some(PathBuf::from("D:/src_dir"))
+        );
+
+        let entries = SupportedFormat::open_filter_entries(false);
+        assert_eq!(entries.len(), SupportedFormat::ALL.len() + 1);
+        assert_eq!(entries[0].0, "All Supported Images");
+        assert!(entries[0].1.contains(&"jfif"));
+        assert!(entries[0].1.contains(&"tga"));
+        assert!(entries[0].1.contains(&"qoi"));
+
+        let (p_no_ext, f_no_ext) =
+            studio_core::resolve_save_target("out_dir/capture", SupportedFormat::Jfif);
+        assert_eq!(p_no_ext, PathBuf::from("out_dir/capture.jfif"));
+        assert_eq!(f_no_ext, SupportedFormat::Jfif);
+
+        let (p_explicit, f_explicit) =
+            studio_core::resolve_save_target("out_dir/capture.jfif", SupportedFormat::Jpeg);
+        assert_eq!(p_explicit, PathBuf::from("out_dir/capture.jfif"));
+        assert_eq!(f_explicit, SupportedFormat::Jfif);
+
+        let (p_unknown, f_unknown) =
+            studio_core::resolve_save_target("out_dir/capture.unknown", SupportedFormat::Qoi);
+        assert_eq!(p_unknown, PathBuf::from("out_dir/capture.unknown.qoi"));
+        assert_eq!(f_unknown, SupportedFormat::Qoi);
+    }
+
+    #[test]
+    fn settings_serde_backward_compat_and_roundtrip() {
+        let legacy: Settings =
+            serde_json::from_str(r#"{"lang":"en","recent":[],"rulers":true}"#).unwrap();
+        assert_eq!(legacy.export_format, None);
+        assert_eq!(legacy.export_quality, None);
+        assert_eq!(legacy.webp_lossless, None);
+        assert_eq!(legacy.alpha_bg, None);
+        assert_eq!(legacy.alpha_bg_mode, 0);
+        assert_eq!(legacy.last_save_dir, None);
+
+        let legacy_state = initial_state(&legacy, false, false);
+        assert_eq!(legacy_state.export_format, SupportedFormat::Png);
+        assert_eq!(legacy_state.export_quality, 90);
+        assert!(legacy_state.webp_lossless);
+        assert_eq!(legacy_state.alpha_bg, [255, 255, 255, 255]);
+        assert_eq!(legacy_state.alpha_bg_mode, 0);
+
+        let rich = Settings {
+            lang: Some("zh-TW".into()),
+            export_format: Some("jfif".into()),
+            export_quality: Some(82),
+            webp_lossless: Some(false),
+            alpha_bg: Some([10, 20, 30, 255]),
+            alpha_bg_mode: 4,
+            last_save_dir: Some(PathBuf::from("D:/exports")),
+            ..Default::default()
+        };
+        let encoded = serde_json::to_string(&rich).unwrap();
+        let decoded: Settings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.export_format.as_deref(), Some("jfif"));
+        assert_eq!(decoded.export_quality, Some(82));
+        assert_eq!(decoded.webp_lossless, Some(false));
+        assert_eq!(decoded.alpha_bg, Some([10, 20, 30, 255]));
+        assert_eq!(decoded.alpha_bg_mode, 4);
+        assert_eq!(decoded.last_save_dir, Some(PathBuf::from("D:/exports")));
+
+        let hydrated = initial_state(&decoded, true, false);
+        assert_eq!(hydrated.export_format, SupportedFormat::Jfif);
+        assert_eq!(hydrated.export_quality, 82);
+        assert!(!hydrated.webp_lossless);
+        assert_eq!(hydrated.alpha_bg, [10, 20, 30, 255]);
+        assert_eq!(hydrated.alpha_bg_mode, 4);
+        assert_eq!(hydrated.last_save_dir, Some(PathBuf::from("D:/exports")));
+    }
+
+    #[cfg(feature = "ui-testing")]
+    fn make_test_ui(view_mode: bool) -> (AppWindow, S) {
+        thread_local! {
+            static SLINT_TEST_INIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        SLINT_TEST_INIT.with(|init| {
+            if !init.get() {
+                i_slint_backend_testing::init_no_event_loop();
+                init.set(true);
+            }
+        });
+        let ui = AppWindow::new().unwrap();
+        T::get(&ui).set_zh(false);
+        let st = Rc::new(RefCell::new(initial_state(
+            &Settings::default(),
+            false,
+            view_mode,
+        )));
+        ui.set_format_names(ModelRc::new(VecModel::from(
+            FORMATS
+                .iter()
+                .map(|f| SharedString::from(f.label()))
+                .collect::<Vec<_>>(),
+        )));
+        init_export_ui(&ui, &st.borrow());
+        set_language_models(&ui, &st.borrow());
+        wire(&ui, &st);
+        ui.show().unwrap();
+        (ui, st)
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn save_as_export_and_convert_capabilities_and_c2pa_guard() {
+        let (ui, st) = make_test_ui(false);
+        {
+            let mut s = st.borrow_mut();
+            let transparent = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                16,
+                16,
+                image::Rgba([0, 128, 255, 0]),
+            ));
+            s.doc.load(transparent, Some(PathBuf::from("photo.png")));
+        }
+
+        ui.invoke_action("save-as".into());
+        assert!(ui.get_qs_open());
+        assert_eq!(ui.get_save_dialog_mode(), 1);
+        assert_eq!(ui.get_export_format(), format_index(SupportedFormat::Png));
+        assert!(ui.get_export_supports_alpha());
+        assert!(ui.get_export_supports_c2pa());
+        assert!(!ui.get_export_supports_quality());
+        assert!(!ui.get_export_is_webp());
+        assert!(ui.get_export_alpha_present());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.png");
+
+        ui.set_c2pa_on_save(true);
+        ui.set_export_format(format_index(SupportedFormat::Jfif));
+        ui.invoke_action("export-format-changed".into());
+        assert!(ui.get_export_supports_quality());
+        assert!(!ui.get_export_supports_alpha());
+        assert!(ui.get_export_supports_c2pa());
+        assert!(ui.get_c2pa_on_save());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.jfif");
+
+        ui.set_export_format(format_index(SupportedFormat::Webp));
+        ui.invoke_action("export-format-changed".into());
+        assert!(ui.get_export_is_webp());
+        assert!(ui.get_export_supports_quality());
+        assert!(ui.get_export_supports_alpha());
+        assert!(ui.get_export_supports_c2pa());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.webp");
+
+        ui.set_export_format(format_index(SupportedFormat::Qoi));
+        ui.invoke_action("export-format-changed".into());
+        assert!(!ui.get_export_supports_quality());
+        assert!(ui.get_export_supports_alpha());
+        assert!(!ui.get_export_supports_c2pa());
+        // Preserve user's C2PA preference even when previewing a non-C2PA format.
+        assert!(ui.get_c2pa_on_save());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.qoi");
+
+        ui.set_export_format(format_index(SupportedFormat::Bmp));
+        ui.invoke_action("export-format-changed".into());
+        assert!(!ui.get_export_supports_alpha());
+        assert!(!ui.get_export_supports_c2pa());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.bmp");
+
+        ui.set_export_format(format_index(SupportedFormat::Tga));
+        ui.invoke_action("export-format-changed".into());
+        assert!(ui.get_export_supports_alpha());
+        assert!(!ui.get_export_supports_c2pa());
+        assert_eq!(ui.get_export_target_preview().as_str(), "photo.tga");
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn alpha_bg_mode_and_hex_drive_format_options() {
+        let (ui, st) = make_test_ui(false);
+        {
+            let mut s = st.borrow_mut();
+            s.tools.color1 = [200, 10, 20, 255];
+            s.tools.color2 = [10, 20, 200, 255];
+        }
+
+        ui.set_alpha_bg_mode(1);
+        ui.invoke_action("alpha-bg-changed".into());
+        assert_eq!(ui.get_alpha_bg_hex().as_str(), "#000000");
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Jpeg).background,
+            [0, 0, 0, 255]
+        );
+
+        ui.set_alpha_bg_mode(2);
+        ui.invoke_action("alpha-bg-changed".into());
+        assert_eq!(ui.get_alpha_bg_hex().as_str(), "#C80A14");
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Bmp).background,
+            [200, 10, 20, 255]
+        );
+
+        ui.set_alpha_bg_mode(3);
+        ui.invoke_action("alpha-bg-changed".into());
+        assert_eq!(ui.get_alpha_bg_hex().as_str(), "#0A14C8");
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Jfif).background,
+            [10, 20, 200, 255]
+        );
+
+        ui.set_alpha_bg_hex("#123456".into());
+        ui.invoke_action("alpha-bg-hex".into());
+        assert_eq!(ui.get_alpha_bg_mode(), 4);
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Jpeg).background,
+            [0x12, 0x34, 0x56, 255]
+        );
+
+        ui.set_alpha_bg_mode(0);
+        ui.invoke_action("alpha-bg-changed".into());
+        assert_eq!(ui.get_alpha_bg_hex().as_str(), "#FFFFFF");
+
+        ui.set_alpha_bg_mode(4);
+        ui.invoke_action("alpha-bg-changed".into());
+        assert_eq!(ui.get_alpha_bg_hex().as_str(), "#123456");
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Jpeg).background,
+            [0x12, 0x34, 0x56, 255]
+        );
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn save_to_and_convert_file_to_preserve_or_update_doc_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let opened_path = dir.path().join("canvas.png");
+        let source_path = dir.path().join("external.png");
+        let export_qoi = dir.path().join("export.qoi");
+        let converted_bmp = dir.path().join("converted.bmp");
+        let converted_tga = dir.path().join("converted.tga");
+        let saved_png = dir.path().join("saved_as.png");
+
+        let mut src_img = image::RgbaImage::from_pixel(12, 12, image::Rgba([0, 0, 0, 0]));
+        src_img.put_pixel(6, 6, image::Rgba([20, 210, 40, 255]));
+        image::DynamicImage::ImageRgba8(src_img)
+            .save(&source_path)
+            .unwrap();
+
+        let (ui, st) = make_test_ui(false);
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(24, 24);
+            s.doc.path = Some(opened_path.clone());
+            s.doc.add_shape(
+                ShapeKind::Rectangle,
+                (2.0, 2.0),
+                (10.0, 10.0),
+                &ToolSettings::default(),
+            );
+        }
+
+        // Unmodified source check & "convert-use-current"
+        open_save_modal(&ui, &st, 3);
+        assert!(st.borrow().doc.is_modified());
+        assert_eq!(st.borrow().convert_input, None);
+        assert!(!ui.get_convert_src_has_file());
+
+        // ExportCopy (`update_doc == false`) leaves doc path, layers, and modified state untouched
+        assert!(save_to(&ui, &st, &export_qoi, SupportedFormat::Qoi, false));
+        let qoi_info = studio_core::inspect_image(&export_qoi).unwrap();
+        assert_eq!(qoi_info.format, SupportedFormat::Qoi);
+        assert_eq!(st.borrow().doc.path.as_ref(), Some(&opened_path));
+        assert_eq!(st.borrow().doc.layers.len(), 1);
+        assert!(st.borrow().doc.is_modified());
+        assert_eq!(st.borrow().last_save_dir.as_deref(), Some(dir.path()));
+
+        // Convert external transparent PNG -> BMP with custom alpha background
+        ui.set_alpha_bg_hex("#102030".into());
+        ui.invoke_action("alpha-bg-hex".into());
+        assert!(convert_file_to(
+            &ui,
+            &st,
+            &source_path,
+            &converted_bmp,
+            SupportedFormat::Bmp
+        ));
+        let bmp_loaded = image::open(&converted_bmp).unwrap().to_rgba8();
+        assert_eq!(bmp_loaded.get_pixel(0, 0).0, [0x10, 0x20, 0x30, 255]);
+        assert_eq!(bmp_loaded.get_pixel(6, 6).0, [20, 210, 40, 255]);
+        assert_eq!(st.borrow().doc.path.as_ref(), Some(&opened_path));
+        assert_eq!(st.borrow().doc.layers.len(), 1);
+
+        // Convert to non-C2PA TGA even if C2PA toggle was set: skipped cleanly without failure
+        ui.set_c2pa_on_save(true);
+        assert!(convert_file_to(
+            &ui,
+            &st,
+            &source_path,
+            &converted_tga,
+            SupportedFormat::Tga
+        ));
+        assert_eq!(
+            studio_core::inspect_image(&converted_tga).unwrap().format,
+            SupportedFormat::Tga
+        );
+        ui.set_c2pa_on_save(false);
+
+        // Save (`update_doc == true`) updates doc path & title immediately
+        assert!(save_to(&ui, &st, &saved_png, SupportedFormat::Png, true));
+        assert_eq!(st.borrow().doc.path.as_ref(), Some(&saved_png));
+        assert_eq!(ui.get_title_file().as_str(), "saved_as.png");
+        assert!(saved_png.is_file());
+
+        // When no layers exist and doc is cleanable, Save clears modified flag and sets convert_input when opening modal 3
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(16, 16);
+            s.doc.load(
+                image::DynamicImage::new_rgba8(16, 16),
+                Some(source_path.clone()),
+            );
+            s.doc.apply_transform(|i| i.brighten(10));
+        }
+        assert!(st.borrow().doc.is_modified());
+        assert!(save_to(&ui, &st, &source_path, SupportedFormat::Png, true));
+        assert!(!st.borrow().doc.is_modified());
+
+        open_save_modal(&ui, &st, 3);
+        assert_eq!(st.borrow().convert_input.as_ref(), Some(&source_path));
+        assert!(ui.get_convert_src_has_file());
+        ui.invoke_action("convert-use-current".into());
+        assert_eq!(st.borrow().convert_input, None);
+        assert!(!ui.get_convert_src_has_file());
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn save_export_and_convert_shortcuts_work_in_edit_and_view_modes() {
+        for view_mode in [false, true] {
+            let (ui, st) = make_test_ui(view_mode);
+
+            assert!(key(&ui, &st, "s", true, true));
+            assert!(ui.get_qs_open());
+            assert_eq!(ui.get_save_dialog_mode(), 1);
+            ui.set_qs_open(false);
+
+            assert!(key(&ui, &st, "e", true, false));
+            assert!(ui.get_qs_open());
+            assert_eq!(ui.get_save_dialog_mode(), 2);
+            ui.set_qs_open(false);
+
+            assert!(key(&ui, &st, "c", true, true));
+            assert!(ui.get_qs_open());
+            assert_eq!(ui.get_save_dialog_mode(), 3);
+            ui.set_qs_open(false);
+
+            // Plain Ctrl+C copies instead of opening Convert dialog
+            assert!(key(&ui, &st, "c", true, false));
+            assert!(!ui.get_qs_open());
+
+            assert_eq!(st.borrow().view_mode, view_mode);
+            assert_eq!(ui.get_view_mode(), view_mode);
+            ui.hide().unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn quick_save_mode_locks_existing_file_and_updates_untitled_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing_png = dir.path().join("photo.png");
+        image::DynamicImage::new_rgba8(8, 8)
+            .save(&existing_png)
+            .unwrap();
+
+        // Loaded disk file: Quick Save locks format, suppresses ellipsis, and keeps target synced.
+        let (ui, st) = make_test_ui(false);
+        open_path(&ui, &st, &existing_png);
+        assert!(!st.borrow().quick_ok);
+
+        ui.invoke_action("quick-save".into());
+        assert!(ui.get_qs_open());
+        assert_eq!(ui.get_save_dialog_mode(), 0);
+        assert!(ui.get_qs_format_locked());
+        assert!(!ui.get_qs_prompts_file());
+        assert!(ui.get_qs_target().as_str().contains("Overwrite:"));
+        assert!(ui.get_qs_target().as_str().contains("photo.png"));
+        assert!(ui.get_export_target_preview().is_empty());
+
+        let save_btn =
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Save")
+                .collect::<Vec<_>>();
+        assert!(
+            !save_btn.is_empty(),
+            "expected Save button without ellipsis"
+        );
+
+        ui.set_qs_open(false);
+        ui.invoke_action("quick-save-confirm".into());
+        assert!(st.borrow().quick_ok);
+        assert_eq!(st.borrow().doc.path.as_ref(), Some(&existing_png));
+
+        // Subsequent Ctrl+S (quick-save) overwrites directly without re-opening modal.
+        ui.invoke_action("quick-save".into());
+        assert!(!ui.get_qs_open());
+        assert_eq!(st.borrow().doc.path.as_ref(), Some(&existing_png));
+
+        // Non-C2PA file with c2pa_on_save enabled skips signing cleanly with a status notice while preserving toggle.
+        let existing_bmp = dir.path().join("flat.bmp");
+        let (ui_bmp, st_bmp) = make_test_ui(false);
+        {
+            let mut s = st_bmp.borrow_mut();
+            s.doc = Doc::new(8, 8);
+            s.doc.path = Some(existing_bmp.clone());
+        }
+        ui_bmp.set_c2pa_on_save(true);
+        ui_bmp.invoke_action("quick-save".into());
+        assert!(ui_bmp.get_c2pa_on_save());
+        assert!(!ui_bmp.get_export_supports_c2pa());
+        ui_bmp.set_qs_open(false);
+        ui_bmp.invoke_action("quick-save-confirm".into());
+        assert!(ui_bmp.get_c2pa_on_save());
+        assert!(ui_bmp.get_status().as_str().contains("C2PA unsupported"));
+        assert!(existing_bmp.is_file());
+
+        // Untitled doc: Quick Save enables format picker, shows "Save…", and dynamically updates qs_target.
+        let (ui2, _st2) = make_test_ui(false);
+        ui2.invoke_action("quick-save".into());
+        assert!(ui2.get_qs_open());
+        assert_eq!(ui2.get_save_dialog_mode(), 0);
+        assert!(!ui2.get_qs_format_locked());
+        assert!(ui2.get_qs_prompts_file());
+        assert!(ui2.get_qs_target().as_str().contains("New file:"));
+        assert!(ui2.get_qs_target().as_str().ends_with(".png"));
+
+        ui2.set_export_format(format_index(SupportedFormat::Webp));
+        ui2.invoke_action("export-format-changed".into());
+        assert!(ui2.get_qs_target().as_str().contains("New file:"));
+        assert!(ui2.get_qs_target().as_str().ends_with(".webp"));
+
+        let save_prompt_btn =
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui2, "Save…")
+                .collect::<Vec<_>>();
+        assert!(
+            !save_prompt_btn.is_empty(),
+            "expected Save… button for untitled Quick Save"
+        );
+
+        ui.hide().unwrap();
+        ui_bmp.hide().unwrap();
+        ui2.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn webp_quality_lossless_sync_and_cli_parity() {
+        let (ui, st) = make_test_ui(false);
+
+        // Set JPEG quality to 82, then switch to WebP lossless -> slider locks at 100 without losing 82.
+        ui.set_export_format(format_index(SupportedFormat::Jpeg));
+        ui.invoke_action("export-format-changed".into());
+        ui.set_quality(82.0);
+        ui.invoke_action("export-quality-edited".into());
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Jpeg).quality,
+            82
+        );
+
+        ui.set_export_format(format_index(SupportedFormat::Webp));
+        ui.invoke_action("export-format-changed".into());
+        assert!(ui.get_webp_lossless());
+        assert_eq!(ui.get_quality().round() as u8, 100);
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Webp).quality,
+            100
+        );
+
+        // Switching back to JPEG restores the preserved 82 quality.
+        ui.set_export_format(format_index(SupportedFormat::Jpeg));
+        ui.invoke_action("export-format-changed".into());
+        assert_eq!(ui.get_quality().round() as u8, 82);
+
+        // Switch back to WebP and toggle lossless off -> slider updates to 82 (lossy).
+        ui.set_export_format(format_index(SupportedFormat::Webp));
+        ui.invoke_action("export-format-changed".into());
+        ui.set_webp_lossless(false);
+        ui.invoke_action("webp-lossless-toggled".into());
+        assert!(!ui.get_webp_lossless());
+        assert_eq!(ui.get_quality().round() as u8, 82);
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Webp).quality,
+            82
+        );
+
+        // Dragging WebP slider to 100 automatically checks lossless.
+        ui.set_quality(100.0);
+        ui.invoke_action("export-quality-edited".into());
+        assert!(ui.get_webp_lossless());
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Webp).quality,
+            100
+        );
+
+        // Programmatic parity with studio_core::effective_quality when quality == 100.
+        ui.set_webp_lossless(false);
+        ui.set_quality(100.0);
+        assert_eq!(
+            format_options(&ui, &st.borrow(), SupportedFormat::Webp).quality,
+            studio_core::effective_quality(SupportedFormat::Webp, 100, false)
+        );
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn batch_tab_uses_own_options_independent_of_export_modal() {
+        let (ui, st) = make_test_ui(false);
+
+        // Defaults: Batch WebP is lossy q=90 even when Export defaults to webp_lossless=true.
+        assert_eq!(ui.get_batch_format(), format_index(SupportedFormat::Webp));
+        assert!(!ui.get_batch_webp_lossless());
+        assert_eq!(ui.get_batch_quality().round() as u8, 90);
+        assert_eq!(batch_convert_options(&ui, &st.borrow()).quality, 90);
+
+        // Mutate Export modal aggressively and confirm Batch options remain completely isolated.
+        ui.set_export_format(format_index(SupportedFormat::Jpeg));
+        ui.invoke_action("export-format-changed".into());
+        ui.set_quality(41.0);
+        ui.invoke_action("export-quality-edited".into());
+        ui.set_alpha_bg_hex("#112233".into());
+        ui.invoke_action("alpha-bg-hex".into());
+
+        let isolated = batch_convert_options(&ui, &st.borrow());
+        assert_eq!(isolated.format, SupportedFormat::Webp);
+        assert_eq!(isolated.quality, 90);
+        assert_eq!(isolated.background, [255, 255, 255, 255]);
+
+        // Toggle Batch WebP lossless on/off independently of Export modal.
+        ui.set_batch_webp_lossless(true);
+        ui.invoke_action("batch-webp-lossless-toggled".into());
+        assert_eq!(ui.get_batch_quality().round() as u8, 100);
+        assert_eq!(batch_convert_options(&ui, &st.borrow()).quality, 100);
+        ui.set_batch_webp_lossless(false);
+        ui.invoke_action("batch-webp-lossless-toggled".into());
+        assert_eq!(ui.get_batch_quality().round() as u8, 90);
+        assert_eq!(batch_convert_options(&ui, &st.borrow()).quality, 90);
+
+        // Now configure Batch's own controls (JPEG + custom background + custom quality).
+        ui.set_batch_format(format_index(SupportedFormat::Jpeg));
+        ui.invoke_action("batch-format-changed".into());
+        assert!(ui.get_batch_supports_quality());
+        assert!(!ui.get_batch_supports_alpha());
+        ui.set_batch_quality(77.0);
+        ui.invoke_action("batch-quality-edited".into());
+        ui.set_batch_alpha_bg_hex("#445566".into());
+        ui.invoke_action("batch-alpha-bg-hex".into());
+
+        let configured = batch_convert_options(&ui, &st.borrow());
+        assert_eq!(configured.format, SupportedFormat::Jpeg);
+        assert_eq!(configured.quality, 77);
+        assert_eq!(configured.background, [0x44, 0x55, 0x66, 255]);
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn save_convert_dialog_fits_600px_window_without_clipping_buttons() {
+        use i_slint_backend_testing::ElementHandle;
+
+        let dir = tempfile::tempdir().unwrap();
+        let long_path = dir
+            .path()
+            .join("very_long_source_filename_with_alpha_for_layout_overflow_check.png");
+        let mut rgba = image::RgbaImage::from_pixel(12, 12, image::Rgba([0, 0, 0, 0]));
+        rgba.put_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(rgba)
+            .save(&long_path)
+            .unwrap();
+
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(960, 600));
+        open_path(&ui, &st, &long_path);
+        ui.set_export_format(format_index(SupportedFormat::Bmp));
+        ui.invoke_action("convert-file".into());
+        ui.set_export_format(format_index(SupportedFormat::Bmp));
+        ui.invoke_action("export-format-changed".into());
+
+        // Trigger layout at 960x600 and measure Cancel / Convert & save… button geometry.
+        let win_h = ui.window().size().height as f32 / ui.window().scale_factor();
+        let cancel_btns: Vec<_> = ElementHandle::find_by_accessible_label(&ui, "Cancel").collect();
+        let confirm_btns: Vec<_> =
+            ElementHandle::find_by_accessible_label(&ui, "Convert & save…").collect();
+        assert!(!cancel_btns.is_empty());
+        assert!(!confirm_btns.is_empty());
+        for btn in cancel_btns.into_iter().chain(confirm_btns) {
+            let pos = btn.absolute_position();
+            let sz = btn.size();
+            assert!(sz.height > 10.0, "button height must be non-zero: {sz:?}");
+            assert!(
+                pos.y >= 20.0 && pos.y + sz.height <= win_h - 20.0,
+                "button vertically outside dialog card bounds: y={}, h={}, win_h={win_h}",
+                pos.y,
+                sz.height
+            );
+        }
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn keep_metadata_succeeds_even_after_source_file_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_jpg = dir.path().join("with_exif.jpg");
+        let out_jpg = dir.path().join("saved_after_delete.jpg");
+        let out_c2pa_jpg = dir.path().join("signed_after_delete.jpg");
+
+        let rgb = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            8,
+            8,
+            image::Rgb([50, 100, 150]),
+        ));
+        studio_core::save_dynamic_image(
+            &rgb,
+            &src_jpg,
+            ConvertOptions {
+                format: SupportedFormat::Jpeg,
+                quality: 90,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Inject minimal APP1 EXIF segment right after SOI (FF D8).
+        let raw = std::fs::read(&src_jpg).unwrap();
+        let mut with_exif = Vec::with_capacity(raw.len() + 20);
+        with_exif.extend_from_slice(&raw[..2]);
+        with_exif.extend_from_slice(&[
+            0xFF, 0xE1, 0x00, 0x12, b'E', b'x', b'i', b'f', 0, 0, b'M', b'M', 0, b'*', 0, 0, 0, 8,
+            0, 0,
+        ]);
+        with_exif.extend_from_slice(&raw[2..]);
+        std::fs::write(&src_jpg, with_exif).unwrap();
+        assert!(studio_core::metadata::has_exif(&src_jpg));
+
+        let (ui, st) = make_test_ui(false);
+        open_path(&ui, &st, &src_jpg);
+        assert!(
+            st.borrow()
+                .doc
+                .source_metadata
+                .as_ref()
+                .is_some_and(|m| m.has_exif())
+        );
+
+        // Delete original file on disk before saving with keep_metadata = true.
+        std::fs::remove_file(&src_jpg).unwrap();
+        assert!(!src_jpg.exists());
+
+        ui.set_keep_metadata(true);
+        assert!(save_to(&ui, &st, &out_jpg, SupportedFormat::Jpeg, false));
+        assert!(studio_core::metadata::has_exif(&out_jpg));
+
+        ui.set_c2pa_on_save(true);
+        assert!(save_to(
+            &ui,
+            &st,
+            &out_c2pa_jpg,
+            SupportedFormat::Jpeg,
+            false
+        ));
+        assert!(studio_core::metadata::has_exif(&out_c2pa_jpg));
+        assert!(studio_core::inspect_c2pa(&out_c2pa_jpg).unwrap().present);
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    fn c2pa_remove_atomic_and_target_resolution_work_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let unsigned = dir.path().join("plain.jpg");
+        let signed = dir.path().join("signed.jpg");
+        let stripped = dir.path().join("stripped.jpg");
+
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            8,
+            8,
+            image::Rgb([12, 34, 56]),
+        ));
+        studio_core::save_dynamic_image(
+            &img,
+            &unsigned,
+            ConvertOptions {
+                format: SupportedFormat::Jpeg,
+                quality: 90,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        studio_core::write_c2pa_manifest(
+            &unsigned,
+            &signed,
+            &C2paManifestDraft {
+                title: "test".into(),
+                creator: "ci".into(),
+                action: "c2pa.created".into(),
+            },
+        )
+        .unwrap();
+        assert!(studio_core::inspect_c2pa(&signed).unwrap().present);
+
+        remove_c2pa_atomic(&signed, &stripped).unwrap();
+        assert!(stripped.is_file());
+        assert!(!studio_core::inspect_c2pa(&stripped).unwrap().present);
+
+        // Target resolution preserves source extension for bare/trailing-dot/custom names and rejects mismatches.
+        assert_eq!(
+            resolve_c2pa_removal_target(
+                Path::new("out/clean"),
+                &signed,
+                Some(SupportedFormat::Jpeg)
+            ),
+            Ok(PathBuf::from("out/clean.jpg"))
+        );
+        assert_eq!(
+            resolve_c2pa_removal_target(
+                Path::new("out/clean.v2"),
+                &signed,
+                Some(SupportedFormat::Jpeg)
+            ),
+            Ok(PathBuf::from("out/clean.v2.jpg"))
+        );
+        assert!(
+            resolve_c2pa_removal_target(
+                Path::new("out/clean.png"),
+                &signed,
+                Some(SupportedFormat::Jpeg)
+            )
+            .is_err()
         );
     }
 }

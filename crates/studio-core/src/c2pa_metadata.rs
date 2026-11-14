@@ -32,11 +32,9 @@ fn is_jfif(path: &Path) -> bool {
 }
 
 fn c2pa_format_for_path(path: &Path) -> Option<String> {
-    if is_jfif(path) {
-        Some("image/jpeg".to_owned())
-    } else {
-        c2pa::format_from_path(path)
-    }
+    crate::SupportedFormat::from_path(path)
+        .filter(|fmt| fmt.supports_c2pa())
+        .map(|fmt| fmt.mime_type().to_owned())
 }
 
 pub fn inspect_c2pa(path: impl AsRef<Path>) -> Result<C2paInfo> {
@@ -213,4 +211,41 @@ fn find_photo_tool_assertion(value: &Value) -> Option<&Value> {
 
 fn c2pa_error(error: c2pa::Error) -> PhotoError {
     PhotoError::C2pa(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::c2pa_format_for_path;
+
+    #[test]
+    fn c2pa_format_matches_supported_formats() {
+        assert_eq!(
+            c2pa_format_for_path(Path::new("photo.jpg")).as_deref(),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            c2pa_format_for_path(Path::new("photo.jfif")).as_deref(),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            c2pa_format_for_path(Path::new("photo.png")).as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(
+            c2pa_format_for_path(Path::new("photo.webp")).as_deref(),
+            Some("image/webp")
+        );
+        assert_eq!(
+            c2pa_format_for_path(Path::new("photo.tiff")).as_deref(),
+            Some("image/tiff")
+        );
+        assert_eq!(c2pa_format_for_path(Path::new("photo.bmp")), None);
+        assert_eq!(c2pa_format_for_path(Path::new("photo.gif")), None);
+        assert_eq!(c2pa_format_for_path(Path::new("photo.ico")), None);
+        assert_eq!(c2pa_format_for_path(Path::new("photo.tga")), None);
+        assert_eq!(c2pa_format_for_path(Path::new("photo.qoi")), None);
+        assert_eq!(c2pa_format_for_path(Path::new("photo.unsupported")), None);
+    }
 }

@@ -1,7 +1,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, Rgba, RgbaImage};
 use studio_core::gpano_xmp::contains_gpano_marker;
 use studio_core::{
     C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ConvertOptions, PanoramaMode,
@@ -318,6 +318,55 @@ fn jfif_round_trips_and_supports_c2pa() {
         inspect_image(&stripped).unwrap().format,
         SupportedFormat::Jfif
     );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn cross_format_conversion_matrix_from_rgba_png() {
+    let dir = temp_dir("cross_format_matrix");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("source.png");
+    let mut rgba = RgbaImage::from_pixel(40, 24, Rgba([24, 140, 220, 255]));
+    for x in 0..20 {
+        rgba.put_pixel(x, 12, Rgba([255, 40, 40, 128]));
+    }
+    DynamicImage::ImageRgba8(rgba).save(&input).unwrap();
+
+    for fmt in SupportedFormat::ALL {
+        let output = dir.join(format!("out.{}", fmt.extension()));
+        let res = convert_image(
+            &input,
+            &output,
+            ConvertOptions {
+                format: fmt,
+                quality: 90,
+                background: [255, 255, 255, 255],
+            },
+        )
+        .unwrap();
+        assert_eq!(res.format, fmt);
+        assert_eq!(res.source_format, Some(SupportedFormat::Png));
+        assert_eq!((res.width, res.height), (40, 24));
+        assert!(res.file_size > 0);
+        let info = inspect_image(&output).unwrap();
+        assert_eq!(info.format, fmt);
+        assert_eq!((info.width, info.height), (40, 24));
+    }
+
+    let lossless_webp = dir.join("lossless.webp");
+    let res = convert_image(
+        &input,
+        &lossless_webp,
+        ConvertOptions {
+            format: SupportedFormat::Webp,
+            quality: 100,
+            background: [255, 255, 255, 255],
+        },
+    )
+    .unwrap();
+    assert_eq!(res.format, SupportedFormat::Webp);
+    assert_eq!((res.width, res.height), (40, 24));
 
     let _ = fs::remove_dir_all(dir);
 }
