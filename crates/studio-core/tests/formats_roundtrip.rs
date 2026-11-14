@@ -119,3 +119,27 @@ fn export_strips_exif_unless_kept() {
     studio_core::metadata::copy_metadata(&src, &stripped).unwrap();
     assert!(studio_core::metadata::has_exif(&stripped));
 }
+
+#[test]
+fn tga_and_qoi_preserve_alpha_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut img = RgbaImage::from_pixel(16, 16, Rgba([10, 200, 30, 255]));
+    img.put_pixel(4, 5, Rgba([255, 80, 20, 64]));
+    let dyn_img = DynamicImage::ImageRgba8(img);
+
+    for fmt in [SupportedFormat::Tga, SupportedFormat::Qoi] {
+        let path = dir.path().join(format!("alpha.{}", fmt.extension()));
+        save_dynamic_image(
+            &dyn_img,
+            &path,
+            ConvertOptions {
+                format: fmt,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let back = load_dynamic_image(&path).unwrap().to_rgba8();
+        assert_eq!(back.get_pixel(4, 5), &Rgba([255, 80, 20, 64]), "{fmt}");
+        assert_eq!(back.get_pixel(0, 0), &Rgba([10, 200, 30, 255]), "{fmt}");
+    }
+}

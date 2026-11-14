@@ -223,6 +223,7 @@ pub struct Doc {
     pub selection: Option<Selection>,
     pub selection_path: Vec<(f32, f32)>,
     pub path: Option<PathBuf>,
+    pub source_metadata: Option<studio_core::metadata::SourceMetadata>,
     pub font_bytes: Option<Vec<u8>>,
     pub boxes: Vec<RedactBox>,
     /// Single editing target, separate from each box's apply-redaction checkbox.
@@ -253,6 +254,7 @@ impl Doc {
             selection: None,
             selection_path: Vec::new(),
             path: None,
+            source_metadata: None,
             font_bytes: None,
             boxes: Vec::new(),
             focused_box: None,
@@ -289,6 +291,7 @@ impl Doc {
         self.undo.clear();
         self.redo.clear();
         self.path = path;
+        self.source_metadata = None;
         self.invalidate_all();
         self.mark_saved();
     }
@@ -492,6 +495,17 @@ impl Doc {
             },
             self.font_bytes.as_deref(),
         )
+    }
+
+    /// Returns true if the flattened document currently contains any non-opaque pixel (`alpha < 255`).
+    pub fn has_alpha_pixels(&self) -> bool {
+        if !self.image.pixels().any(|p| p.0[3] < 255) {
+            return false;
+        }
+        if !self.layers.iter().any(|l| l.is_visible()) {
+            return true;
+        }
+        self.flattened().to_rgba8().pixels().any(|p| p.0[3] < 255)
     }
 
     pub fn sample(&self, x: f32, y: f32) -> Option<[u8; 4]> {
@@ -1821,5 +1835,26 @@ mod tests {
         assert_eq!(over([255, 255, 255, 255], [0, 0, 0, 255]), [0, 0, 0, 255]);
         let m = over([255, 255, 255, 255], [0, 0, 0, 128]);
         assert!(m[0] > 120 && m[0] < 135 && m[3] == 255);
+    }
+
+    #[test]
+    fn has_alpha_pixels_inspects_canvas_and_visible_layers() {
+        let mut d = Doc::new(4, 4);
+        assert!(!d.has_alpha_pixels());
+
+        d.image.put_pixel(1, 1, Rgba([10, 20, 30, 0]));
+        assert!(d.has_alpha_pixels());
+
+        let mut cover = ImageLayer::new(
+            "cover".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(4, 4, Rgba([40, 50, 60, 255]))),
+        );
+        cover.x = 0;
+        cover.y = 0;
+        d.push_layer(ComposeLayer::Image(cover));
+        assert!(!d.has_alpha_pixels());
+
+        d.layers[0].set_visible(false);
+        assert!(d.has_alpha_pixels());
     }
 }

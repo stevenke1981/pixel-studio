@@ -14,21 +14,11 @@ pub const APP_NAME: &str = "Pixel Studio";
 pub const PROG_ID: &str = "PixelStudio.Image";
 pub const EXE_NAME: &str = "pixel-studio.exe";
 
-pub const EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "jfif", "bmp", "gif", "ico", "webp", "tif", "tiff",
-];
+pub const EXTENSIONS: &[&str] = studio_core::SupportedFormat::all_extensions();
 
-pub const MIME_TYPES: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/bmp",
-    "image/x-bmp",
-    "image/gif",
-    "image/x-icon",
-    "image/vnd.microsoft.icon",
-    "image/webp",
-    "image/tiff",
-];
+pub fn mime_types() -> Vec<&'static str> {
+    studio_core::SupportedFormat::all_mime_types()
+}
 
 /// (id, label, CLI flag)
 pub const COMMANDS: &[(&str, &str, &str)] = &[
@@ -201,12 +191,12 @@ fn sh_quote(s: &str) -> String {
 
 pub fn linux_files(exe: &str) -> Vec<GenFile> {
     let q = desktop_quote(exe);
-    let mimes = format!("{};", MIME_TYPES.join(";"));
+    let mimes = format!("{};", mime_types().join(";"));
     let mut out: Vec<GenFile> = vec![(
         ".local/share/applications/pixel-studio.desktop".into(),
         format!(
             "[Desktop Entry]\nType=Application\nName={APP_NAME}\nName[zh_TW]=Pixel Studio 像素工作室\nGenericName=Image Editor\nGenericName[zh_TW]=圖片編輯器\n\
-Comment=Paint, edit and convert images (PNG, JPEG, JFIF, WebP, GIF, BMP, ICO, TIFF)\nExec={q} %F\nIcon=applications-graphics\nTerminal=false\n\
+Comment=Paint, edit and convert images (PNG, JPEG, JFIF, WebP, GIF, BMP, ICO, TIFF, TGA, QOI)\nExec={q} %F\nIcon=applications-graphics\nTerminal=false\n\
 Categories=Graphics;2DGraphics;RasterGraphics;Viewer;\nMimeType={mimes}\nActions=Edit;View;\n\n\
 [Desktop Action Edit]\nName=Edit with Pixel Studio\nName[zh_TW]=用 Pixel Studio 編輯\nExec={q} --edit %F\n\n\
 [Desktop Action View]\nName=Open with Pixel Studio\nName[zh_TW]=用 Pixel Studio 開啟\nExec={q} --view %F\n"
@@ -259,16 +249,6 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-const IMAGE_UTIS: &[&str] = &[
-    "public.png",
-    "public.jpeg",
-    "com.microsoft.bmp",
-    "com.compuserve.gif",
-    "com.microsoft.ico",
-    "org.webmproject.webp",
-    "public.tiff",
-];
-
 pub fn macos_workflow_name(label: &str) -> String {
     format!("{APP_NAME} - {}", label.trim_end_matches('…'))
 }
@@ -279,7 +259,7 @@ pub fn macos_files(exe: &str) -> Vec<GenFile> {
     for (_, label, flag) in COMMANDS {
         let name = macos_workflow_name(label);
         let dir = PathBuf::from(format!("Library/Services/{name}.workflow/Contents"));
-        let types: Vec<&str> = IMAGE_UTIS.to_vec();
+        let types = studio_core::SupportedFormat::all_utis();
         let types_xml: String = types
             .iter()
             .map(|t| format!("\t\t\t\t<string>{t}</string>\n"))
@@ -657,7 +637,13 @@ mod tests {
     fn linux_files_roundtrip() {
         let files = linux_files("/opt/Pixel Studio/pixel-studio");
         let d = &files[0].1;
-        assert!(d.contains("MimeType=image/png;") && d.contains("image/webp"));
+        assert!(d.contains("MimeType="));
+        for mime in mime_types() {
+            assert!(
+                d.contains(&format!("{mime};")),
+                "missing mime {mime} in {d}"
+            );
+        }
         assert!(d.contains("Exec=\"/opt/Pixel Studio/pixel-studio\" --edit %F"));
         let t = std::env::temp_dir().join(format!("ps-shell-{}", std::process::id()));
         write_files(&t, &files).unwrap();
@@ -677,8 +663,25 @@ mod tests {
     fn macos_quick_actions() {
         let files = macos_files("/Applications/Pixel Studio.app/Contents/MacOS/pixel-studio");
         assert_eq!(files.len(), COMMANDS.len() * 2);
-        assert!(files.iter().any(|f| f.1.contains("org.webmproject.webp")));
+        for uti in studio_core::SupportedFormat::all_utis() {
+            assert!(
+                files.iter().any(|f| f.1.contains(uti)),
+                "missing UTI {uti} in macOS workflow"
+            );
+        }
+        assert!(files.iter().any(|f| f.1.contains("org.qoiformat.qoi")));
         assert!(files.iter().any(|f| f.1.contains("--edit")));
+    }
+
+    #[test]
+    fn shell_formats_include_jfif_tga_and_qoi() {
+        for ext in ["jfif", "tga", "qoi"] {
+            assert!(EXTENSIONS.contains(&ext), "missing extension {ext}");
+        }
+        let mimes = mime_types();
+        for mime in ["image/x-targa", "image/x-tga", "image/x-qoi"] {
+            assert!(mimes.contains(&mime), "missing mime {mime}");
+        }
     }
 
     #[cfg(windows)]

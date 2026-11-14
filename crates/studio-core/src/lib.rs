@@ -34,7 +34,8 @@ pub use compose::{
     compose_layer_bounds, render_composition, shape_layer_bounds, text_layer_bounds,
 };
 pub use convert::{
-    ConvertOptions, ConvertResult, convert_image, flatten_alpha, save_dynamic_image,
+    ConvertOptions, ConvertResult, convert_image, convert_image_with_options, flatten_alpha,
+    save_dynamic_image,
 };
 pub use drawing::{
     apply_mosaic_region, draw_airbrush, draw_brush_stroke, draw_calligraphy_stroke, draw_circle,
@@ -47,9 +48,9 @@ pub use filters::{
     TemperatureAdjust, TintAdjust, Vignette, adjust_hue, adjust_temperature, adjust_tint,
     auto_contrast, posterize, rotate_180, sepia, vignette,
 };
-pub use formats::SupportedFormat;
+pub use formats::{SupportedFormat, effective_quality, resolve_save_target};
 pub use gif::{GifOptions, GifResult, write_animated_gif};
-pub use image_io::{ImageInfo, inspect_image, load_dynamic_image};
+pub use image_io::{ImageInfo, inspect_image, load_dynamic_image, load_dynamic_image_with_format};
 pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
