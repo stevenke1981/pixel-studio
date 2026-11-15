@@ -206,15 +206,10 @@ pub struct ToolSettings {
     pub redact_brush_radius: f32,
     pub tape_width: f32,
     pub tape_pattern: usize,
-    #[allow(dead_code)]
     pub gradient_radial: bool,
-    #[allow(dead_code)]
     pub wand_tolerance: u8,
-    #[allow(dead_code)]
     pub wand_contiguous: bool,
-    #[allow(dead_code)]
     pub clone_source: Option<(f32, f32)>,
-    #[allow(dead_code)]
     pub clone_hardness: f32,
 }
 
@@ -781,7 +776,6 @@ impl Doc {
     }
 
     /// Clear any active rectangular, circular, freehand, or magic-wand selection.
-    #[allow(dead_code)]
     pub fn clear_selection(&mut self) {
         self.selection = None;
         self.selection_path.clear();
@@ -791,7 +785,6 @@ impl Doc {
 
     /// Select pixels matching the color at `(x, y)` into `selection_mask` and its
     /// tight bounding box into `selection`.
-    #[allow(dead_code)]
     pub fn magic_wand_select(&mut self, x: f32, y: f32, tolerance: u8, contiguous: bool) -> bool {
         self.checkpoint();
         if !x.is_finite()
@@ -968,7 +961,6 @@ impl Doc {
     }
 
     /// Apply a linear or radial gradient on the base image, clipped to any active selection.
-    #[allow(dead_code)]
     pub fn apply_gradient(
         &mut self,
         a: (f32, f32),
@@ -1000,7 +992,6 @@ impl Doc {
     }
 
     /// Stamp one circular clone dab from `src` to `dst` onto the base image.
-    #[allow(dead_code)]
     pub fn clone_dab(&mut self, src: (f32, f32), dst: (f32, f32), radius: f32, hardness: f32) {
         if !radius.is_finite() || radius <= 0.0 {
             return;
@@ -1028,13 +1019,11 @@ impl Doc {
     }
 
     /// Compute RGB and BT.709 luminance histogram of the flattened composition.
-    #[allow(dead_code)]
     pub fn compute_histogram(&self) -> HistogramData {
         compute_histogram(&self.flattened())
     }
 
     /// Remove background pixels matching `target` via selection-aware `apply_filter`.
-    #[allow(dead_code)]
     pub fn apply_remove_background(
         &mut self,
         target: [u8; 3],
@@ -1048,7 +1037,6 @@ impl Doc {
     }
 
     /// Trim uniform or transparent borders from the flattened document in one undoable step.
-    #[allow(dead_code)]
     pub fn apply_auto_trim(&mut self, mode: TrimMode) -> TrimResult {
         let mut result = TrimResult {
             x: 0,
@@ -1065,7 +1053,6 @@ impl Doc {
     }
 
     /// Wrap the flattened document in a rounded border/shadow card frame.
-    #[allow(dead_code)]
     pub fn apply_frame_card(&mut self, opts: FrameCardOptions) {
         self.apply_transform(|img| add_border_frame(img, opts));
     }
@@ -1302,7 +1289,6 @@ impl Doc {
     }
 
     /// Set the blend mode of the selected layer with an undo checkpoint.
-    #[allow(dead_code)]
     pub fn set_selected_blend_mode(&mut self, mode: BlendMode) {
         let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
             return;
@@ -1315,7 +1301,6 @@ impl Doc {
     }
 
     /// Center the selected layer horizontally and vertically within the canvas bounds.
-    #[allow(dead_code)]
     pub fn center_selected_layer(&mut self) {
         let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
             return;
@@ -1334,7 +1319,6 @@ impl Doc {
     }
 
     /// Flip the selected layer horizontally or vertically around its own center.
-    #[allow(dead_code)]
     pub fn flip_selected_layer(&mut self, horizontal: bool) {
         let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
             return;
@@ -1349,7 +1333,6 @@ impl Doc {
     }
 
     /// Rotate the selected layer 90 degrees clockwise or counter-clockwise around its center.
-    #[allow(dead_code)]
     pub fn rotate_selected_layer(&mut self, clockwise: bool) {
         let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
             return;
@@ -1360,7 +1343,6 @@ impl Doc {
     }
 
     /// Merge the selected layer down into the layer below it (or into the base canvas if index 0).
-    #[allow(dead_code)]
     pub fn merge_selected_down(&mut self) -> bool {
         let Some(idx) = self.selected.filter(|i| *i < self.layers.len()) else {
             return false;
@@ -1666,7 +1648,6 @@ fn mask_bounding_selection(mask: &image::GrayImage) -> Option<Selection> {
     })
 }
 
-#[allow(dead_code)]
 fn merge_layer_bounds(l: &ComposeLayer, font_bytes: Option<&[u8]>) -> studio_core::LayerBounds {
     let mut b = compose_layer_bounds(l, font_bytes);
     if let ComposeLayer::Shape(s) = l
