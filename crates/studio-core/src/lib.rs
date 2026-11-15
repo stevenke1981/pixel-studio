@@ -32,8 +32,9 @@ pub use c2pa_metadata::{
     C2paInfo, C2paManifestDraft, inspect_c2pa, remove_c2pa_manifest, write_c2pa_manifest,
 };
 pub use compose::{
-    ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, ShapeKind, ShapeLayer, TextLayer,
-    compose_layer_bounds, render_composition, shape_layer_bounds, text_layer_bounds,
+    BlendMode, ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, ShapeKind, ShapeLayer,
+    TextLayer, compose_layer_bounds, flip_layer_horizontal, flip_layer_vertical,
+    render_composition, rotate_layer_90, shape_layer_bounds, text_layer_bounds,
 };
 pub use convert::{
     ConvertOptions, ConvertResult, convert_image, convert_image_with_options, flatten_alpha,
