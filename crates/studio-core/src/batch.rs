@@ -360,6 +360,7 @@ fn add_watermark_to_image(
         stroke: true,
         shadow: true,
         visible: true,
+        blend_mode: Default::default(),
     }));
 
     crate::render_composition(
