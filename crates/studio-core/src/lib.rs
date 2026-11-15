@@ -14,6 +14,7 @@ pub mod metadata;
 pub mod naming;
 pub mod ocr;
 pub mod panorama360;
+pub mod pro_effects;
 pub mod redact;
 pub mod resize;
 pub mod stickers;
@@ -54,6 +55,12 @@ pub use image_io::{ImageInfo, inspect_image, load_dynamic_image, load_dynamic_im
 pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
+};
+pub use pro_effects::{
+    EdgeDetect, Emboss, FilmGrain, FrameCardOptions, GradientKind, OilPaint, Pixelate, TiltShift,
+    TrimMode, TrimResult, add_border_frame, add_drop_shadow, auto_trim, clone_stamp_dab,
+    draw_gradient, edge_detect, emboss, film_grain, magic_wand_mask, oil_paint, pixelate,
+    remove_background_color, round_corners, tilt_shift,
 };
 pub use resize::{canvas_resize, resize_exact, resize_to_fit};
 pub use transform::{
