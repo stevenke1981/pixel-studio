@@ -14,6 +14,7 @@ pub mod metadata;
 pub mod naming;
 pub mod ocr;
 pub mod panorama360;
+pub mod pro_adjust;
 pub mod redact;
 pub mod resize;
 pub mod stickers;
@@ -54,6 +55,12 @@ pub use image_io::{ImageInfo, inspect_image, load_dynamic_image, load_dynamic_im
 pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
+};
+pub use pro_adjust::{
+    ClarityAdjust, ColorBalance, ColorLook, HistogramData, LevelsAdjust, LookFilter,
+    ShadowsHighlights, Threshold, VibranceAdjust, adjust_clarity, adjust_color_balance,
+    adjust_levels, adjust_shadows_highlights, adjust_vibrance, apply_color_look, compute_histogram,
+    render_histogram_image, threshold,
 };
 pub use resize::{canvas_resize, resize_exact, resize_to_fit};
 pub use transform::{
