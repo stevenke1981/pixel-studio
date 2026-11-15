@@ -13,6 +13,19 @@
 ![貼圖庫](docs/slint-stickers.png)
 ![自動打碼：偵測到的文字框，紅框為預選的敏感資料](docs/slint-redact.png)
 
+## 專業修圖套件（Pro Image Editing Suite）
+
+- **即時 RGB／亮度直方圖**：在調整與資訊面板即時顯示 R / G / B 與 BT.709 亮度分布曲線，並提供平均亮度、標準差及暗部／亮部裁切百分比（clipping %）。
+- **專業色調與色彩調整**：支援**色階（Levels）**（黑點／Gamma／白點與輸出範圍）、**陰影／亮部（Shadows / Highlights）**細節修復、**自然飽和度（Vibrance，保護膚色）**、**清晰度（Clarity）**、**RGB 色彩平衡（Color Balance）**與**臨界值（Threshold）**二值化。
+- **8 種一鍵調色風格（Color Looks）**：`Vivid`、`Cinematic Teal & Orange`、`Matte Film`、`Moody B&W`、`Warm Golden`、`Crisp Cool`、`High Key`、`Cyberpunk`。
+- **10 種圖層混合模式與圖層效率工具**：支援 `Normal`（正常）、`Multiply`（色彩增值）、`Screen`（濾色）、`Overlay`（覆蓋）、`Darken`（變暗）、`Lighten`（變亮）、`Soft Light`（柔光）、`Color Dodge`（加亮顏色）、`Difference`（差異化）、`Exclusion`（排除）；可執行**向下合併（Merge Down）**、**畫布置中（Center）**、**水平／垂直翻轉**與**旋轉 90°**。
+- **3 項新修圖工具（共 20 種工具）**：
+  - **漸層（`G`）**：拉出線性（Linear）或放射狀（Radial）雙色漸層，支援依現有選取範圍遮罩上色。
+  - **魔術棒（`W`）**：依容許值與相鄰（Contiguous）模式建立點陣選取遮罩，可直接套用局部濾鏡或裁切。
+  - **仿製印章（`O`）**：右鍵或 `Alt`+點選設定取樣起點，搭配可調硬度筆刷無痕複製修補像素。
+- **去背、自動裁邊與卡片框美化**：**移除純色背景**（可設容許值、羽化與僅限邊緣連通）、**自動裁邊（Auto Trim）**（去除透明邊界或四角純色留白）、**圓角（Rounded Corners）**、**陰影（Drop Shadow）**與**邊框卡片（Framed Card）**。
+- **空間景深與風格化特效**：**移軸微縮（Tilt-Shift）**、**像素化（Pixelate）**、**底片顆粒（Film Grain）**、**浮雕（Emboss）**、**邊緣偵測／素描（Edge Detect / Sketch）**、**油畫筆觸（Oil Paint）**。
+
 ## 裁切與膠帶貼紙
 
 - 選擇「裁切」工具，在調整面板選擇矩形、圓形或自訂外框；自訂外框按住滑鼠拖曳，放開後自動閉合。選擇保留或移除選取內容，按 Enter 或「套用裁切」。移除的像素變為透明；保留非矩形範圍會縮至外接範圍並使外側透明。遮罩裁切會合併可見圖層，復原可還原圖層。要保留透明區域，請匯出 PNG 等支援透明度的格式。
@@ -24,7 +37,7 @@
 
 ## v0.4.0：圖示按鈕、選單列、Windows 中文字型、體積縮小
 
-- **全部改為 SVG 圖示按鈕**（頂列、工具盤、浮動工具列、調整、圖層、貼圖、打碼、批次）：滑鼠停留會顯示名稱與快捷鍵；有滑過、按下、停用、啟用中四種狀態，並提供螢幕閱讀器標籤。圖示集是原創的（`scripts/gen-icons.py`，共 115 個）。
+- **全部改為 SVG 圖示按鈕**（頂列、工具盤、浮動工具列、調整、圖層、貼圖、打碼、批次）：滑鼠停留會顯示名稱與快捷鍵；有滑過、按下、停用、啟用中四種狀態，並提供螢幕閱讀器標籤。圖示集是原創的（共 130 個 SVG，其中 129 個由 `scripts/gen-icons.py` 產生，另含 `tool-tape.svg`）。
 - **Windows 風格選單列**：檔案(F)、編輯(E)、檢視(V)、影像(I)、圖層(L)、工具(T)、說明(H)。可用 Alt+字母開啟，方向鍵移動、Enter 執行、Esc 關閉，選單內會顯示快捷鍵。包含最近的檔案、列印、內容、剪下/刪除、尺規、狀態列、全螢幕、影像大小/畫布大小對話框、快捷鍵一覽（F1）、關於。
 - **新快捷鍵**：工具單鍵（S P B L A K E F I T M C H U R、Shift+R），X 交換顏色，Ctrl+X/E/P/R/W/J/]/[，F11。
 - **Windows 中文字型**：介面字型會指定 Microsoft JhengHei UI，沒有的話依序改用 YaHei UI、PMingLiU、SimSun，「啟」這類字會正常顯示，所以按鈕恢復為「開啟」。
@@ -56,12 +69,12 @@
 
 | 功能 | 小畫家 | Pixel Studio |
 |---|---|---|
-| 鉛筆、筆刷、橡皮擦、油漆桶、滴管、文字 | ✓ | ✓（另有螢光筆、噴槍、書法筆、馬賽克筆） |
+| 鉛筆、筆刷、橡皮擦、油漆桶、滴管、文字 | ✓ | ✓（另有螢光筆、噴槍、書法筆、馬賽克筆、漸層 G、仿製印章 O） |
 | 形狀：直線、箭頭、矩形、橢圓、三角形 | ✓ | ✓（外框用色彩 1、可用色彩 2 填滿；形狀是可再編輯的圖層） |
-| 選取、裁切、調整大小、旋轉、翻轉 | ✓ | ✓（矩形／圓形選取、選取區裁切、縮放影像與調整畫布大小） |
+| 選取、裁切、調整大小、旋轉、翻轉 | ✓ | ✓（矩形／圓形／自訂／魔術棒 W 選取、選取區裁切、自動裁邊、縮放影像與調整畫布大小） |
 | 縮放、復原／重做 | ✓ | ✓（放大時像素清晰顯示＋像素格線 Ctrl+G） |
-| 圖層、透明背景 | 部分 | ✓ 文字／圖片／形狀／貼圖圖層，可移動、排序、隱藏、調整不透明度 |
-| 亮度、對比、飽和度、色相、模糊、銳利化 | ✗ | ✓ 另有曝光、色溫、色調、復古、暈影、色階、自動對比、灰階、反相 |
+| 圖層、透明背景 | 部分 | ✓ 文字／圖片／形狀／貼圖圖層，支援 10 種混合模式、移動、排序、向下合併、置中、翻轉、旋轉 90°、隱藏與不透明度 |
+| 亮度、對比、飽和度、色相、模糊、銳利化 | ✗ | ✓ 另有曝光、色溫、色調、復古、暈影、色階、陰影／亮部、自然飽和度、清晰度、色彩平衡、臨界值、8 種調色風格、即時直方圖、移軸、顆粒、油畫、去背與圓角陰影卡片框 |
 | 貼圖庫（箭頭、對話框、愛心星星、勾叉、數字、標示框、表情、NEW/HOT/SALE 標籤、社群通用圖示） | ✗ | ✓ 65 個原創 SVG，可搜尋、點選或拖曳插入、縮放、換色、外框、陰影 |
 | 社群貼文畫布尺寸 | ✗ | ✓ IG 貼文 1080×1080、IG 直式 1080×1350、IG 限動 1080×1920、FB 1200×630、X 1600×900、YouTube 縮圖 1280×720、LINE 1040×1040 |
 | 快速文字樣式（外框、陰影標題） | ✗ | ✓ |
@@ -92,11 +105,20 @@
 
 ```bash
 studio-cli [--json] info 輸入.png
+studio-cli [--json] histogram 輸入.png [--bins]
 studio-cli [--json] convert 輸入.png [輸出.webp] --format webp [--quality 92]
 studio-cli [--json] filter 輸入.png [輸出.png] [--rotate 90|180|270] [--flip-h] [--flip-v] \
   [--brightness 10] [--contrast 15] [--saturation 10] [--exposure 0.5] [--hue 30] \
   [--sepia 0.5] [--vignette 0.3] [--temperature 20] [--tint -10] [--auto-contrast] \
-  [--posterize 8] [--blur 2.0] [--sharpen 1.5] [--grayscale] [--invert]
+  [--posterize 8] [--blur 2.0] [--sharpen 1.5] [--grayscale] [--invert] \
+  [--levels "10,1.1,245"] [--shadows 20] [--highlights -15] [--vibrance 25] [--clarity 30] \
+  [--color-balance "15,-5,-10"] [--threshold 128] \
+  [--look vivid|cinematic|matte|moody-bw|warm|cool|high-key|cyberpunk] \
+  [--grain 0.25] [--pixelate 8] [--emboss 0.8] [--edge-detect] [--sketch] \
+  [--oil-paint 3] [--tilt-shift "0.5,0.25,6.0"]
+studio-cli [--json] remove-bg 輸入.jpg [輸出.png] [--color "#FFFFFF"] [--tolerance 32] [--feather 8] [--edge-only]
+studio-cli [--json] trim 輸入.png [輸出.png] [--corner-tolerance 12]
+studio-cli [--json] frame 輸入.png [輸出.png] [--padding 24] [--round-corners 16] [--shadow-sigma 12] [--shadow-x 0] [--shadow-y 6] [--background "#F4F6F9FF"] [--border-width 0] [--border-color "#D0D7DEFF"]
 studio-cli [--json] resize 輸入.png [輸出.png] --width 1080 --height 1080 [--fit | --canvas --background "#FFFFFFFF"]
 studio-cli [--json] crop 輸入.png [輸出.png] --x 0 --y 0 --width 800 --height 600
 studio-cli [--json] blur-region 輸入.png [輸出.png] --x 100 --y 100 --width 200 --height 80 [--sigma 12]

@@ -272,6 +272,78 @@ component AlphaBgPanel inherits VerticalLayout {
     }
 }
 
+component HistogramPanel inherits VerticalLayout {
+    in property <image> hist-image;
+    in property <string> stats;
+    spacing: 4px;
+    HorizontalLayout {
+        spacing: 6px;
+        Image {
+            source: @image-url("icons/histogram.svg");
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+            colorize: #1f3b63;
+        }
+        Section { text: T.t("色階分佈圖 (RGB + 亮度)", "Histogram (RGB + Luma)"); }
+    }
+    Rectangle {
+        height: 98px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: #d6dde6;
+        background: #14181e;
+        clip: true;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.hist-image;
+            image-fit: fill;
+        }
+    }
+    if root.stats != "": Text {
+        text: root.stats;
+        font-size: 11px;
+        color: #4f5d6b;
+        wrap: word-wrap;
+    }
+}
+
+component IconTextBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 28px;
+    border-radius: 5px;
+    background: !root.enabled ? #f2f4f7 : ita.pressed ? #c2d2f3 : ita.has-hover ? #e4ecfb : #f4f7fb;
+    border-width: 1px;
+    border-color: !root.enabled ? #e2e6ec : ita.has-hover ? #9db8ec : #d4dce8;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+        Image {
+            source: root.icon;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.enabled ? #1f3b63 : #b3bac4;
+        }
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            color: root.enabled ? #1d2a3a : #9aa3ad;
+            font-size: 12px;
+        }
+    }
+    ita := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+}
+
 export component AppWindow inherits Window {
     title: "Pixel Studio 像素工作室";
     preferred-width: 1400px;
@@ -298,6 +370,9 @@ export component AppWindow inherits Window {
     in property <string> selection-path;
     in property <bool> has-preview;
     in property <float> pv-x; in property <float> pv-y; in property <float> pv-w; in property <float> pv-h;
+    in property <string> pv-line-path;
+    in property <bool> has-clone-source;
+    in property <float> clone-src-x; in property <float> clone-src-y;
     in property <bool> has-layer-box;
     in property <float> lb-x; in property <float> lb-y; in property <float> lb-w; in property <float> lb-h;
     in property <bool> lb-handle;
@@ -329,6 +404,10 @@ export component AppWindow inherits Window {
     in-out property <int> shape-kind: 2;
     in-out property <bool> shape-filled;
     in-out property <float> fill-tolerance: 16;
+    in-out property <int> gradient-mode: 0;
+    in-out property <float> wand-tolerance: 24;
+    in-out property <bool> wand-contiguous: true;
+    in-out property <float> clone-hardness: 0.75;
     in-out property <bool> show-grid: true;
     in-out property <bool> keep-metadata;
     in-out property <int> tab: 0;
@@ -375,6 +454,8 @@ export component AppWindow inherits Window {
     in-out property <bool> l-filled;
     in property <[string]> font-names;
     in-out property <int> l-font: 0;
+    in property <[string]> blend-mode-names;
+    in-out property <int> l-blend: 0;
 
     // adjust
     in-out property <int> rs-w; in-out property <int> rs-h;
@@ -385,6 +466,22 @@ export component AppWindow inherits Window {
     in-out property <float> a-expo: 0.5; in-out property <float> a-blur: 2; in-out property <float> a-sharp: 1.5;
     in-out property <float> a-hue: 30; in-out property <float> a-sepia: 0.8; in-out property <float> a-vig: 0.5;
     in-out property <float> a-temp: 20; in-out property <float> a-tint: 20; in-out property <float> a-post: 4;
+    in property <image> histogram-img;
+    in property <string> histogram-stats;
+    in property <[string]> pro-look-names;
+    in-out property <int> pro-look: 0;
+    in-out property <float> a-lvl-black: 0; in-out property <float> a-lvl-gamma: 1.0; in-out property <float> a-lvl-white: 255;
+    in-out property <float> a-shadows: 25; in-out property <float> a-highlights: -25;
+    in-out property <float> a-vibrance: 30; in-out property <float> a-clarity: 25;
+    in-out property <float> a-cb-r: 0; in-out property <float> a-cb-g: 0; in-out property <float> a-cb-b: 0;
+    in-out property <float> a-thresh: 128;
+    in-out property <float> e-ts-y: 0.5; in-out property <float> e-ts-band: 0.25; in-out property <float> e-ts-sigma: 6.0;
+    in-out property <float> e-pixelate: 12; in-out property <float> e-grain: 0.3;
+    in-out property <float> e-oil: 2; in-out property <float> e-emboss: 1.0;
+    in-out property <float> c-bg-tol: 28; in-out property <bool> c-bg-edge: true;
+    in-out property <float> c-round: 24;
+    in-out property <float> c-shadow-sigma: 12; in-out property <float> c-shadow-pad: 24;
+    in-out property <float> c-frame-pad: 32; in-out property <float> c-frame-radius: 12;
 
     // stickers
     in property <[StickerItem]> stickers;
@@ -478,8 +575,8 @@ export component AppWindow inherits Window {
     in property <string> props-text;
     in-out property <bool> about-open;
     in-out property <bool> keys-open;
-    property <[string]> tool-keys: ["S", "P", "B", "L", "A", "K", "E", "F", "I", "T", "M", "C", "H", "U", "R", "Shift+R", "J"];
-    property <[image]> tool-icons: [@image-url("icons/tool-select.svg"), @image-url("icons/tool-pencil.svg"), @image-url("icons/tool-brush.svg"), @image-url("icons/tool-highlighter.svg"), @image-url("icons/tool-airbrush.svg"), @image-url("icons/tool-calligraphy.svg"), @image-url("icons/tool-eraser.svg"), @image-url("icons/tool-fill.svg"), @image-url("icons/tool-picker.svg"), @image-url("icons/tool-text.svg"), @image-url("icons/tool-mosaic.svg"), @image-url("icons/tool-crop.svg"), @image-url("icons/tool-hand.svg"), @image-url("icons/tool-shapes.svg"), @image-url("icons/tool-redact-box.svg"), @image-url("icons/tool-redact-brush.svg"), @image-url("icons/tool-tape.svg")];
+    property <[string]> tool-keys: ["S", "P", "B", "L", "A", "K", "E", "F", "I", "T", "M", "C", "H", "U", "R", "Shift+R", "J", "G", "W", "O"];
+    property <[image]> tool-icons: [@image-url("icons/tool-select.svg"), @image-url("icons/tool-pencil.svg"), @image-url("icons/tool-brush.svg"), @image-url("icons/tool-highlighter.svg"), @image-url("icons/tool-airbrush.svg"), @image-url("icons/tool-calligraphy.svg"), @image-url("icons/tool-eraser.svg"), @image-url("icons/tool-fill.svg"), @image-url("icons/tool-picker.svg"), @image-url("icons/tool-text.svg"), @image-url("icons/tool-mosaic.svg"), @image-url("icons/tool-crop.svg"), @image-url("icons/tool-hand.svg"), @image-url("icons/tool-shapes.svg"), @image-url("icons/tool-redact-box.svg"), @image-url("icons/tool-redact-brush.svg"), @image-url("icons/tool-tape.svg"), @image-url("icons/tool-gradient.svg"), @image-url("icons/tool-wand.svg"), @image-url("icons/tool-clone.svg")];
 
     property <[MItem]> m-file: [
         { label: T.t("新增", "New"), act: "new", enabled: true, key: "Ctrl+N", icon: @image-url("icons/new.svg") },
@@ -543,6 +640,13 @@ export component AppWindow inherits Window {
         { label: T.t("灰階", "Grayscale"), act: "f-gray", enabled: true, icon: @image-url("icons/grayscale.svg") },
         { label: T.t("負片", "Invert colours"), act: "f-invert", enabled: true, icon: @image-url("icons/invert.svg") },
         { label: T.t("自動對比", "Auto contrast"), act: "f-auto", enabled: true, icon: @image-url("icons/auto-contrast.svg") },
+        { sep: true },
+        { label: T.t("移除純色背景", "Remove solid background"), act: "f-remove-bg", enabled: true, icon: @image-url("icons/remove-bg.svg") },
+        { label: T.t("自動裁除透明邊", "Auto trim transparent"), act: "f-trim-alpha", enabled: true, icon: @image-url("icons/auto-trim.svg") },
+        { label: T.t("圓角裁切", "Rounded corners"), act: "f-round-corners", enabled: true, icon: @image-url("icons/round-corners.svg") },
+        { label: T.t("加上陰影", "Drop shadow"), act: "f-drop-shadow", enabled: true, icon: @image-url("icons/drop-shadow.svg") },
+        { label: T.t("卡片相框", "Frame / card"), act: "f-frame-card", enabled: true, icon: @image-url("icons/frame-card.svg") },
+        { sep: true },
         { label: T.t("還原成原始影像", "Reset to original"), act: "reset", enabled: true, icon: @image-url("icons/reset.svg") }
     ];
     property <[MItem]> m-layer: [
@@ -552,6 +656,7 @@ export component AppWindow inherits Window {
         { sep: true },
         { label: T.t("複製圖層", "Duplicate layer"), act: "layer-dup", enabled: root.has-layer, key: "Ctrl+J", icon: @image-url("icons/layer-dup.svg") },
         { label: T.t("刪除圖層", "Delete layer"), act: "layer-delete", enabled: root.has-layer, key: "Del", icon: @image-url("icons/layer-delete.svg") },
+        { label: T.t("向下合併圖層", "Merge down"), act: "layer-merge-down", enabled: root.has-layer, key: "Ctrl+Shift+M", icon: @image-url("icons/layer-merge-down.svg") },
         { label: T.t("合併所有圖層", "Merge all layers"), act: "flatten", enabled: root.layers.length > 0, key: "Ctrl+Shift+E", icon: @image-url("icons/flatten.svg") },
         { sep: true },
         { label: T.t("上移一層", "Bring forward"), act: "layer-up", enabled: root.has-layer, key: "Ctrl+]", icon: @image-url("icons/layer-up.svg") },
@@ -604,7 +709,7 @@ export component AppWindow inherits Window {
     callback toolbar-moved();
     callback action(string);
     in property <int> canvas-cursor;
-    callback canvas-pointer(int, int, length, length, bool, bool); // kind 0 down 1 up 2 move 3 cancel, button 0 left 1 right 2 middle
+    callback canvas-pointer(int, int, length, length, bool, bool, bool); // kind 0 down 1 up 2 move 3 cancel, button 0 left 1 right 2 middle, shift, ctrl, alt
     callback canvas-scroll(length, length, length, bool);
     callback canvas-resized();
     callback key(string, bool, bool) -> bool;
@@ -792,7 +897,7 @@ export component AppWindow inherits Window {
                     commands: root.selection-path;
                     stroke: #2f6fed; stroke-width: 1.5px; fill: #2f6fed18;
                 }
-                if root.has-preview: Rectangle {
+                if root.has-preview && root.pv-line-path == "": Rectangle {
                     x: root.pan-x + root.pv-x * root.zoom * 1px;
                     y: root.pan-y + root.pv-y * root.zoom * 1px;
                     width: root.pv-w * root.zoom * 1px;
@@ -800,6 +905,21 @@ export component AppWindow inherits Window {
                     border-width: 1.5px;
                     border-color: #e53935;
                     background: #e5393520;
+                }
+                if root.has-preview && root.pv-line-path != "": Path {
+                    width: canvas-area.width; height: canvas-area.height;
+                    viewbox-width: canvas-area.width / 1px; viewbox-height: canvas-area.height / 1px;
+                    commands: root.pv-line-path;
+                    stroke: #2f6fed; stroke-width: 2px; fill: transparent;
+                }
+                if root.tool == 19 && root.has-clone-source: Rectangle {
+                    x: root.pan-x + root.clone-src-x * root.zoom * 1px - 7px;
+                    y: root.pan-y + root.clone-src-y * root.zoom * 1px - 7px;
+                    width: 14px; height: 14px;
+                    border-radius: 7px;
+                    border-width: 1.5px;
+                    border-color: #ff6d00;
+                    background: #ff6d0028;
                 }
                 if root.show-boxes: Rectangle {
                     for b[i] in root.boxes: Rectangle {
@@ -852,7 +972,7 @@ export component AppWindow inherits Window {
                         root.canvas-pointer(
                             e.kind == PointerEventKind.down ? 0 : e.kind == PointerEventKind.up ? 1 : e.kind == PointerEventKind.move ? 2 : 3,
                             e.button == PointerEventButton.right ? 1 : e.button == PointerEventButton.middle ? 2 : 0,
-                            self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control);
+                            self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control, e.modifiers.alt);
                     }
                     scroll-event(e) => {
                         root.canvas-scroll(self.mouse-x, self.mouse-y, e.delta-y, e.modifiers.control);
@@ -974,7 +1094,7 @@ export component AppWindow inherits Window {
                         alignment: space-between;
                         IBtn { icon: @image-url("icons/tab-tools.svg"); size: 38px; icon-size: 20px; active: root.tab == 0; tip: T.t("工具", "Tools"); clicked => { root.tab = 0;  } }
                         IBtn { icon: @image-url("icons/tab-layers.svg"); size: 38px; icon-size: 20px; active: root.tab == 1; tip: T.t("圖層", "Layers"); clicked => { root.tab = 1;  } }
-                        IBtn { icon: @image-url("icons/tab-adjust.svg"); size: 38px; icon-size: 20px; active: root.tab == 2; tip: T.t("調整", "Adjust"); clicked => { root.tab = 2;  } }
+                        IBtn { icon: @image-url("icons/tab-adjust.svg"); size: 38px; icon-size: 20px; active: root.tab == 2; tip: T.t("調整", "Adjust"); clicked => { root.tab = 2; root.action("refresh-hist"); } }
                         IBtn { icon: @image-url("icons/tab-stickers.svg"); size: 38px; icon-size: 20px; active: root.tab == 3; tip: T.t("貼圖", "Stickers"); clicked => { root.tab = 3;  } }
                         IBtn { icon: @image-url("icons/tab-redact.svg"); size: 38px; icon-size: 20px; active: root.tab == 4; tip: T.t("自動打碼", "Auto redact"); clicked => { root.tab = 4; root.action("tab-redact"); } }
                         IBtn { icon: @image-url("icons/tab-info.svg"); size: 38px; icon-size: 20px; active: root.tab == 5; tip: T.t("資訊 / C2PA", "Info / C2PA"); clicked => { root.tab = 5; root.action("refresh-info"); } }
@@ -1000,6 +1120,32 @@ export component AppWindow inherits Window {
                                     LabeledSlider { label: T.t("膠帶寬度", "Tape width"); minimum: 4; maximum: 200; value <=> root.tape-width; has-apply: false; }
                                     ComboBox { current-index <=> root.tape-pattern; model: [T.t("粉紅條紋", "Pink stripes"), T.t("藍色圓點", "Blue dots"), T.t("薄荷格紋", "Mint gingham"), T.t("黃色星星", "Yellow stars"), T.t("紫色愛心", "Purple hearts"), T.t("珊瑚波浪", "Coral waves"), T.t("森林葉子", "Forest leaves"), T.t("海洋鑽石", "Ocean diamonds"), T.t("彩虹斜紋", "Rainbow stripes"), T.t("牛皮紙點點", "Kraft confetti")]; }
                                     Text { text: T.t("拖曳貼上膠帶，每筆為可編輯圖層。", "Drag to apply tape; each stroke is an editable layer."); wrap: word-wrap; }
+                                }
+                                if root.tool == 17: VerticalLayout {
+                                    spacing: 6px;
+                                    Section { text: T.t("漸層工具", "Gradient tool"); }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text { text: T.t("樣式", "Style"); width: 78px; vertical-alignment: center; }
+                                        ComboBox {
+                                            model: [T.t("線性漸層 (色 1 → 色 2)", "Linear (Colour 1 -> 2)"), T.t("放射漸層 (色 1 → 色 2)", "Radial (Colour 1 -> 2)")];
+                                            current-index <=> root.gradient-mode;
+                                        }
+                                    }
+                                    Text { text: T.t("拖曳畫出漸層方向；右鍵拖曳可反轉色 2 → 色 1，支援選取區遮罩。", "Drag to set direction; right-drag reverses Colour 2 -> 1. Respects active selection."); font-size: 11px; color: #55606c; wrap: word-wrap; }
+                                }
+                                if root.tool == 18: VerticalLayout {
+                                    spacing: 6px;
+                                    Section { text: T.t("魔術棒選取", "Magic wand"); }
+                                    LabeledSlider { label: T.t("容差", "Tolerance"); minimum: 0; maximum: 128; value <=> root.wand-tolerance; has-apply: false; }
+                                    CheckBox { text: T.t("僅選取相鄰像素", "Contiguous pixels only"); checked <=> root.wand-contiguous; }
+                                    Text { text: T.t("點選相近色區域建立選取遮罩，可搭配調整、漸層或裁切。", "Click to select similar colours as a mask for adjustments, gradients, or cropping."); font-size: 11px; color: #55606c; wrap: word-wrap; }
+                                }
+                                if root.tool == 19: VerticalLayout {
+                                    spacing: 6px;
+                                    Section { text: T.t("仿製印章", "Clone stamp"); }
+                                    LabeledSlider { label: T.t("邊緣硬度", "Hardness"); minimum: 0.1; maximum: 1.0; decimals: 1; value <=> root.clone-hardness; has-apply: false; }
+                                    Text { text: T.t("右鍵或 Alt+點選設定取樣起點", "Right-click or Alt+click to sample source"); font-size: 11px; color: #55606c; wrap: word-wrap; }
                                 }
                                 HorizontalLayout {
                                     spacing: 6px;
@@ -1093,11 +1239,29 @@ export component AppWindow inherits Window {
                                         IBtn { icon: @image-url("icons/paste-layer.svg"); tip: T.t("貼上為圖層 (Ctrl+Shift+V)", "Paste as layer (Ctrl+Shift+V)"); clicked => { root.action("paste-layer"); } }
                                         IBtn { icon: @image-url("icons/flatten.svg"); tip: T.t("合併所有圖層 (Ctrl+Shift+E)", "Flatten all layers (Ctrl+Shift+E)"); enabled: root.layers.length > 0; clicked => { root.action("flatten"); } }
                                 }
+                                HorizontalLayout {
+                                    spacing: 2px;
+                                    alignment: start;
+                                    IBtn { icon: @image-url("icons/layer-merge-down.svg"); tip: T.t("向下合併圖層 (Ctrl+Shift+M)", "Merge layer down (Ctrl+Shift+M)"); enabled: root.has-layer; clicked => { root.action("layer-merge-down"); } }
+                                    IBtn { icon: @image-url("icons/align-center.svg"); tip: T.t("置中對齊畫布", "Centre layer on canvas"); enabled: root.has-layer; clicked => { root.action("layer-center"); } }
+                                    IBtn { icon: @image-url("icons/flip-h.svg"); tip: T.t("圖層水平翻轉", "Flip layer horizontally"); enabled: root.has-layer; clicked => { root.action("layer-flip-h"); } }
+                                    IBtn { icon: @image-url("icons/flip-v.svg"); tip: T.t("圖層垂直翻轉", "Flip layer vertically"); enabled: root.has-layer; clicked => { root.action("layer-flip-v"); } }
+                                    IBtn { icon: @image-url("icons/rot-right.svg"); tip: T.t("圖層順時針旋轉 90°", "Rotate layer 90° clockwise"); enabled: root.has-layer; clicked => { root.action("layer-rot"); } }
+                                }
                                 if root.sel-kind >= 0: VerticalLayout {
                                     spacing: 6px;
                                     Section { text: T.t("選取的圖層", "Selected layer"); }
                                     LineEdit { text <=> root.l-name; edited => { root.layer-edited("name"); } }
                                     LabeledSlider { label: T.t("不透明度", "Opacity"); minimum: 0; maximum: 100; value <=> root.l-opacity; has-apply: false; changed value => { root.layer-edited("opacity"); } }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text { text: T.t("混合模式", "Blend mode"); width: 78px; vertical-alignment: center; }
+                                        ComboBox {
+                                            model: root.blend-mode-names;
+                                            current-index <=> root.l-blend;
+                                            selected => { root.layer-edited("blend"); }
+                                        }
+                                    }
                                     if root.sel-kind == 0: VerticalLayout {
                                         spacing: 6px;
                                         TextEdit { accessible-label: T.t("文字內容", "Text content"); height: 70px; text <=> root.l-text; edited => { root.layer-edited("text"); } }
@@ -1128,6 +1292,10 @@ export component AppWindow inherits Window {
                             // ===== Adjust
                             if root.tab == 2: VerticalLayout {
                                 spacing: 6px;
+                                HistogramPanel {
+                                    hist-image: root.histogram-img;
+                                    stats: root.histogram-stats;
+                                }
                                 Section { text: T.t("旋轉 / 翻轉", "Rotate / flip"); }
                                 HorizontalLayout {
                                     spacing: 3px;
@@ -1187,6 +1355,95 @@ export component AppWindow inherits Window {
                                     IBtn { icon: @image-url("icons/auto-contrast.svg"); tip: T.t("自動對比", "Auto contrast"); clicked => { root.action("f-auto"); } }
                                 }
                                 IBtn { icon: @image-url("icons/reset.svg"); tip: T.t("還原成原始影像", "Reset to original"); clicked => { root.action("reset"); } }
+                                Section { text: T.t("一鍵專業色調", "One-click pro looks"); }
+                                ComboBox {
+                                    model: root.pro-look-names;
+                                    current-index <=> root.pro-look;
+                                }
+                                IconTextBtn {
+                                    icon: @image-url("icons/sparkles.svg");
+                                    label: T.t("套用專業色調", "Apply pro look");
+                                    clicked => { root.action("f-look"); }
+                                }
+                                Section { text: T.t("專業色調微調", "Pro tonal adjustments"); }
+                                LabeledSlider { label: T.t("輸入黑階", "In black"); minimum: 0; maximum: 240; value <=> root.a-lvl-black; has-apply: false; }
+                                LabeledSlider { label: T.t("伽瑪 Gamma", "Gamma"); minimum: 0.2; maximum: 3.0; decimals: 1; value <=> root.a-lvl-gamma; has-apply: false; }
+                                LabeledSlider { label: T.t("輸入白階", "In white"); minimum: 15; maximum: 255; value <=> root.a-lvl-white; has-apply: false; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/levels.svg");
+                                    label: T.t("套用色階 (Levels)", "Apply Levels");
+                                    clicked => { root.action("f-levels"); }
+                                }
+                                LabeledSlider { label: T.t("陰影提亮", "Shadows"); minimum: -100; maximum: 100; value <=> root.a-shadows; apply => { root.action("f-shadows"); } }
+                                LabeledSlider { label: T.t("亮部救回", "Highlights"); minimum: -100; maximum: 100; value <=> root.a-highlights; apply => { root.action("f-highlights"); } }
+                                LabeledSlider { label: T.t("自然飽和", "Vibrance"); minimum: -100; maximum: 100; value <=> root.a-vibrance; apply => { root.action("f-vibrance"); } }
+                                LabeledSlider { label: T.t("清晰度", "Clarity"); minimum: -100; maximum: 100; value <=> root.a-clarity; apply => { root.action("f-clarity"); } }
+                                LabeledSlider { label: T.t("紅-青平衡", "Red balance"); minimum: -100; maximum: 100; value <=> root.a-cb-r; has-apply: false; }
+                                LabeledSlider { label: T.t("綠-洋紅", "Green bal."); minimum: -100; maximum: 100; value <=> root.a-cb-g; has-apply: false; }
+                                LabeledSlider { label: T.t("藍-黃平衡", "Blue balance"); minimum: -100; maximum: 100; value <=> root.a-cb-b; has-apply: false; }
+                                Button { text: T.t("套用色彩平衡", "Apply colour balance"); clicked => { root.action("f-balance"); } }
+                                LabeledSlider { label: T.t("臨界值黑白", "Threshold"); minimum: 0; maximum: 255; value <=> root.a-thresh; apply => { root.action("f-threshold"); } }
+                                Section { text: T.t("專業濾鏡特效", "Pro stylize effects"); }
+                                LabeledSlider { label: T.t("移軸焦點 Y", "Tilt focus Y"); minimum: 0; maximum: 1; decimals: 1; value <=> root.e-ts-y; has-apply: false; }
+                                LabeledSlider { label: T.t("清晰頻寬", "Focus band"); minimum: 0.05; maximum: 0.8; decimals: 1; value <=> root.e-ts-band; has-apply: false; }
+                                LabeledSlider { label: T.t("散景模糊", "Blur sigma"); minimum: 1; maximum: 20; decimals: 1; value <=> root.e-ts-sigma; has-apply: false; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/tilt-shift.svg");
+                                    label: T.t("套用移軸微縮模型", "Apply tilt-shift");
+                                    clicked => { root.action("f-tilt-shift"); }
+                                }
+                                LabeledSlider { label: T.t("像素化", "Pixelate"); minimum: 2; maximum: 64; value <=> root.e-pixelate; apply => { root.action("f-pixelate"); } }
+                                LabeledSlider { label: T.t("底片顆粒", "Film grain"); minimum: 0.05; maximum: 1.0; decimals: 1; value <=> root.e-grain; apply => { root.action("f-grain"); } }
+                                LabeledSlider { label: T.t("油畫半徑", "Oil paint"); minimum: 1; maximum: 5; value <=> root.e-oil; apply => { root.action("f-oil"); } }
+                                LabeledSlider { label: T.t("浮雕強度", "Emboss"); minimum: 0.1; maximum: 2.0; decimals: 1; value <=> root.e-emboss; apply => { root.action("f-emboss"); } }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    Button { text: T.t("邊緣偵測", "Edge detect"); horizontal-stretch: 1; clicked => { root.action("f-edge"); } }
+                                    Button { text: T.t("鉛筆素描", "Pencil sketch"); horizontal-stretch: 1; clicked => { root.action("f-sketch"); } }
+                                }
+                                Section { text: T.t("去背與相框", "Cutout & framing"); }
+                                LabeledSlider { label: T.t("去背容差", "BG tol."); minimum: 0; maximum: 128; value <=> root.c-bg-tol; has-apply: false; }
+                                CheckBox { text: T.t("僅從邊緣連通去背（移除色 2）", "Edge-connected only (uses Colour 2)"); checked <=> root.c-bg-edge; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/remove-bg.svg");
+                                    label: T.t("移除色 2 背景（預設白）", "Remove Colour 2 bg (white default)");
+                                    clicked => { root.action("f-remove-bg"); }
+                                }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    IconTextBtn {
+                                        icon: @image-url("icons/auto-trim.svg");
+                                        label: T.t("裁除透明邊", "Trim transparent");
+                                        horizontal-stretch: 1;
+                                        clicked => { root.action("f-trim-alpha"); }
+                                    }
+                                    IconTextBtn {
+                                        icon: @image-url("icons/auto-trim.svg");
+                                        label: T.t("裁除純色邊", "Trim margin");
+                                        horizontal-stretch: 1;
+                                        clicked => { root.action("f-trim-margin"); }
+                                    }
+                                }
+                                LabeledSlider { label: T.t("圓角半徑", "Corner rad."); minimum: 4; maximum: 200; value <=> root.c-round; has-apply: false; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/round-corners.svg");
+                                    label: T.t("套用圓角裁切", "Apply rounded corners");
+                                    clicked => { root.action("f-round-corners"); }
+                                }
+                                LabeledSlider { label: T.t("陰影擴散", "Shadow σ"); minimum: 2; maximum: 40; value <=> root.c-shadow-sigma; has-apply: false; }
+                                LabeledSlider { label: T.t("陰影留白", "Shadow pad"); minimum: 4; maximum: 80; value <=> root.c-shadow-pad; has-apply: false; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/drop-shadow.svg");
+                                    label: T.t("加上立體陰影", "Add drop shadow");
+                                    clicked => { root.action("f-drop-shadow"); }
+                                }
+                                LabeledSlider { label: T.t("卡片邊距", "Card pad"); minimum: 4; maximum: 100; value <=> root.c-frame-pad; has-apply: false; }
+                                LabeledSlider { label: T.t("卡片圓角", "Card rad."); minimum: 0; maximum: 48; value <=> root.c-frame-radius; has-apply: false; }
+                                IconTextBtn {
+                                    icon: @image-url("icons/frame-card.svg");
+                                    label: T.t("加上色 2 卡片相框", "Apply frame / card (Colour 2 bg)");
+                                    clicked => { root.action("f-frame-card"); }
+                                }
                             }
                             // ===== Stickers
                             if root.tab == 3: VerticalLayout {
@@ -1311,6 +1568,10 @@ export component AppWindow inherits Window {
                                 spacing: 6px;
                                 Section { text: T.t("影像資訊", "Image info"); }
                                 Text { text: root.info-text; wrap: word-wrap; }
+                                HistogramPanel {
+                                    hist-image: root.histogram-img;
+                                    stats: root.histogram-stats;
+                                }
                                 Section { text: T.t("C2PA 內容憑證", "C2PA content credentials"); }
                                 Text { text: root.c2pa-text; wrap: word-wrap; font-size: 11px; }
                                 CheckBox { text: T.t("儲存時寫入 C2PA", "Write C2PA on save"); checked <=> root.c2pa-on-save; }
@@ -1769,12 +2030,13 @@ export component AppWindow inherits Window {
             KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
             KeyRow { keys: "Enter / Esc"; what: T.t("套用裁切模式 / 取消選取或關閉對話框", "Apply crop mode / clear selection or close dialog"); }
             KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }
-            KeyRow { keys: "Ctrl+Shift+E"; what: T.t("合併所有圖層", "Merge all layers"); }
+            KeyRow { keys: "Ctrl+Shift+M / Ctrl+Shift+E"; what: T.t("向下合併圖層 / 合併所有圖層", "Merge layer down / merge all layers"); }
             KeyRow { keys: T.t("方向鍵", "Arrows"); what: T.t("移動圖層（Shift 一次 10px）；無圖層時切換上一張/下一張", "Nudge layer (Shift = 10px); with no layer, previous/next image"); }
             Text { text: T.t("工具", "Tools"); font-weight: 700; color: #1f3b63; }
             KeyRow { keys: "S P B L A K"; what: T.t("選取、鉛筆、筆刷、螢光筆、噴槍、書法筆", "Select, pencil, brush, highlighter, airbrush, calligraphy"); }
             KeyRow { keys: "E F I T M"; what: T.t("橡皮擦、油漆桶、滴管、文字、馬賽克筆", "Eraser, fill, picker, text, mosaic"); }
             KeyRow { keys: "C H U R Shift+R J"; what: T.t("裁切、平移、形狀、打碼框、打碼筆刷、膠帶貼紙", "Crop, pan, shapes, redact box, redact brush, tape stickers"); }
+            KeyRow { keys: "G W O"; what: T.t("漸層、魔術棒選取、仿製印章（右鍵或 Alt+點選取樣）", "Gradient, magic wand, clone stamp (right-click or Alt+click to sample)"); }
             KeyRow { keys: "X"; what: T.t("交換色 1 / 色 2", "Swap colour 1 / 2"); }
             KeyRow { keys: T.t("中鍵拖曳 / Ctrl+滾輪", "Middle-drag / Ctrl+wheel"); what: T.t("平移 / 縮放", "Pan / zoom"); }
             Text { text: T.t("選單", "Menus"); font-weight: 700; color: #1f3b63; }

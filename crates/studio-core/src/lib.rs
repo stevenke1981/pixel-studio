@@ -14,6 +14,8 @@ pub mod metadata;
 pub mod naming;
 pub mod ocr;
 pub mod panorama360;
+pub mod pro_adjust;
+pub mod pro_effects;
 pub mod redact;
 pub mod resize;
 pub mod stickers;
@@ -30,8 +32,9 @@ pub use c2pa_metadata::{
     C2paInfo, C2paManifestDraft, inspect_c2pa, remove_c2pa_manifest, write_c2pa_manifest,
 };
 pub use compose::{
-    ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, ShapeKind, ShapeLayer, TextLayer,
-    compose_layer_bounds, render_composition, shape_layer_bounds, text_layer_bounds,
+    BlendMode, ComposeDocument, ComposeLayer, ImageLayer, LayerBounds, ShapeKind, ShapeLayer,
+    TextLayer, compose_layer_bounds, flip_layer_horizontal, flip_layer_vertical,
+    render_composition, rotate_layer_90, shape_layer_bounds, text_layer_bounds,
 };
 pub use convert::{
     ConvertOptions, ConvertResult, convert_image, convert_image_with_options, flatten_alpha,
@@ -54,6 +57,18 @@ pub use image_io::{ImageInfo, inspect_image, load_dynamic_image, load_dynamic_im
 pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
+};
+pub use pro_adjust::{
+    ClarityAdjust, ColorBalance, ColorLook, HistogramData, LevelsAdjust, LookFilter,
+    ShadowsHighlights, Threshold, VibranceAdjust, adjust_clarity, adjust_color_balance,
+    adjust_levels, adjust_shadows_highlights, adjust_vibrance, apply_color_look, compute_histogram,
+    render_histogram_image, threshold,
+};
+pub use pro_effects::{
+    EdgeDetect, Emboss, FilmGrain, FrameCardOptions, GradientKind, OilPaint, Pixelate, TiltShift,
+    TrimMode, TrimResult, add_border_frame, add_drop_shadow, auto_trim, clone_stamp_dab,
+    draw_gradient, edge_detect, emboss, film_grain, magic_wand_mask, oil_paint, pixelate,
+    remove_background_color, round_corners, tilt_shift,
 };
 pub use resize::{canvas_resize, resize_exact, resize_to_fit};
 pub use transform::{

@@ -11,8 +11,11 @@ use studio_core::redact::{RedactBox, RedactStyle, apply_redactions, redact_brush
 use studio_core::stickers::{self, Sticker, StickerStyle};
 use studio_core::transform::SelectionMask;
 use studio_core::{
-    ComposeDocument, ComposeLayer, ImageLayer, ShapeKind, ShapeLayer, TextLayer,
-    compose_layer_bounds, render_composition,
+    BlendMode, ComposeDocument, ComposeLayer, FrameCardOptions, GradientKind, HistogramData,
+    ImageLayer, ShapeKind, ShapeLayer, TextLayer, TrimMode, TrimResult, add_border_frame,
+    auto_trim, clone_stamp_dab, compose_layer_bounds, compute_histogram, draw_gradient,
+    flip_layer_horizontal, flip_layer_vertical, magic_wand_mask, remove_background_color,
+    render_composition, rotate_layer_90,
 };
 
 const MAX_UNDO: usize = 40;
@@ -37,10 +40,13 @@ pub enum Tool {
     RedactBox,
     RedactBrush,
     Tape,
+    Gradient,
+    MagicWand,
+    Clone,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 17] = [
+    pub const ALL: [Tool; 20] = [
         Tool::Select,
         Tool::Pencil,
         Tool::Brush,
@@ -58,6 +64,9 @@ impl Tool {
         Tool::RedactBox,
         Tool::RedactBrush,
         Tool::Tape,
+        Tool::Gradient,
+        Tool::MagicWand,
+        Tool::Clone,
     ];
     pub fn index(self) -> i32 {
         Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as i32
@@ -179,6 +188,7 @@ pub struct Snapshot {
     revision: u64,
     selection: Option<Selection>,
     selection_path: Vec<(f32, f32)>,
+    selection_mask: Option<image::GrayImage>,
     boxes: Vec<RedactBox>,
     focused_box: Option<usize>,
 }
@@ -196,6 +206,11 @@ pub struct ToolSettings {
     pub redact_brush_radius: f32,
     pub tape_width: f32,
     pub tape_pattern: usize,
+    pub gradient_radial: bool,
+    pub wand_tolerance: u8,
+    pub wand_contiguous: bool,
+    pub clone_source: Option<(f32, f32)>,
+    pub clone_hardness: f32,
 }
 
 impl Default for ToolSettings {
@@ -211,6 +226,11 @@ impl Default for ToolSettings {
             redact_brush_radius: 12.0,
             tape_width: 36.0,
             tape_pattern: 0,
+            gradient_radial: false,
+            wand_tolerance: 24,
+            wand_contiguous: true,
+            clone_source: None,
+            clone_hardness: 0.75,
         }
     }
 }
@@ -222,6 +242,7 @@ pub struct Doc {
     pub selected: Option<usize>,
     pub selection: Option<Selection>,
     pub selection_path: Vec<(f32, f32)>,
+    pub selection_mask: Option<image::GrayImage>,
     pub path: Option<PathBuf>,
     pub source_metadata: Option<studio_core::metadata::SourceMetadata>,
     pub font_bytes: Option<Vec<u8>>,
@@ -253,6 +274,7 @@ impl Doc {
             selected: None,
             selection: None,
             selection_path: Vec::new(),
+            selection_mask: None,
             path: None,
             source_metadata: None,
             font_bytes: None,
@@ -286,6 +308,7 @@ impl Doc {
         self.selected = None;
         self.selection = None;
         self.selection_path.clear();
+        self.selection_mask = None;
         self.boxes.clear();
         self.focused_box = None;
         self.undo.clear();
@@ -326,6 +349,7 @@ impl Doc {
             revision: self.revision,
             selection: self.selection,
             selection_path: self.selection_path.clone(),
+            selection_mask: self.selection_mask.clone(),
             boxes: self.boxes.clone(),
             focused_box: self.focused_box,
         }
@@ -366,6 +390,7 @@ impl Doc {
         self.selected = s.selected.filter(|i| *i < self.layers.len());
         self.selection = s.selection;
         self.selection_path = s.selection_path;
+        self.selection_mask = s.selection_mask;
         self.boxes = s.boxes;
         self.focused_box = s.focused_box.filter(|i| *i < self.boxes.len());
         self.overlay_dirty = true;
@@ -456,6 +481,23 @@ impl Doc {
     /// Write the composite (image + layers) for `r` into an RGBA8 buffer of the
     /// canvas size. Only the dirty rectangle is recomputed.
     pub fn composite_into(&mut self, buf: &mut [u8], r: IRect) {
+        if self
+            .layers
+            .iter()
+            .any(|l| l.is_visible() && l.blend_mode() != BlendMode::Normal)
+        {
+            self.refresh_stickers();
+            let flat = self.flattened().to_rgba8();
+            let w = self.width() as usize;
+            for y in r.y0..r.y1 {
+                let row = y as usize * w;
+                for x in r.x0..r.x1 {
+                    let i = (row + x as usize) * 4;
+                    buf[i..i + 4].copy_from_slice(&flat.get_pixel(x, y).0);
+                }
+            }
+            return;
+        }
         self.ensure_overlay();
         let w = self.width() as usize;
         for y in r.y0..r.y1 {
@@ -681,26 +723,29 @@ impl Doc {
         self.checkpoint();
         let src = DynamicImage::ImageRgba8(self.image.clone());
         let edited = f(&src);
-        let out = match self
-            .selection
-            .and_then(|s| s.mask(self.width(), self.height()))
-        {
-            Some(m) if edited.width() == src.width() && edited.height() == src.height() => {
-                if self.selection_path.is_empty() {
-                    studio_core::transform::apply_selection_mask(&src, &edited, m)
-                } else {
-                    let mut out = src.to_rgba8();
-                    let changed = edited.to_rgba8();
-                    let bitmap = self.selection_bitmap();
-                    for (x, y, pixel) in out.enumerate_pixels_mut() {
-                        if bitmap.get_pixel(x, y).0[0] != 0 {
-                            *pixel = *changed.get_pixel(x, y);
-                        }
+        let out = if edited.width() == src.width() && edited.height() == src.height() {
+            if self.selection_mask.is_some()
+                || (self.selection.is_some() && !self.selection_path.is_empty())
+            {
+                let mut out = src.to_rgba8();
+                let changed = edited.to_rgba8();
+                let bitmap = self.selection_bitmap();
+                for (x, y, pixel) in out.enumerate_pixels_mut() {
+                    if bitmap.get_pixel(x, y).0[0] != 0 {
+                        *pixel = *changed.get_pixel(x, y);
                     }
-                    DynamicImage::ImageRgba8(out)
                 }
+                DynamicImage::ImageRgba8(out)
+            } else if let Some(m) = self
+                .selection
+                .and_then(|s| s.mask(self.width(), self.height()))
+            {
+                studio_core::transform::apply_selection_mask(&src, &edited, m)
+            } else {
+                edited
             }
-            _ => edited,
+        } else {
+            edited
         };
         self.set_image(out.to_rgba8());
     }
@@ -717,6 +762,7 @@ impl Doc {
         self.overlay_dirty = true;
         self.selection = None;
         self.selection_path.clear();
+        self.selection_mask = None;
         self.set_image(out);
     }
 
@@ -729,8 +775,52 @@ impl Doc {
         self.mark(IRect::full(self.width(), self.height()));
     }
 
-    /// Test a pixel centre against the current selection, including freehand paths.
+    /// Clear any active rectangular, circular, freehand, or magic-wand selection.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selection_path.clear();
+        self.selection_mask = None;
+        self.mark(IRect::full(self.width(), self.height()));
+    }
+
+    /// Select pixels matching the color at `(x, y)` into `selection_mask` and its
+    /// tight bounding box into `selection`.
+    pub fn magic_wand_select(&mut self, x: f32, y: f32, tolerance: u8, contiguous: bool) -> bool {
+        self.checkpoint();
+        if !x.is_finite()
+            || !y.is_finite()
+            || x < 0.0
+            || y < 0.0
+            || x >= self.width() as f32
+            || y >= self.height() as f32
+        {
+            self.clear_selection();
+            return false;
+        }
+        let mask = magic_wand_mask(
+            &DynamicImage::ImageRgba8(self.image.clone()),
+            x.floor() as u32,
+            y.floor() as u32,
+            tolerance,
+            contiguous,
+        );
+        if let Some(sel) = mask_bounding_selection(&mask) {
+            self.selection = Some(sel);
+            self.selection_path.clear();
+            self.selection_mask = Some(mask);
+            self.mark(IRect::full(self.width(), self.height()));
+            true
+        } else {
+            self.clear_selection();
+            false
+        }
+    }
+
+    /// Test a pixel centre against the current selection, including freehand paths and masks.
     pub fn selection_contains(&self, x: u32, y: u32) -> bool {
+        if let Some(mask) = &self.selection_mask {
+            return x < mask.width() && y < mask.height() && mask.get_pixel(x, y).0[0] != 0;
+        }
         let Some(sel) = self.selection else {
             return false;
         };
@@ -760,6 +850,17 @@ impl Doc {
     /// Rasterize freehand paths by scanline, avoiding a polygon test per pixel.
     pub fn selection_bitmap(&self) -> image::GrayImage {
         let mut bitmap = image::GrayImage::new(self.width(), self.height());
+        if let Some(mask) = &self.selection_mask {
+            if mask.dimensions() == (self.width(), self.height()) {
+                return mask.clone();
+            }
+            for y in 0..self.height().min(mask.height()) {
+                for x in 0..self.width().min(mask.width()) {
+                    bitmap.put_pixel(x, y, *mask.get_pixel(x, y));
+                }
+            }
+            return bitmap;
+        }
         if self.selection_path.is_empty() {
             for (x, y, pixel) in bitmap.enumerate_pixels_mut() {
                 if self.selection_contains(x, y) {
@@ -796,7 +897,11 @@ impl Doc {
     /// Keep the selection or remove it from the visible composition. Masked
     /// operations flatten layers so transparent pixels cannot reveal them.
     pub fn crop_selection(&mut self, remove: bool) -> bool {
-        let Some(sel) = self.selection else {
+        let Some(sel) = self.selection.or_else(|| {
+            self.selection_mask
+                .as_ref()
+                .and_then(mask_bounding_selection)
+        }) else {
             return false;
         };
         let Some(SelectionMask::Rectangle {
@@ -813,7 +918,8 @@ impl Doc {
             return false;
         };
         self.checkpoint();
-        if !remove && !sel.circle && self.selection_path.is_empty() {
+        if !remove && !sel.circle && self.selection_path.is_empty() && self.selection_mask.is_none()
+        {
             let cropped = image::imageops::crop_imm(&self.image, x, y, width, height).to_image();
             for layer in &mut self.layers {
                 move_layer(layer, -(x as i32), -(y as i32));
@@ -846,11 +952,109 @@ impl Doc {
         }
         self.selection = None;
         self.selection_path.clear();
+        self.selection_mask = None;
         true
     }
 
     pub fn crop_to_selection(&mut self) -> bool {
         self.crop_selection(false)
+    }
+
+    /// Apply a linear or radial gradient on the base image, clipped to any active selection.
+    pub fn apply_gradient(
+        &mut self,
+        a: (f32, f32),
+        b: (f32, f32),
+        color1: [u8; 4],
+        color2: [u8; 4],
+        radial: bool,
+    ) {
+        self.checkpoint();
+        let mask = (self.selection.is_some() || self.selection_mask.is_some())
+            .then(|| self.selection_bitmap());
+        let kind = if radial {
+            GradientKind::Radial
+        } else {
+            GradientKind::Linear
+        };
+        draw_gradient(
+            &mut self.image,
+            a.0,
+            a.1,
+            b.0,
+            b.1,
+            Rgba(color1),
+            Rgba(color2),
+            kind,
+            mask.as_ref(),
+        );
+        self.mark(IRect::full(self.width(), self.height()));
+    }
+
+    /// Stamp one circular clone dab from `src` to `dst` onto the base image.
+    pub fn clone_dab(&mut self, src: (f32, f32), dst: (f32, f32), radius: f32, hardness: f32) {
+        if !radius.is_finite() || radius <= 0.0 {
+            return;
+        }
+        clone_stamp_dab(
+            &mut self.image,
+            src.0.round() as i32,
+            src.1.round() as i32,
+            dst.0.round() as i32,
+            dst.1.round() as i32,
+            radius,
+            hardness,
+        );
+        if let Some(rect) = IRect::around(
+            dst.0,
+            dst.1,
+            dst.0,
+            dst.1,
+            radius + 2.0,
+            self.width(),
+            self.height(),
+        ) {
+            self.mark(rect);
+        }
+    }
+
+    /// Compute RGB and BT.709 luminance histogram of the flattened composition.
+    pub fn compute_histogram(&self) -> HistogramData {
+        compute_histogram(&self.flattened())
+    }
+
+    /// Remove background pixels matching `target` via selection-aware `apply_filter`.
+    pub fn apply_remove_background(
+        &mut self,
+        target: [u8; 3],
+        tolerance: f32,
+        feather: f32,
+        edge_connected: bool,
+    ) {
+        self.apply_filter(|img| {
+            remove_background_color(img, target, tolerance, feather, edge_connected)
+        });
+    }
+
+    /// Trim uniform or transparent borders from the flattened document in one undoable step.
+    pub fn apply_auto_trim(&mut self, mode: TrimMode) -> TrimResult {
+        let mut result = TrimResult {
+            x: 0,
+            y: 0,
+            width: self.width(),
+            height: self.height(),
+        };
+        self.apply_transform(|img| {
+            let (trimmed, res) = auto_trim(img, mode);
+            result = res;
+            trimmed
+        });
+        result
+    }
+
+    /// Wrap the flattened document in a rounded border/shadow card frame.
+    pub fn apply_frame_card(&mut self, opts: FrameCardOptions) {
+        self.apply_transform(|img| add_border_frame(img, opts));
     }
 
     /// Resize the canvas (not the pixels), filling new area with colour 2.
@@ -1084,6 +1288,125 @@ impl Doc {
         }
     }
 
+    /// Set the blend mode of the selected layer with an undo checkpoint.
+    pub fn set_selected_blend_mode(&mut self, mode: BlendMode) {
+        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return;
+        };
+        if self.layers[i].blend_mode() == mode {
+            return;
+        }
+        self.checkpoint();
+        self.with_selected(|l| l.set_blend_mode(mode));
+    }
+
+    /// Center the selected layer horizontally and vertically within the canvas bounds.
+    pub fn center_selected_layer(&mut self) {
+        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return;
+        };
+        let b = compose_layer_bounds(&self.layers[i], self.font_bytes.as_deref());
+        let target_x = ((self.width() as f32 - b.width as f32) / 2.0).round() as i32;
+        let target_y = ((self.height() as f32 - b.height as f32) / 2.0).round() as i32;
+        let dx = target_x - b.x;
+        let dy = target_y - b.y;
+        if dx == 0 && dy == 0 {
+            return;
+        }
+        self.checkpoint();
+        move_layer(&mut self.layers[i], dx, dy);
+        self.layers_changed();
+    }
+
+    /// Flip the selected layer horizontally or vertically around its own center.
+    pub fn flip_selected_layer(&mut self, horizontal: bool) {
+        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return;
+        };
+        self.checkpoint();
+        if horizontal {
+            flip_layer_horizontal(&mut self.layers[i]);
+        } else {
+            flip_layer_vertical(&mut self.layers[i]);
+        }
+        self.layers_changed();
+    }
+
+    /// Rotate the selected layer 90 degrees clockwise or counter-clockwise around its center.
+    pub fn rotate_selected_layer(&mut self, clockwise: bool) {
+        let Some(i) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return;
+        };
+        self.checkpoint();
+        rotate_layer_90(&mut self.layers[i], clockwise);
+        self.layers_changed();
+    }
+
+    /// Merge the selected layer down into the layer below it (or into the base canvas if index 0).
+    pub fn merge_selected_down(&mut self) -> bool {
+        let Some(idx) = self.selected.filter(|i| *i < self.layers.len()) else {
+            return false;
+        };
+        self.checkpoint();
+        self.refresh_stickers();
+        if idx == 0 {
+            let layer0 = self.layers.remove(0);
+            let merged = render_composition(
+                &ComposeDocument {
+                    background: DynamicImage::ImageRgba8(self.image.clone()),
+                    layers: vec![layer0],
+                },
+                self.font_bytes.as_deref(),
+            )
+            .to_rgba8();
+            self.selected = None;
+            self.overlay_dirty = true;
+            self.set_image(merged);
+            return true;
+        }
+
+        let b0 = merge_layer_bounds(&self.layers[idx - 1], self.font_bytes.as_deref());
+        let b1 = merge_layer_bounds(&self.layers[idx], self.font_bytes.as_deref());
+        let min_x = b0.x.min(b1.x);
+        let min_y = b0.y.min(b1.y);
+        let max_x =
+            b0.x.saturating_add(b0.width as i32)
+                .max(b1.x.saturating_add(b1.width as i32));
+        let max_y =
+            b0.y.saturating_add(b0.height as i32)
+                .max(b1.y.saturating_add(b1.height as i32));
+        let uw = (max_x - min_x).max(1) as u32;
+        let uh = (max_y - min_y).max(1) as u32;
+
+        let mut lower = self.layers[idx - 1].clone();
+        let mut upper = self.layers[idx].clone();
+        let name = lower.name().to_owned();
+        let blend_mode = lower.blend_mode();
+        let visible = lower.is_visible() || upper.is_visible();
+        move_layer(&mut lower, -min_x, -min_y);
+        move_layer(&mut upper, -min_x, -min_y);
+
+        let transparent = DynamicImage::ImageRgba8(RgbaImage::new(uw, uh));
+        let rendered = render_composition(
+            &ComposeDocument {
+                background: transparent,
+                layers: vec![lower, upper],
+            },
+            self.font_bytes.as_deref(),
+        );
+        let mut merged = ImageLayer::new(name, rendered);
+        merged.x = min_x;
+        merged.y = min_y;
+        merged.blend_mode = blend_mode;
+        merged.visible = visible;
+
+        self.layers[idx - 1] = ComposeLayer::Image(merged);
+        self.layers.remove(idx);
+        self.selected = Some(idx - 1);
+        self.layers_changed();
+        true
+    }
+
     // ------------------------------------------------------------ redaction
 
     pub fn focus_box(&mut self, index: Option<usize>) {
@@ -1092,6 +1415,7 @@ impl Doc {
             self.selected = None;
             self.selection = None;
             self.selection_path.clear();
+            self.selection_mask = None;
         }
     }
 
@@ -1146,6 +1470,7 @@ impl Doc {
                     stroke: t.stroke,
                     shadow: t.shadow,
                     visible: t.visible,
+                    blend_mode: t.blend_mode,
                 },
                 ComposeLayer::Image(i) => ProjectLayer::Image {
                     name: i.name.clone(),
@@ -1161,6 +1486,7 @@ impl Doc {
                     sticker_stroke: i.sticker.as_ref().map(|s| s.style.stroke),
                     sticker_stroke_width: i.sticker.as_ref().map(|s| s.style.stroke_width),
                     sticker_shadow: i.sticker.as_ref().map(|s| s.style.shadow),
+                    blend_mode: i.blend_mode,
                 },
                 ComposeLayer::Shape(s) => ProjectLayer::Shape {
                     name: s.name.clone(),
@@ -1175,6 +1501,7 @@ impl Doc {
                     filled: s.filled,
                     fill_color: s.fill_color,
                     visible: s.visible,
+                    blend_mode: s.blend_mode,
                 },
             });
         }
@@ -1204,6 +1531,7 @@ impl Doc {
                     stroke,
                     shadow,
                     visible,
+                    blend_mode,
                 } => ComposeLayer::Text(TextLayer {
                     name,
                     text,
@@ -1216,6 +1544,7 @@ impl Doc {
                     stroke,
                     shadow,
                     visible,
+                    blend_mode,
                 }),
                 ProjectLayer::Image {
                     name,
@@ -1231,6 +1560,7 @@ impl Doc {
                     sticker_stroke,
                     sticker_stroke_width,
                     sticker_shadow,
+                    blend_mode,
                 } => ComposeLayer::Image(ImageLayer {
                     name,
                     image: png_decode(&image_png)?,
@@ -1253,6 +1583,7 @@ impl Doc {
                             rendered: None,
                         }
                     }),
+                    blend_mode,
                 }),
                 ProjectLayer::Shape {
                     name,
@@ -1267,6 +1598,7 @@ impl Doc {
                     filled,
                     fill_color,
                     visible,
+                    blend_mode,
                 } => ComposeLayer::Shape(ShapeLayer {
                     name,
                     kind: shape_kind,
@@ -1280,6 +1612,7 @@ impl Doc {
                     filled,
                     fill_color,
                     visible,
+                    blend_mode,
                 }),
             });
         }
@@ -1289,6 +1622,45 @@ impl Doc {
         self.mark_saved();
         Ok(())
     }
+}
+
+fn mask_bounding_selection(mask: &image::GrayImage) -> Option<Selection> {
+    let mut min_x = u32::MAX;
+    let mut min_y = u32::MAX;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    let mut any = false;
+    for (px, py, pixel) in mask.enumerate_pixels() {
+        if pixel.0[0] != 0 {
+            any = true;
+            min_x = min_x.min(px);
+            min_y = min_y.min(py);
+            max_x = max_x.max(px);
+            max_y = max_y.max(py);
+        }
+    }
+    any.then_some(Selection {
+        x: min_x as f32,
+        y: min_y as f32,
+        w: (max_x - min_x + 1) as f32,
+        h: (max_y - min_y + 1) as f32,
+        circle: false,
+    })
+}
+
+fn merge_layer_bounds(l: &ComposeLayer, font_bytes: Option<&[u8]>) -> studio_core::LayerBounds {
+    let mut b = compose_layer_bounds(l, font_bytes);
+    if let ComposeLayer::Shape(s) = l
+        && s.kind == ShapeKind::Arrow
+    {
+        let width = s.stroke_width.max(1.0).round();
+        let pad = ((10.0 + width * 2.0) * 0.6).ceil() as i32 + 2;
+        b.x -= pad;
+        b.y -= pad;
+        b.width = b.width.saturating_add((pad * 2) as u32);
+        b.height = b.height.saturating_add((pad * 2) as u32);
+    }
+    b
 }
 
 pub fn move_layer(l: &mut ComposeLayer, dx: i32, dy: i32) {
@@ -1371,6 +1743,8 @@ enum ProjectLayer {
         stroke: bool,
         shadow: bool,
         visible: bool,
+        #[serde(default)]
+        blend_mode: BlendMode,
     },
     Image {
         name: String,
@@ -1391,6 +1765,8 @@ enum ProjectLayer {
         sticker_stroke_width: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sticker_shadow: Option<bool>,
+        #[serde(default)]
+        blend_mode: BlendMode,
     },
     Shape {
         name: String,
@@ -1405,6 +1781,8 @@ enum ProjectLayer {
         filled: bool,
         fill_color: [u8; 4],
         visible: bool,
+        #[serde(default)]
+        blend_mode: BlendMode,
     },
 }
 
@@ -1856,5 +2234,464 @@ mod tests {
 
         d.layers[0].set_visible(false);
         assert!(d.has_alpha_pixels());
+    }
+
+    #[test]
+    fn new_tools_keep_existing_indices_and_append_pro_tools() {
+        assert_eq!(Tool::ALL.len(), 20);
+        assert_eq!(Tool::Select.index(), 0);
+        assert_eq!(Tool::Tape.index(), 16);
+        assert_eq!(Tool::Gradient.index(), 17);
+        assert_eq!(Tool::MagicWand.index(), 18);
+        assert_eq!(Tool::Clone.index(), 19);
+        assert_eq!(Tool::from_index(17), Tool::Gradient);
+        assert_eq!(Tool::from_index(18), Tool::MagicWand);
+        assert_eq!(Tool::from_index(19), Tool::Clone);
+        assert!(!Tool::Gradient.is_raster());
+        assert!(!Tool::MagicWand.is_raster());
+        assert!(!Tool::Clone.is_raster());
+
+        let settings = ToolSettings::default();
+        assert!(!settings.gradient_radial);
+        assert_eq!(settings.wand_tolerance, 24);
+        assert!(settings.wand_contiguous);
+        assert_eq!(settings.clone_source, None);
+        assert!((settings.clone_hardness - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn magic_wand_select_masks_filter_crop_and_undo_redo() {
+        let mut d = Doc::new(12, 10);
+        // Main 5x5 red island at (4..9, 3..8)
+        for y in 3..8 {
+            for x in 4..9 {
+                d.image.put_pixel(x, y, Rgba([255, 0, 0, 255]));
+            }
+        }
+        // Disconnected 2x2 red island at (0..2, 0..2)
+        for y in 0..2 {
+            for x in 0..2 {
+                d.image.put_pixel(x, y, Rgba([255, 0, 0, 255]));
+            }
+        }
+
+        // Contiguous magic wand selects only the main island
+        assert!(d.magic_wand_select(5.0, 4.0, 10, true));
+        assert_eq!(
+            d.selection,
+            Some(Selection {
+                x: 4.0,
+                y: 3.0,
+                w: 5.0,
+                h: 5.0,
+                circle: false,
+            })
+        );
+        assert!(d.selection_mask.is_some());
+        assert!(d.selection_contains(5, 4));
+        assert!(!d.selection_contains(0, 0));
+        assert!(!d.selection_contains(11, 9));
+        let bitmap = d.selection_bitmap();
+        assert_eq!(bitmap.get_pixel(5, 4).0[0], 255);
+        assert_eq!(bitmap.get_pixel(0, 0).0[0], 0);
+
+        // Filter applies only inside magic-wand mask
+        d.apply_filter(studio_core::transform::invert);
+        assert_eq!(d.image.get_pixel(5, 4).0, [0, 255, 255, 255]);
+        assert_eq!(d.image.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(d.image.get_pixel(11, 9).0, [255, 255, 255, 255]);
+
+        // Undo filter, then undo selection, then redo both
+        assert!(d.undo());
+        assert_eq!(d.image.get_pixel(5, 4).0, [255, 0, 0, 255]);
+        assert!(d.selection_mask.is_some());
+        assert!(d.undo());
+        assert!(d.selection.is_none());
+        assert!(d.selection_mask.is_none());
+        assert!(d.redo());
+        assert!(d.selection_mask.is_some());
+        assert!(d.redo());
+        assert_eq!(d.image.get_pixel(5, 4).0, [0, 255, 255, 255]);
+
+        // Non-contiguous magic wand selects both islands
+        assert!(d.magic_wand_select(0.0, 0.0, 10, false));
+        assert!(d.selection_contains(0, 0));
+        assert!(!d.selection_contains(5, 4)); // main island was inverted to cyan
+        assert!(d.undo()); // back to inverted state
+
+        // Out-of-bounds clears selection and returns false
+        assert!(!d.magic_wand_select(-1.0, 4.0, 10, true));
+        assert!(d.selection.is_none());
+        assert!(d.selection_mask.is_none());
+
+        // Non-rectangular magic wand crop preserves mask shape transparency
+        let mut l_doc = Doc::new(6, 6);
+        for (x, y) in [(1, 1), (2, 1), (1, 2), (1, 3)] {
+            l_doc.image.put_pixel(x, y, Rgba([0, 0, 255, 255]));
+        }
+        assert!(l_doc.magic_wand_select(1.0, 1.0, 5, true));
+        assert_eq!(
+            l_doc.selection,
+            Some(Selection {
+                x: 1.0,
+                y: 1.0,
+                w: 2.0,
+                h: 3.0,
+                circle: false,
+            })
+        );
+        assert!(l_doc.crop_selection(false));
+        assert_eq!(l_doc.image.dimensions(), (2, 3));
+        assert_eq!(l_doc.image.get_pixel(0, 0).0, [0, 0, 255, 255]);
+        assert_eq!(l_doc.image.get_pixel(1, 2).0[3], 0);
+        assert!(l_doc.undo());
+        assert_eq!(l_doc.image.dimensions(), (6, 6));
+        assert!(l_doc.selection_mask.is_some());
+
+        l_doc.dirty = None;
+        l_doc.clear_selection();
+        assert!(l_doc.selection.is_none());
+        assert!(l_doc.selection_path.is_empty());
+        assert!(l_doc.selection_mask.is_none());
+        assert!(l_doc.dirty.is_some());
+    }
+
+    #[test]
+    fn apply_gradient_full_and_masked_with_undo() {
+        let mut d = Doc::new(11, 5);
+        d.apply_gradient(
+            (0.0, 2.0),
+            (10.0, 2.0),
+            [255, 0, 0, 255],
+            [0, 0, 255, 255],
+            false,
+        );
+        assert_eq!(d.image.get_pixel(0, 2).0, [255, 0, 0, 255]);
+        assert_eq!(d.image.get_pixel(10, 2).0, [0, 0, 255, 255]);
+        let mid = d.image.get_pixel(5, 2).0;
+        assert!((mid[0] as i32 - 128).abs() <= 2);
+        assert!((mid[2] as i32 - 128).abs() <= 2);
+        assert!(d.undo());
+        assert_eq!(d.image.get_pixel(0, 2).0, [255, 255, 255, 255]);
+
+        // Masked radial gradient
+        d.selection = Some(Selection {
+            x: 2.0,
+            y: 1.0,
+            w: 5.0,
+            h: 3.0,
+            circle: false,
+        });
+        d.apply_gradient(
+            (4.0, 2.0),
+            (6.0, 2.0),
+            [0, 255, 0, 255],
+            [0, 0, 0, 255],
+            true,
+        );
+        assert_eq!(d.image.get_pixel(4, 2).0, [0, 255, 0, 255]);
+        assert_eq!(d.image.get_pixel(6, 2).0, [0, 0, 0, 255]);
+        assert_eq!(d.image.get_pixel(0, 0).0, [255, 255, 255, 255]);
+        assert_eq!(d.image.get_pixel(10, 4).0, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn clone_dab_copies_source_marks_dirty_and_undoes() {
+        let mut d = Doc::new(24, 24);
+        for y in 2..7 {
+            for x in 2..7 {
+                d.image.put_pixel(x, y, Rgba([220, 30, 40, 255]));
+            }
+        }
+        d.dirty = None;
+        d.checkpoint();
+        d.clone_dab((4.0, 4.0), (16.0, 16.0), 2.0, 1.0);
+        assert_eq!(d.image.get_pixel(16, 16).0, [220, 30, 40, 255]);
+        assert_eq!(d.image.get_pixel(0, 0).0, [255, 255, 255, 255]);
+        let r = d.dirty.unwrap();
+        assert!(
+            r.x0 >= 12 && r.x1 <= 20 && r.y0 >= 12 && r.y1 <= 20,
+            "{r:?}"
+        );
+        assert!(d.undo());
+        assert_eq!(d.image.get_pixel(16, 16).0, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn blend_mode_project_json_roundtrip_and_legacy_compat() {
+        let mut d = Doc::new(20, 20);
+        d.image = RgbaImage::from_pixel(20, 20, Rgba([200, 100, 255, 255]));
+
+        d.add_text(1.0, 1.0, "txt".into());
+        d.set_selected_blend_mode(BlendMode::Screen);
+
+        let mut img_layer = ImageLayer::new(
+            "mul".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(20, 20, Rgba([128, 255, 0, 255]))),
+        );
+        img_layer.x = 0;
+        img_layer.y = 0;
+        d.push_layer(ComposeLayer::Image(img_layer));
+        d.set_selected_blend_mode(BlendMode::Multiply);
+
+        // Live viewport composite matches flattened() for Multiply blend mode
+        let composite = buf(&mut d);
+        let flat = d.flattened().to_rgba8();
+        let px = ((10 * 20 + 10) * 4) as usize;
+        assert_eq!(&composite[px..px + 4], &flat.get_pixel(10, 10).0);
+
+        d.add_shape(
+            ShapeKind::Rectangle,
+            (2.0, 2.0),
+            (10.0, 10.0),
+            &ToolSettings::default(),
+        );
+        d.set_selected_blend_mode(BlendMode::Overlay);
+
+        let json = d.to_project_json().unwrap();
+        let mut loaded = Doc::new(1, 1);
+        loaded.load_project_json(&json).unwrap();
+        assert_eq!(loaded.layers.len(), 3);
+        assert_eq!(loaded.layers[0].blend_mode(), BlendMode::Screen);
+        assert_eq!(loaded.layers[1].blend_mode(), BlendMode::Multiply);
+        assert_eq!(loaded.layers[2].blend_mode(), BlendMode::Overlay);
+
+        // Legacy JSON without `blend_mode` fields deserializes cleanly to BlendMode::Normal
+        let bg_b64 = png_b64(&DynamicImage::ImageRgba8(RgbaImage::new(4, 4))).unwrap();
+        let layer_b64 = png_b64(&DynamicImage::ImageRgba8(RgbaImage::new(2, 2))).unwrap();
+        let legacy_json = format!(
+            r#"{{
+              "version": 2,
+              "background_png": "{bg_b64}",
+              "layers": [
+                {{
+                  "kind": "Text",
+                  "name": "T",
+                  "text": "hi",
+                  "font_path": null,
+                  "x": 0,
+                  "y": 0,
+                  "font_size": 12.0,
+                  "color": [0, 0, 0, 255],
+                  "opacity": 1.0,
+                  "stroke": false,
+                  "shadow": false,
+                  "visible": true
+                }},
+                {{
+                  "kind": "Image",
+                  "name": "I",
+                  "image_png": "{layer_b64}",
+                  "x": 0,
+                  "y": 0,
+                  "width": 2,
+                  "height": 2,
+                  "opacity": 1.0,
+                  "visible": true
+                }},
+                {{
+                  "kind": "Shape",
+                  "name": "S",
+                  "shape_kind": "rectangle",
+                  "x1": 0,
+                  "y1": 0,
+                  "x2": 3,
+                  "y2": 3,
+                  "stroke_color": [255, 0, 0, 255],
+                  "stroke_width": 1.0,
+                  "opacity": 1.0,
+                  "filled": false,
+                  "fill_color": [0, 0, 0, 0],
+                  "visible": true
+                }}
+              ]
+            }}"#
+        );
+        let mut legacy = Doc::new(1, 1);
+        legacy.load_project_json(&legacy_json).unwrap();
+        assert_eq!(legacy.layers.len(), 3);
+        assert!(
+            legacy
+                .layers
+                .iter()
+                .all(|l| l.blend_mode() == BlendMode::Normal)
+        );
+    }
+
+    #[test]
+    fn merge_selected_down_handles_layer_stack_and_canvas_base() {
+        let mut d = Doc::new(40, 40);
+        d.image = RgbaImage::from_pixel(40, 40, Rgba([200, 120, 80, 255]));
+        assert!(!d.merge_selected_down());
+
+        let mut bottom = ImageLayer::new(
+            "bottom".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(10, 10, Rgba([255, 0, 0, 255]))),
+        );
+        bottom.x = 4;
+        bottom.y = 4;
+        d.push_layer(ComposeLayer::Image(bottom));
+
+        let mut top = ImageLayer::new(
+            "top".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(10, 10, Rgba([0, 255, 0, 128]))),
+        );
+        top.x = 8;
+        top.y = 8;
+        d.push_layer(ComposeLayer::Image(top));
+
+        let before_merge_flat = d.flattened().to_rgba8();
+        d.selected = Some(1);
+        assert!(d.merge_selected_down());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.selected, Some(0));
+        assert_eq!(d.layers[0].name(), "bottom");
+        assert_eq!(d.layers[0].blend_mode(), BlendMode::Normal);
+        assert_eq!(d.layer_bounds(0), Some((4.0, 4.0, 14.0, 14.0)));
+        assert_eq!(d.flattened().to_rgba8(), before_merge_flat);
+
+        // Undo restores both layers
+        assert!(d.undo());
+        assert_eq!(d.layers.len(), 2);
+        assert_eq!(d.selected, Some(1));
+        assert!(d.redo());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.selected, Some(0));
+
+        // Merge layer 0 into canvas base (preserving Multiply blend against base)
+        d.set_selected_blend_mode(BlendMode::Multiply);
+        assert_eq!(d.layers[0].blend_mode(), BlendMode::Multiply);
+        let expected_canvas = d.flattened().to_rgba8();
+        assert!(d.merge_selected_down());
+        assert!(d.layers.is_empty());
+        assert_eq!(d.selected, None);
+        assert_eq!(d.image, expected_canvas);
+        assert!(d.undo());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.selected, Some(0));
+        assert_eq!(d.layers[0].blend_mode(), BlendMode::Multiply);
+    }
+
+    #[test]
+    fn center_flip_and_rotate_selected_layer_with_undo() {
+        let mut d = Doc::new(100, 80);
+        let mut img = RgbaImage::from_pixel(4, 2, Rgba([0, 0, 0, 255]));
+        img.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        img.put_pixel(3, 0, Rgba([0, 0, 255, 255]));
+        img.put_pixel(0, 1, Rgba([0, 255, 0, 255]));
+        img.put_pixel(3, 1, Rgba([255, 255, 0, 255]));
+        let mut layer = ImageLayer::new("tile".into(), DynamicImage::ImageRgba8(img));
+        layer.x = 0;
+        layer.y = 0;
+        d.push_layer(ComposeLayer::Image(layer));
+
+        d.center_selected_layer();
+        assert_eq!(d.layer_bounds(0), Some((48.0, 39.0, 4.0, 2.0)));
+        assert!(d.undo());
+        assert_eq!(d.layer_bounds(0), Some((0.0, 0.0, 4.0, 2.0)));
+
+        d.flip_selected_layer(true);
+        if let ComposeLayer::Image(l) = &d.layers[0] {
+            let rgba = l.image.to_rgba8();
+            assert_eq!(rgba.get_pixel(0, 0).0, [0, 0, 255, 255]);
+            assert_eq!(rgba.get_pixel(3, 0).0, [255, 0, 0, 255]);
+        } else {
+            panic!("expected image layer");
+        }
+        assert!(d.undo());
+
+        d.flip_selected_layer(false);
+        if let ComposeLayer::Image(l) = &d.layers[0] {
+            let rgba = l.image.to_rgba8();
+            assert_eq!(rgba.get_pixel(0, 0).0, [0, 255, 0, 255]);
+            assert_eq!(rgba.get_pixel(0, 1).0, [255, 0, 0, 255]);
+        } else {
+            panic!("expected image layer");
+        }
+        assert!(d.undo());
+
+        d.rotate_selected_layer(true);
+        assert_eq!(
+            d.layer_bounds(0).map(|(_, _, w, h)| (w, h)),
+            Some((2.0, 4.0))
+        );
+        assert!(d.undo());
+        assert_eq!(
+            d.layer_bounds(0).map(|(_, _, w, h)| (w, h)),
+            Some((4.0, 2.0))
+        );
+    }
+
+    #[test]
+    fn pro_doc_ops_histogram_remove_bg_auto_trim_and_frame_card() {
+        let mut d = Doc::new(10, 10);
+        let mut half = ImageLayer::new(
+            "half".into(),
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(5, 10, Rgba([255, 0, 0, 255]))),
+        );
+        half.x = 0;
+        half.y = 0;
+        d.push_layer(ComposeLayer::Image(half));
+
+        let hist = d.compute_histogram();
+        assert_eq!(hist.pixel_count, 100);
+        assert_eq!(hist.r[255], 100);
+        assert_eq!(hist.g[0], 50);
+        assert_eq!(hist.g[255], 50);
+
+        // Remove white background while preserving center square
+        let mut bg_doc = Doc::new(10, 10);
+        for y in 3..7 {
+            for x in 3..7 {
+                bg_doc.image.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        bg_doc.apply_remove_background([255, 255, 255], 10.0, 0.0, true);
+        assert_eq!(bg_doc.image.get_pixel(0, 0).0[3], 0);
+        assert_eq!(bg_doc.image.get_pixel(5, 5).0, [0, 0, 0, 255]);
+        assert!(bg_doc.undo());
+        assert_eq!(bg_doc.image.get_pixel(0, 0).0, [255, 255, 255, 255]);
+
+        // Auto-trim transparent border
+        let mut trim_doc = Doc::new(12, 10);
+        trim_doc.image = RgbaImage::from_pixel(12, 10, Rgba([0, 0, 0, 0]));
+        for y in 3..6 {
+            for x in 4..8 {
+                trim_doc.image.put_pixel(x, y, Rgba([10, 20, 30, 255]));
+            }
+        }
+        trim_doc.resized = false;
+        let res = trim_doc.apply_auto_trim(TrimMode::Transparent);
+        assert_eq!(
+            res,
+            TrimResult {
+                x: 4,
+                y: 3,
+                width: 4,
+                height: 3,
+            }
+        );
+        assert_eq!(trim_doc.image.dimensions(), (4, 3));
+        assert!(trim_doc.resized);
+        assert!(trim_doc.undo());
+        assert_eq!(trim_doc.image.dimensions(), (12, 10));
+
+        // Frame card expands canvas and can be undone
+        let mut frame_doc = Doc::new(20, 16);
+        frame_doc.resized = false;
+        frame_doc.apply_frame_card(FrameCardOptions {
+            padding: 8,
+            corner_radius: 4.0,
+            shadow_sigma: 0.0,
+            shadow_offset_x: 0,
+            shadow_offset_y: 0,
+            background_color: [240, 240, 240, 255],
+            border_width: 2,
+            border_color: [100, 100, 100, 255],
+        });
+        assert!(frame_doc.width() > 20 && frame_doc.height() > 16);
+        assert!(frame_doc.resized);
+        assert!(frame_doc.undo());
+        assert_eq!(frame_doc.image.dimensions(), (20, 16));
     }
 }

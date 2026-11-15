@@ -15,8 +15,9 @@ use slint::{
 use studio_core::redact::{RedactStyle, preselect_sensitive, select_by_keyword};
 use studio_core::stickers::{self, CANVAS_PRESETS, StickerCategory, StickerStyle};
 use studio_core::{
-    BatchOptions, C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ComposeLayer,
-    ConvertOptions, GifOptions, PanoramaMode, PanoramaOptions, ShapeKind, SupportedFormat,
+    BatchOptions, BlendMode, C2paAddOptions, C2paManifestDraft, C2paRemovalOptions, ColorLook,
+    ComposeLayer, ConvertOptions, FrameCardOptions, GifOptions, PanoramaMode, PanoramaOptions,
+    ShapeKind, SupportedFormat, TrimMode,
 };
 
 use crate::doc::{Doc, IRect, Selection, Snapshot, Tool, ToolSettings};
@@ -55,7 +56,7 @@ const PALETTE: [[u8; 3]; 28] = [
     [96, 125, 139],
 ];
 
-const TOOL_LABELS: [(&str, &str); 17] = [
+const TOOL_LABELS: [(&str, &str); 20] = [
     ("選取/移動", "Select/move"),
     ("鉛筆", "Pencil"),
     ("筆刷", "Brush"),
@@ -73,6 +74,9 @@ const TOOL_LABELS: [(&str, &str); 17] = [
     ("打碼框", "Redact boxes"),
     ("打碼筆刷", "Redact brush"),
     ("膠帶貼紙筆刷", "Tape sticker brush"),
+    ("漸層", "Gradient"),
+    ("魔術棒", "Magic wand"),
+    ("仿製印章", "Clone stamp"),
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -115,6 +119,15 @@ enum Drag {
     CanvasEdge {
         kind: u8,
         now: (f32, f32),
+    },
+    Gradient {
+        start: (f32, f32),
+        now: (f32, f32),
+        secondary: bool,
+    },
+    Clone {
+        offset: (f32, f32),
+        last: (f32, f32),
     },
 }
 
@@ -225,6 +238,7 @@ pub struct State {
     batch_webp_lossless: bool,
     batch_alpha_bg: [u8; 4],
     batch_alpha_bg_mode: i32,
+    hist_revision: Option<u64>,
 }
 
 type S = Rc<RefCell<State>>;
@@ -361,6 +375,7 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
         batch_webp_lossless: false,
         batch_alpha_bg: [255, 255, 255, 255],
         batch_alpha_bg_mode: 0,
+        hist_revision: None,
     }
 }
 
@@ -585,6 +600,23 @@ fn ruler_ticks(pan: f32, zoom: f32, extent: f32, start: f32) -> Vec<Tick> {
     out
 }
 
+fn color_look_label(zh: bool, look: ColorLook) -> String {
+    if !zh {
+        return look.name().to_owned();
+    }
+    match look {
+        ColorLook::Vivid => "鮮豔生動 (Vivid)",
+        ColorLook::CinematicTealOrange => "電影青橙 (Teal & Orange)",
+        ColorLook::MatteFilm => "霧面底片 (Matte Film)",
+        ColorLook::MoodyBw => "深沉黑白 (Moody B&W)",
+        ColorLook::WarmGolden => "暖陽金黃 (Warm Golden)",
+        ColorLook::CrispCool => "清透冷調 (Crisp Cool)",
+        ColorLook::HighKey => "日系高調 (High Key)",
+        ColorLook::Cyberpunk => "賽博龐克 (Cyberpunk)",
+    }
+    .to_owned()
+}
+
 fn set_language_models(ui: &AppWindow, s: &State) {
     let zh = s.zh;
     ui.set_tools(ModelRc::new(VecModel::from(
@@ -618,15 +650,60 @@ fn set_language_models(ui: &AppWindow, s: &State) {
             .map(|p| SharedString::from(fonts::display_font_name(p))),
     );
     ui.set_font_names(ModelRc::new(VecModel::from(fnames)));
+    ui.set_blend_mode_names(ModelRc::new(VecModel::from(
+        BlendMode::ALL
+            .iter()
+            .map(|m| SharedString::from(if zh { m.label_zh() } else { m.label_en() }))
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_pro_look_names(ModelRc::new(VecModel::from(
+        ColorLook::all()
+            .iter()
+            .map(|&l| SharedString::from(color_look_label(zh, l)))
+            .collect::<Vec<_>>(),
+    )));
 }
 
 // ------------------------------------------------------------------- rendering
+
+fn maybe_refresh_histogram(ui: &AppWindow, s: &mut State) {
+    let rev = s.doc.revision();
+    let visible = matches!(ui.get_tab(), 2 | 5);
+    let initial = ui.get_histogram_img().size().width == 0;
+    if !initial && (!visible || s.hist_revision == Some(rev)) {
+        return;
+    }
+    let hist = s.doc.compute_histogram();
+    let rgba = studio_core::render_histogram_image(&hist, 320, 96).to_rgba8();
+    let buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        rgba.as_raw(),
+        rgba.width(),
+        rgba.height(),
+    );
+    ui.set_histogram_img(Image::from_rgba8(buf));
+    let stats = if s.zh {
+        format!(
+            "平均亮度 {:.1} · 陰影裁切 {:.1}% · 高光裁切 {:.1}%",
+            hist.mean_luma, hist.shadow_clip_pct, hist.highlight_clip_pct
+        )
+    } else {
+        format!(
+            "Mean {:.1} · Shadow clip {:.1}% · Highlight clip {:.1}%",
+            hist.mean_luma, hist.shadow_clip_pct, hist.highlight_clip_pct
+        )
+    };
+    ui.set_histogram_stats(stats.into());
+    s.hist_revision = Some(rev);
+}
 
 /// Push dirty pixels + overlays to the window.
 fn refresh(ui: &AppWindow, st: &S) {
     let mut guard = st.borrow_mut();
     let s = &mut *guard;
     let (w, h) = (s.doc.width(), s.doc.height());
+    if s.doc.resized || s.doc.dirty.is_some() {
+        s.hist_revision = None;
+    }
     if s.doc.resized || s.buf.width() != w || s.buf.height() != h {
         s.buf = SharedPixelBuffer::new(w, h);
         s.doc.dirty = Some(IRect::full(w, h));
@@ -643,6 +720,7 @@ fn refresh(ui: &AppWindow, st: &S) {
         ui.set_canvas(Image::from_rgba8(s.buf.clone()));
     }
     sync_view(ui, s);
+    maybe_refresh_histogram(ui, s);
 }
 
 fn sync_view(ui: &AppWindow, s: &State) {
@@ -701,7 +779,9 @@ fn sync_view(ui: &AppWindow, s: &State) {
     };
     ui.set_selection_path(path.into());
     let pv = match s.drag {
-        Drag::Shape { start, now } | Drag::RedactBox { start, now } => Some((start, now)),
+        Drag::Shape { start, now }
+        | Drag::RedactBox { start, now }
+        | Drag::Gradient { start, now, .. } => Some((start, now)),
         Drag::CanvasEdge { now, .. } => Some(((0.0, 0.0), now)),
         _ => None,
     };
@@ -711,6 +791,25 @@ fn sync_view(ui: &AppWindow, s: &State) {
         ui.set_pv_y(a.1.min(b.1));
         ui.set_pv_w((a.0 - b.0).abs());
         ui.set_pv_h((a.1 - b.1).abs());
+    }
+    let pv_line = match s.drag {
+        Drag::Gradient { start, now, .. } => format!(
+            "M {:.1} {:.1} L {:.1} {:.1}",
+            s.pan.0 + start.0 * s.zoom,
+            s.pan.1 + start.1 * s.zoom,
+            s.pan.0 + now.0 * s.zoom,
+            s.pan.1 + now.1 * s.zoom
+        ),
+        _ => String::new(),
+    };
+    ui.set_pv_line_path(pv_line.into());
+    match s.tools.clone_source {
+        Some((cx, cy)) => {
+            ui.set_has_clone_source(true);
+            ui.set_clone_src_x(cx);
+            ui.set_clone_src_y(cy);
+        }
+        None => ui.set_has_clone_source(false),
     }
     match s.doc.selected.and_then(|i| s.doc.layer_bounds(i)) {
         Some((x, y, w, h)) => {
@@ -1992,7 +2091,8 @@ fn c2pa_remove_copy(ui: &AppWindow, st: &S) {
 }
 
 fn refresh_info(ui: &AppWindow, st: &S) {
-    let s = st.borrow();
+    let mut s = st.borrow_mut();
+    maybe_refresh_histogram(ui, &mut s);
     let zh = s.zh;
     let mut info = format!(
         "{}×{} px, {} {}\n",
@@ -2101,6 +2201,7 @@ fn sync_layer_fields(ui: &AppWindow, s: &State) {
         return;
     };
     ui.set_l_name(l.name().into());
+    ui.set_l_blend(l.blend_mode().index() as i32);
     match l {
         ComposeLayer::Text(t) => {
             ui.set_l_text(t.text.clone().into());
@@ -2138,6 +2239,12 @@ fn sync_layer_fields(ui: &AppWindow, s: &State) {
 fn layer_edited(ui: &AppWindow, st: &S, field: &str) {
     let mut s = st.borrow_mut();
     let Some(idx) = s.doc.selected else { return };
+    if field == "blend" {
+        let mode = BlendMode::from_index(ui.get_l_blend().max(0) as usize);
+        s.edit_session = None;
+        s.doc.set_selected_blend_mode(mode);
+        return;
+    }
     // One undo step per continuous edit of the same field.
     let session = (idx, field.to_owned());
     if s.edit_session.as_ref() != Some(&session) {
@@ -2257,7 +2364,17 @@ fn canvas_edge(doc: &Doc, pan: (f32, f32), zoom: f32, mx: f32, my: f32) -> Optio
     }
 }
 
-fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shift: bool) {
+#[allow(clippy::too_many_arguments)]
+fn pointer(
+    ui: &AppWindow,
+    st: &S,
+    kind: i32,
+    button: i32,
+    mx: f32,
+    my: f32,
+    shift: bool,
+    alt: bool,
+) {
     let mut guard = st.borrow_mut();
     let s = &mut *guard;
     s.pointer_pos = Some((mx, my));
@@ -2292,6 +2409,10 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
     s.tools.redact_brush_radius = ui.get_redact_radius();
     s.tools.tape_width = ui.get_tape_width();
     s.tools.tape_pattern = ui.get_tape_pattern().clamp(0, 9) as usize;
+    s.tools.gradient_radial = ui.get_gradient_mode() == 1;
+    s.tools.wand_tolerance = ui.get_wand_tolerance().clamp(0.0, 128.0) as u8;
+    s.tools.wand_contiguous = ui.get_wand_contiguous();
+    s.tools.clone_hardness = ui.get_clone_hardness().clamp(0.1, 1.0);
     s.tools.redact_color = s.tools.color1;
     s.tools.shape = [
         ShapeKind::Line,
@@ -2435,6 +2556,7 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         s.gesture = Some(s.doc.begin_gesture());
                         s.doc.selected = None;
                         s.doc.selection = None;
+                        s.doc.selection_mask = None;
                         s.doc.selection_path.clear();
                         if ui.get_select_shape() == 2 {
                             s.doc.selection_path.push((
@@ -2443,6 +2565,69 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                             ));
                         }
                         s.drag = Drag::Select { start: p };
+                    }
+                }
+                Tool::Gradient => {
+                    // `Doc::apply_gradient` calls `checkpoint()` internally; do not start `s.gesture`.
+                    s.drag = Drag::Gradient {
+                        start: p,
+                        now: p,
+                        secondary,
+                    };
+                }
+                Tool::MagicWand => {
+                    if s.doc.magic_wand_select(
+                        p.0,
+                        p.1,
+                        s.tools.wand_tolerance,
+                        s.tools.wand_contiguous,
+                    ) {
+                        if let Some(sel) = s.doc.selection {
+                            let (sw, sh) = (sel.w.round() as u32, sel.h.round() as u32);
+                            ui.set_status(
+                                if s.zh {
+                                    format!("魔術棒已選取 {sw}×{sh} px 區域")
+                                } else {
+                                    format!("Magic wand selected {sw}x{sh} px region")
+                                }
+                                .into(),
+                            );
+                        }
+                    } else {
+                        ui.set_status(
+                            tl(s.zh, "魔術棒未選取任何像素", "Magic wand matched no pixels").into(),
+                        );
+                    }
+                }
+                Tool::Clone => {
+                    if secondary || alt {
+                        s.tools.clone_source = Some(p);
+                        let (cx, cy) = (p.0.round() as i32, p.1.round() as i32);
+                        ui.set_status(
+                            if s.zh {
+                                format!("已設定仿製取樣起點 ({cx}, {cy})")
+                            } else {
+                                format!("Clone source set at ({cx}, {cy})")
+                            }
+                            .into(),
+                        );
+                    } else if let Some(src0) = s.tools.clone_source {
+                        s.gesture = Some(s.doc.begin_gesture());
+                        let r = (s.tools.stroke_width * 0.5).max(1.0);
+                        s.doc.clone_dab(src0, p, r, s.tools.clone_hardness);
+                        s.drag = Drag::Clone {
+                            offset: (src0.0 - p.0, src0.1 - p.1),
+                            last: p,
+                        };
+                    } else {
+                        ui.set_status(
+                            tl(
+                                s.zh,
+                                "請先右鍵或 Alt+點選設定取樣起點",
+                                "Right-click or Alt+click to sample source first",
+                            )
+                            .into(),
+                        );
                     }
                 }
                 _ => {}
@@ -2549,6 +2734,52 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     now: (nw, nh),
                 };
             }
+            Drag::Gradient {
+                start, secondary, ..
+            } => {
+                let mut now = p;
+                if shift {
+                    let (dx, dy) = (p.0 - start.0, p.1 - start.1);
+                    let dist = dx.hypot(dy);
+                    let angle = (dy.atan2(dx) / std::f32::consts::FRAC_PI_4).round()
+                        * std::f32::consts::FRAC_PI_4;
+                    now = (start.0 + dist * angle.cos(), start.1 + dist * angle.sin());
+                }
+                s.drag = Drag::Gradient {
+                    start,
+                    now,
+                    secondary,
+                };
+                let (x0, y0, x1, y1) = (
+                    start.0.round() as i32,
+                    start.1.round() as i32,
+                    now.0.round() as i32,
+                    now.1.round() as i32,
+                );
+                ui.set_status(
+                    if s.zh {
+                        format!("漸層 ({x0}, {y0}) → ({x1}, {y1})")
+                    } else {
+                        format!("Gradient ({x0}, {y0}) -> ({x1}, {y1})")
+                    }
+                    .into(),
+                );
+            }
+            Drag::Clone { offset, last } => {
+                let dist = (p.0 - last.0).hypot(p.1 - last.1);
+                if dist >= 0.5 {
+                    let r = (s.tools.stroke_width * 0.5).max(1.0);
+                    let step = (r * 0.35).max(1.0);
+                    let steps = (dist / step).ceil().max(1.0) as u32;
+                    for k in 1..=steps {
+                        let t = k as f32 / steps as f32;
+                        let dst = (last.0 + (p.0 - last.0) * t, last.1 + (p.1 - last.1) * t);
+                        let src = (dst.0 + offset.0, dst.1 + offset.1);
+                        s.doc.clone_dab(src, dst, r, s.tools.clone_hardness);
+                    }
+                    s.drag = Drag::Clone { offset, last: p };
+                }
+            }
             Drag::None => {}
         },
         3 => cancel_gesture(s),
@@ -2579,12 +2810,10 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                         .selection
                         .is_some_and(|sel| sel.w < 2.0 || sel.h < 2.0)
                     {
-                        s.doc.selection = None;
-                        s.doc.selection_path.clear();
+                        s.doc.clear_selection();
                     }
                     if !s.doc.selection_path.is_empty() && s.doc.selection_path.len() < 3 {
-                        s.doc.selection = None;
-                        s.doc.selection_path.clear();
+                        s.doc.clear_selection();
                     }
                     if tool == Tool::Crop && s.doc.selection.is_some() {
                         ui.set_status(
@@ -2603,6 +2832,19 @@ fn pointer(ui: &AppWindow, st: &S, kind: i32, button: i32, mx: f32, my: f32, shi
                     s.doc.resize_canvas(now.0 as u32, now.1 as u32, bg);
                     ui.set_rs_w(s.doc.width() as i32);
                     ui.set_rs_h(s.doc.height() as i32);
+                }
+                Drag::Gradient {
+                    start,
+                    now,
+                    secondary,
+                } if (start.0 - now.0).hypot(start.1 - now.1) > 1.0 => {
+                    let (c1, c2) = if secondary {
+                        (s.tools.color2, s.tools.color1)
+                    } else {
+                        (s.tools.color1, s.tools.color2)
+                    };
+                    s.doc
+                        .apply_gradient(start, now, c1, c2, s.tools.gradient_radial);
                 }
                 _ => {}
             }
@@ -2675,6 +2917,7 @@ fn reset_document_ui(ui: &AppWindow, st: &S) {
     s.edit_session = None;
     s.drag = Drag::None;
     s.gesture = None;
+    s.hist_revision = None;
     ui.set_rs_w(s.doc.width() as i32);
     ui.set_rs_h(s.doc.height() as i32);
 }
@@ -3000,12 +3243,18 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             FormatPanel::Batch.handle_alpha_hex(ui, &mut s);
             return;
         }
-        "undo" => with_doc(ui, st, |d| {
-            d.undo();
-        }),
-        "redo" => with_doc(ui, st, |d| {
-            d.redo();
-        }),
+        "undo" => {
+            with_doc(ui, st, |d| {
+                d.undo();
+            });
+            sync_layer_fields(ui, &st.borrow());
+        }
+        "redo" => {
+            with_doc(ui, st, |d| {
+                d.redo();
+            });
+            sync_layer_fields(ui, &st.borrow());
+        }
         "paste" | "paste-layer" => {
             match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
                 Ok(img) => {
@@ -3180,6 +3429,29 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "layer-delete" => with_doc(ui, st, |d| {
             d.delete_selected();
         }),
+        "layer-merge-down" => {
+            let mut ok = false;
+            with_doc(ui, st, |d| ok = d.merge_selected_down());
+            if ok {
+                sync_layer_fields(ui, &st.borrow());
+            } else {
+                ui.set_status(
+                    tl(
+                        zh,
+                        "請先選取上方圖層才能向下合併",
+                        "Select a layer above another layer or the canvas to merge down",
+                    )
+                    .into(),
+                );
+            }
+        }
+        "layer-center" => with_doc(ui, st, |d| d.center_selected_layer()),
+        "layer-flip-h" => with_doc(ui, st, |d| d.flip_selected_layer(true)),
+        "layer-flip-v" => with_doc(ui, st, |d| d.flip_selected_layer(false)),
+        "layer-rot" => {
+            with_doc(ui, st, |d| d.rotate_selected_layer(true));
+            sync_layer_fields(ui, &st.borrow());
+        }
         "flatten" => with_doc(ui, st, |d| d.flatten()),
         "add-text" => {
             let n = format!(
@@ -3213,6 +3485,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "flip-v" => with_doc(ui, st, |d| d.apply_transform(tr::flip_vertical)),
         "select-all" => with_doc(ui, st, |d| {
             d.focus_box(None);
+            d.selection_mask = None;
             d.selection_path.clear();
             d.selection = Some(Selection {
                 x: 0.0,
@@ -3223,8 +3496,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             })
         }),
         "deselect" => with_doc(ui, st, |d| {
-            d.selection = None;
-            d.selection_path.clear();
+            d.clear_selection();
             d.focus_box(None);
         }),
         "crop" => {
@@ -3232,9 +3504,10 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             let needs_flatten = {
                 let s = st.borrow();
                 !s.doc.layers.is_empty()
-                    && s.doc
-                        .selection
-                        .is_some_and(|sel| remove || sel.circle || !s.doc.selection_path.is_empty())
+                    && (s.doc.selection_mask.is_some()
+                        || s.doc.selection.is_some_and(|sel| {
+                            remove || sel.circle || !s.doc.selection_path.is_empty()
+                        }))
             };
             if needs_flatten && rfd::MessageDialog::new()
                 .set_title("Pixel Studio")
@@ -3336,6 +3609,156 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "f-gray" => with_doc(ui, st, |d| d.apply_filter(tr::grayscale)),
         "f-invert" => with_doc(ui, st, |d| d.apply_filter(tr::invert)),
         "f-auto" => with_doc(ui, st, |d| d.apply_filter(fl::auto_contrast)),
+        "f-look" => {
+            let looks = ColorLook::all();
+            let idx = (ui.get_pro_look().max(0) as usize).min(looks.len() - 1);
+            let look = looks[idx];
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::apply_color_look(i, look))
+            });
+        }
+        "f-levels" => {
+            let in_black = ui.get_a_lvl_black().clamp(0.0, 240.0) as u8;
+            let gamma = ui.get_a_lvl_gamma().clamp(0.2, 3.0);
+            let in_white = ui.get_a_lvl_white().clamp(f32::from(in_black) + 1.0, 255.0) as u8;
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_levels(i, in_black, gamma, in_white, 0, 255))
+            });
+        }
+        "f-shadows" => {
+            let v = ui.get_a_shadows();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_shadows_highlights(i, v, 0.0))
+            });
+        }
+        "f-highlights" => {
+            let v = ui.get_a_highlights();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_shadows_highlights(i, 0.0, v))
+            });
+        }
+        "f-vibrance" => {
+            let v = ui.get_a_vibrance();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_vibrance(i, v))
+            });
+        }
+        "f-clarity" => {
+            let v = ui.get_a_clarity();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_clarity(i, v))
+            });
+        }
+        "f-balance" => {
+            let (r, g, b) = (ui.get_a_cb_r(), ui.get_a_cb_g(), ui.get_a_cb_b());
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::adjust_color_balance(i, r, g, b))
+            });
+        }
+        "f-threshold" => {
+            let lvl = ui.get_a_thresh().clamp(0.0, 255.0) as u8;
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::threshold(i, lvl))
+            });
+        }
+        "f-tilt-shift" => {
+            let (y, band, sigma) = (ui.get_e_ts_y(), ui.get_e_ts_band(), ui.get_e_ts_sigma());
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::tilt_shift(i, y, band, sigma))
+            });
+        }
+        "f-pixelate" => {
+            let block = ui.get_e_pixelate().round().max(2.0) as u32;
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::pixelate(i, block))
+            });
+        }
+        "f-grain" => {
+            let s_val = ui.get_e_grain();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::film_grain(i, s_val))
+            });
+        }
+        "f-oil" => {
+            let rad = ui.get_e_oil().round().clamp(1.0, 5.0) as u32;
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::oil_paint(i, rad, 20))
+            });
+        }
+        "f-emboss" => {
+            let s_val = ui.get_e_emboss();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::emboss(i, s_val))
+            });
+        }
+        "f-edge" => with_doc(ui, st, |d| {
+            d.apply_filter(|i| studio_core::edge_detect(i, false))
+        }),
+        "f-sketch" => with_doc(ui, st, |d| {
+            d.apply_filter(|i| studio_core::edge_detect(i, true))
+        }),
+        "f-remove-bg" => {
+            let tol = ui.get_c_bg_tol();
+            let edge = ui.get_c_bg_edge();
+            let c2 = st.borrow().tools.color2;
+            with_doc(ui, st, |d| {
+                d.apply_remove_background([c2[0], c2[1], c2[2]], tol, 2.0, edge)
+            });
+        }
+        "f-trim-alpha" => {
+            with_doc(ui, st, |d| {
+                let res = d.apply_auto_trim(TrimMode::Transparent);
+                ui.set_rs_w(res.width as i32);
+                ui.set_rs_h(res.height as i32);
+            });
+            fit(ui, st);
+        }
+        "f-trim-margin" => {
+            with_doc(ui, st, |d| {
+                let res = d.apply_auto_trim(TrimMode::CornerColor(16));
+                ui.set_rs_w(res.width as i32);
+                ui.set_rs_h(res.height as i32);
+            });
+            fit(ui, st);
+        }
+        "f-round-corners" => {
+            let rad = ui.get_c_round();
+            with_doc(ui, st, |d| {
+                d.apply_filter(|i| studio_core::round_corners(i, rad))
+            });
+        }
+        "f-drop-shadow" => {
+            let sigma = ui.get_c_shadow_sigma();
+            let pad = ui.get_c_shadow_pad().round().max(0.0) as u32;
+            with_doc(ui, st, |d| {
+                d.apply_transform(|i| {
+                    studio_core::add_drop_shadow(i, 6, 8, sigma, [0, 0, 0, 140], pad)
+                });
+                ui.set_rs_w(d.width() as i32);
+                ui.set_rs_h(d.height() as i32);
+            });
+            fit(ui, st);
+        }
+        "f-frame-card" => {
+            let pad = ui.get_c_frame_pad().round().max(0.0) as u32;
+            let rad = ui.get_c_frame_radius();
+            let c2 = st.borrow().tools.color2;
+            with_doc(ui, st, |d| {
+                d.apply_frame_card(FrameCardOptions {
+                    padding: pad,
+                    corner_radius: rad,
+                    shadow_sigma: 12.0,
+                    shadow_offset_x: 0,
+                    shadow_offset_y: 8,
+                    background_color: c2,
+                    border_width: 0,
+                    border_color: [220, 224, 230, 255],
+                });
+                ui.set_rs_w(d.width() as i32);
+                ui.set_rs_h(d.height() as i32);
+            });
+            fit(ui, st);
+        }
         "reset" => with_doc(ui, st, |d| d.reset_to_original()),
         "st-fill" => {
             let c = st.borrow().tools.color1;
@@ -3480,6 +3903,10 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             }
             ui.set_tab(n);
             match n {
+                2 => {
+                    let mut s = st.borrow_mut();
+                    maybe_refresh_histogram(ui, &mut s);
+                }
                 4 => action(ui, st, "tab-redact"),
                 5 => refresh_info(ui, st),
                 7 => action(ui, st, "refresh-shell"),
@@ -3548,6 +3975,11 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 )
                 .into(),
             );
+        }
+        "refresh-hist" => {
+            let mut s = st.borrow_mut();
+            maybe_refresh_histogram(ui, &mut s);
+            return;
         }
         "refresh-info" => refresh_info(ui, st),
         "c2pa-write" => {
@@ -3944,6 +4376,9 @@ fn tool_for_key(t: &str, shift: bool) -> Option<i32> {
         ("r", false) => 14,
         ("r", true) => 15,
         ("j", false) => 16,
+        ("g", false) => 17,
+        ("w", false) => 18,
+        ("o", false) => 19,
         _ => return None,
     })
 }
@@ -3973,6 +4408,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
             "r" => "toggle-rulers",
             "w" => "resize-dialog",
             "j" => "layer-dup",
+            "m" if shift => "layer-merge-down",
             "]" => "layer-up",
             "[" => "layer-down",
             "z" if shift => "redo",
@@ -4058,8 +4494,7 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
         {
             let mut s = st.borrow_mut();
             cancel_gesture(&mut s);
-            s.doc.selection = None;
-            s.doc.selection_path.clear();
+            s.doc.clear_selection();
             s.doc.selected = None;
             s.doc.focus_box(None);
             s.drag = Drag::None;
@@ -4096,8 +4531,9 @@ fn wire(ui: &AppWindow, st: &S) {
                             x: f32,
                             y: f32,
                             shift: bool,
-                            _ctrl: bool| {
-        pointer(&ui, &st, kind, button, x, y, shift)
+                            _ctrl: bool,
+                            alt: bool| {
+        pointer(&ui, &st, kind, button, x, y, shift, alt)
     });
     cb!(on_canvas_scroll, |ui,
                            st,
@@ -4248,6 +4684,8 @@ fn wire(ui: &AppWindow, st: &S) {
         }
         sync_export_format_ui(&ui, &s);
         sync_batch_format_ui(&ui, &s);
+        s.hist_revision = None;
+        maybe_refresh_histogram(&ui, &mut s);
         save_settings(&s);
     });
 }
@@ -4295,10 +4733,10 @@ mod cursor_tests {
         ui.invoke_tool_changed(Tool::Crop.index());
         ui.set_select_shape(2);
         ui.set_crop_mode(1);
-        ui.invoke_canvas_pointer(0, 0, 10.0, 10.0, false, false);
-        ui.invoke_canvas_pointer(2, 0, 80.0, 10.0, false, false);
-        ui.invoke_canvas_pointer(2, 0, 10.0, 80.0, false, false);
-        ui.invoke_canvas_pointer(1, 0, 10.0, 80.0, false, false);
+        ui.invoke_canvas_pointer(0, 0, 10.0, 10.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 80.0, 10.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 10.0, 80.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 10.0, 80.0, false, false, false);
         assert!(ui.get_has_selection());
         assert!(!ui.get_selection_path().is_empty());
         ui.invoke_action("crop".into());
@@ -4314,9 +4752,9 @@ mod cursor_tests {
         ui.set_tool(Tool::Tape.index());
         ui.invoke_tool_changed(Tool::Tape.index());
         ui.set_tape_pattern(4);
-        ui.invoke_canvas_pointer(0, 0, 20.0, 50.0, false, false);
-        ui.invoke_canvas_pointer(2, 0, 70.0, 50.0, false, false);
-        ui.invoke_canvas_pointer(1, 0, 70.0, 50.0, false, false);
+        ui.invoke_canvas_pointer(0, 0, 20.0, 50.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 70.0, 50.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 70.0, 50.0, false, false, false);
         assert_eq!(st.borrow().doc.layers.len(), 1);
         assert_ne!(
             st.borrow().doc.flattened().to_rgba8().get_pixel(50, 50).0,
@@ -4360,8 +4798,8 @@ mod cursor_tests {
         refresh(&ui, &st);
         ui.show().unwrap();
         // Same image-coordinate transform as the actual pointer callback.
-        ui.invoke_canvas_pointer(0, 0, 70.0, 75.0, false, false);
-        ui.invoke_canvas_pointer(1, 0, 70.0, 75.0, false, false);
+        ui.invoke_canvas_pointer(0, 0, 70.0, 75.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 70.0, 75.0, false, false, false);
         assert_eq!(st.borrow().doc.focused_box, Some(0));
         assert_eq!(st.borrow().doc.boxes, vec![auto.clone(), manual.clone()]);
         assert!(!st.borrow().doc.can_undo()); // selecting alone is not an edit
@@ -4402,8 +4840,8 @@ mod cursor_tests {
 
         // Empty canvas, Escape and switching to a layer/tool clear box focus.
         ui.invoke_select_box(0);
-        ui.invoke_canvas_pointer(0, 0, 360.0, 200.0, false, false);
-        ui.invoke_canvas_pointer(1, 0, 360.0, 200.0, false, false);
+        ui.invoke_canvas_pointer(0, 0, 360.0, 200.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 360.0, 200.0, false, false, false);
         assert_eq!(st.borrow().doc.focused_box, None);
         ui.invoke_select_box(0);
         ui.invoke_key(char::from(Key::Escape).to_string().into(), false, false);
@@ -4497,8 +4935,8 @@ mod cursor_tests {
             s.pan = (-5.0, 30.0);
         }
         ui.set_tool(Tool::RedactBox.index());
-        ui.invoke_canvas_pointer(0, 1, 52.5, 45.0, false, false);
-        ui.invoke_canvas_pointer(1, 1, 52.5, 45.0, false, false);
+        ui.invoke_canvas_pointer(0, 1, 52.5, 45.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 1, 52.5, 45.0, false, false, false);
         assert!(st.borrow().doc.boxes.is_empty());
         ui.invoke_action("undo".into());
         assert_eq!(st.borrow().doc.boxes, vec![manual]);
@@ -5361,5 +5799,256 @@ mod save_convert_tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn tool_labels_and_shortcuts_cover_pro_tools() {
+        assert_eq!(TOOL_LABELS.len(), 20);
+        assert_eq!(tool_for_key("g", false), Some(17));
+        assert_eq!(tool_for_key("w", false), Some(18));
+        assert_eq!(tool_for_key("o", false), Some(19));
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn gradient_wand_and_clone_pointer_workflows() {
+        let (ui, st) = make_test_ui(false);
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(80, 60);
+            s.zoom = 1.0;
+            s.pan = (0.0, 0.0);
+            s.tools.color1 = [255, 0, 0, 255];
+            s.tools.color2 = [0, 0, 255, 255];
+        }
+        refresh(&ui, &st);
+
+        // Gradient tool (`G`): live line preview + linear fill + undo.
+        assert!(ui.invoke_key("g".into(), false, false));
+        assert_eq!(ui.get_tool(), Tool::Gradient.index());
+        ui.invoke_canvas_pointer(0, 0, 10.0, 20.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 70.0, 20.0, false, false, false);
+        assert!(ui.get_has_preview());
+        assert!(!ui.get_pv_line_path().is_empty());
+        ui.invoke_canvas_pointer(1, 0, 70.0, 20.0, false, false, false);
+        assert!(!ui.get_has_preview());
+        assert!(ui.get_pv_line_path().is_empty());
+        {
+            let s = st.borrow();
+            assert!(s.doc.image.get_pixel(10, 20).0[0] > 200);
+            assert!(s.doc.image.get_pixel(70, 20).0[2] > 200);
+        }
+        ui.invoke_action("undo".into());
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(10, 20).0,
+            [255, 255, 255, 255]
+        );
+
+        // Magic Wand (`W`): click selects colored patch into `selection_mask`; Gradient respects mask; `deselect` clears mask.
+        {
+            let mut s = st.borrow_mut();
+            for y in 20..50 {
+                for x in 20..50 {
+                    s.doc.image.put_pixel(x, y, image::Rgba([20, 180, 40, 255]));
+                }
+            }
+            s.doc.dirty = Some(IRect::full(80, 60));
+        }
+        refresh(&ui, &st);
+        assert!(ui.invoke_key("w".into(), false, false));
+        assert_eq!(ui.get_tool(), Tool::MagicWand.index());
+        ui.invoke_canvas_pointer(0, 0, 30.0, 30.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 30.0, 30.0, false, false, false);
+        assert!(ui.get_has_selection());
+        assert!(st.borrow().doc.selection_mask.is_some());
+        assert!(ui.get_status().as_str().contains("px"));
+
+        assert!(ui.invoke_key("g".into(), false, false));
+        ui.invoke_canvas_pointer(0, 0, 20.0, 30.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 49.0, 30.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 49.0, 30.0, false, false, false);
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(5, 5).0,
+            [255, 255, 255, 255]
+        );
+        ui.invoke_action("deselect".into());
+        assert!(!ui.get_has_selection());
+        assert!(st.borrow().doc.selection_mask.is_none());
+
+        // Clone Stamp (`O`): right-click & Alt+click sample without opening ctx menu; left-drag clones in one undo step.
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(80, 60);
+            for y in 10..26 {
+                for x in 10..26 {
+                    s.doc.image.put_pixel(x, y, image::Rgba([220, 20, 20, 255]));
+                }
+            }
+            s.doc.dirty = Some(IRect::full(80, 60));
+        }
+        refresh(&ui, &st);
+        assert!(ui.invoke_key("o".into(), false, false));
+        assert_eq!(ui.get_tool(), Tool::Clone.index());
+        ui.set_stroke_width(12.0);
+        ui.set_clone_hardness(1.0);
+        ui.invoke_canvas_pointer(0, 1, 18.0, 18.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 1, 18.0, 18.0, false, false, false);
+        assert!(!ui.get_ctx_open());
+        assert!(ui.get_has_clone_source());
+        assert_eq!(st.borrow().tools.clone_source, Some((18.0, 18.0)));
+        assert!(ui.get_status().as_str().contains("Clone source set"));
+
+        ui.invoke_canvas_pointer(0, 0, 55.0, 40.0, false, false, false);
+        ui.invoke_canvas_pointer(2, 0, 60.0, 40.0, false, false, false);
+        ui.invoke_canvas_pointer(1, 0, 60.0, 40.0, false, false, false);
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(55, 40).0,
+            [220, 20, 20, 255]
+        );
+        ui.invoke_action("undo".into());
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(55, 40).0,
+            [255, 255, 255, 255]
+        );
+        ui.invoke_action("redo".into());
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(55, 40).0,
+            [220, 20, 20, 255]
+        );
+
+        ui.invoke_canvas_pointer(0, 0, 20.0, 20.0, false, false, true);
+        ui.invoke_canvas_pointer(1, 0, 20.0, 20.0, false, false, true);
+        assert_eq!(st.borrow().tools.clone_source, Some((20.0, 20.0)));
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn blend_mode_and_layer_productivity_actions() {
+        use slint::Model;
+        let (ui, st) = make_test_ui(false);
+        assert_eq!(ui.get_blend_mode_names().row_count(), BlendMode::ALL.len());
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(100, 80);
+            s.tools.color1 = [0, 128, 255, 255];
+            s.tools.color2 = [0, 128, 255, 255];
+            s.tools.shape_filled = true;
+            let t = s.tools.clone();
+            s.doc
+                .add_shape(ShapeKind::Rectangle, (5.0, 5.0), (25.0, 25.0), &t);
+            sync_layer_fields(&ui, &s);
+        }
+        refresh(&ui, &st);
+
+        ui.set_l_blend(BlendMode::Multiply.index() as i32);
+        ui.invoke_layer_edited("blend".into());
+        assert_eq!(st.borrow().doc.layers[0].blend_mode(), BlendMode::Multiply);
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.layers[0].blend_mode(), BlendMode::Normal);
+        assert_eq!(ui.get_l_blend(), 0);
+
+        ui.invoke_action("layer-center".into());
+        let (cx, cy, _, _) = st.borrow().doc.layer_bounds(0).unwrap();
+        assert!((cx + 10.0 - 50.0).abs() <= 2.0);
+        assert!((cy + 10.0 - 40.0).abs() <= 2.0);
+        ui.invoke_action("layer-flip-h".into());
+        ui.invoke_action("layer-flip-v".into());
+        ui.invoke_action("layer-rot".into());
+        assert!(ui.invoke_key("m".into(), true, true));
+        assert!(st.borrow().doc.layers.is_empty());
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.layers.len(), 1);
+
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn live_histogram_pro_adjust_effects_and_cutout_framing() {
+        let (ui, st) = make_test_ui(false);
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(40, 40);
+            for y in 0..40 {
+                for x in 0..40 {
+                    s.doc.image.put_pixel(
+                        x,
+                        y,
+                        image::Rgba([(x * 6) as u8, (y * 6) as u8, 120, 255]),
+                    );
+                }
+            }
+            s.doc.dirty = Some(IRect::full(40, 40));
+        }
+        refresh(&ui, &st);
+
+        ui.invoke_action("tab:2".into());
+        assert!(ui.get_histogram_img().size().width > 0);
+        assert!(ui.get_histogram_stats().as_str().contains("Mean"));
+        let stats_before = ui.get_histogram_stats().to_string();
+
+        ui.set_pro_look(1);
+        for act in [
+            "f-look",
+            "f-levels",
+            "f-shadows",
+            "f-highlights",
+            "f-vibrance",
+            "f-clarity",
+            "f-balance",
+            "f-tilt-shift",
+            "f-pixelate",
+            "f-grain",
+            "f-oil",
+            "f-emboss",
+            "f-edge",
+            "f-sketch",
+            "f-threshold",
+        ] {
+            ui.invoke_action(act.into());
+        }
+        assert_ne!(ui.get_histogram_stats().as_str(), stats_before);
+        ui.invoke_action("tab:5".into());
+        assert!(!ui.get_histogram_stats().is_empty());
+
+        // Cutout & framing workflow.
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(40, 40);
+            s.tools.color2 = [255, 255, 255, 255];
+            for y in 10..30 {
+                for x in 10..30 {
+                    s.doc.image.put_pixel(x, y, image::Rgba([220, 40, 40, 255]));
+                }
+            }
+            s.doc.dirty = Some(IRect::full(40, 40));
+        }
+        refresh(&ui, &st);
+
+        ui.invoke_action("f-remove-bg".into());
+        assert_eq!(st.borrow().doc.image.get_pixel(0, 0).0[3], 0);
+        assert_eq!(st.borrow().doc.image.get_pixel(20, 20).0[3], 255);
+
+        ui.invoke_action("f-trim-alpha".into());
+        let (tw, th) = (st.borrow().doc.width(), st.borrow().doc.height());
+        assert!(tw < 40 && th < 40);
+        assert_eq!(ui.get_img_w(), tw as i32);
+        assert_eq!(ui.get_rs_w(), tw as i32);
+
+        ui.set_c_round(8.0);
+        ui.invoke_action("f-round-corners".into());
+        assert_eq!(st.borrow().doc.image.get_pixel(0, 0).0[3], 0);
+
+        ui.invoke_action("f-drop-shadow".into());
+        let (sw, sh) = (st.borrow().doc.width(), st.borrow().doc.height());
+        assert!(sw > tw && sh > th);
+
+        ui.invoke_action("f-frame-card".into());
+        let (fw, fh) = (st.borrow().doc.width(), st.borrow().doc.height());
+        assert!(fw > sw && fh > sh);
+
+        ui.hide().unwrap();
     }
 }
