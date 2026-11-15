@@ -473,10 +473,20 @@ pub fn rotate_layer_90(layer: &mut ComposeLayer, clockwise: bool) {
             } else {
                 (sx + dy, sy - dx, sx - dy, sy + dx)
             };
-            shape.x1 = (nx1_2 + 1).div_euclid(2) as i32;
-            shape.y1 = (ny1_2 + 1).div_euclid(2) as i32;
-            shape.x2 = (nx2_2 + 1).div_euclid(2) as i32;
-            shape.y2 = (ny2_2 + 1).div_euclid(2) as i32;
+            // When width and height have opposite parity, double-coords are odd.
+            // Alternate the half-pixel rounding direction by the midpoint's parity
+            // so successive rotations cancel out instead of drifting.
+            let offset = if (sx & 1) == (sy & 1) {
+                0
+            } else if (sx & 1) != 0 {
+                1
+            } else {
+                -1
+            };
+            shape.x1 = ((nx1_2 + offset) / 2) as i32;
+            shape.y1 = ((ny1_2 + offset) / 2) as i32;
+            shape.x2 = ((nx2_2 + offset) / 2) as i32;
+            shape.y2 = ((ny2_2 + offset) / 2) as i32;
         }
         ComposeLayer::Text(_) => {}
     }
@@ -1454,6 +1464,74 @@ mod tests {
         rotate_layer_90(&mut arrow, false);
         if let ComposeLayer::Shape(s) = &arrow {
             assert_eq!((s.x1, s.y1, s.x2, s.y2), (20, 30, 20, 10));
+        }
+    }
+
+    #[test]
+    fn rotate_layer_90_shape_odd_dimensions_do_not_drift() {
+        let cases: [(i32, i32, i32, i32); 6] = [
+            (10, 20, 21, 30),  // odd width (11), even height (10)
+            (10, 20, 20, 31),  // even width (10), odd height (11)
+            (10, 20, 21, 31),  // odd width (11), odd height (11)
+            (10, 20, 21, 20),  // horizontal odd-length line
+            (-5, -4, 0, 0),    // negative coords with mixed parity
+            (25, 19, 12, -10), // reversed endpoints with mixed parity
+        ];
+
+        for &(x1, y1, x2, y2) in &cases {
+            let orig_w = (x2 - x1).abs();
+            let orig_h = (y2 - y1).abs();
+
+            // 4 clockwise rotations return exact original coordinates.
+            let mut cw = ComposeLayer::Shape(ShapeLayer::new(ShapeKind::Rectangle, x1, y1, x2, y2));
+            for step in 1..=4 {
+                rotate_layer_90(&mut cw, true);
+                if let ComposeLayer::Shape(s) = &cw {
+                    let cur_w = (s.x2 - s.x1).abs();
+                    let cur_h = (s.y2 - s.y1).abs();
+                    if step % 2 == 1 {
+                        assert_eq!((cur_w, cur_h), (orig_h, orig_w));
+                    } else {
+                        assert_eq!((cur_w, cur_h), (orig_w, orig_h));
+                    }
+                    if step == 2 {
+                        assert_eq!((s.x1, s.y1, s.x2, s.y2), (x2, y2, x1, y1));
+                    }
+                }
+            }
+            if let ComposeLayer::Shape(s) = &cw {
+                assert_eq!(
+                    (s.x1, s.y1, s.x2, s.y2),
+                    (x1, y1, x2, y2),
+                    "4x CW drifted for ({x1}, {y1}, {x2}, {y2})"
+                );
+            }
+
+            // 4 counter-clockwise rotations return exact original coordinates.
+            let mut ccw = ComposeLayer::Shape(ShapeLayer::new(ShapeKind::Arrow, x1, y1, x2, y2));
+            for _ in 0..4 {
+                rotate_layer_90(&mut ccw, false);
+            }
+            if let ComposeLayer::Shape(s) = &ccw {
+                assert_eq!(
+                    (s.x1, s.y1, s.x2, s.y2),
+                    (x1, y1, x2, y2),
+                    "4x CCW drifted for ({x1}, {y1}, {x2}, {y2})"
+                );
+            }
+
+            // CW + CCW and CCW + CW cancel out cleanly.
+            let mut round = ComposeLayer::Shape(ShapeLayer::new(ShapeKind::Line, x1, y1, x2, y2));
+            rotate_layer_90(&mut round, true);
+            rotate_layer_90(&mut round, false);
+            if let ComposeLayer::Shape(s) = &round {
+                assert_eq!((s.x1, s.y1, s.x2, s.y2), (x1, y1, x2, y2));
+            }
+            rotate_layer_90(&mut round, false);
+            rotate_layer_90(&mut round, true);
+            if let ComposeLayer::Shape(s) = &round {
+                assert_eq!((s.x1, s.y1, s.x2, s.y2), (x1, y1, x2, y2));
+            }
         }
     }
 

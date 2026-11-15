@@ -44,11 +44,16 @@ fn max_channel_diff(a: Rgba<u8>, b: Rgba<u8>) -> u8 {
 }
 
 #[inline]
+fn sanitize_finite(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
+}
+
+#[inline]
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     if edge1 <= edge0 {
         return if x >= edge1 { 1.0 } else { 0.0 };
     }
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    let t = sanitize_finite((x - edge0) / (edge1 - edge0), 0.0).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -61,7 +66,7 @@ fn luma_bt709(p: Rgba<u8>) -> f32 {
 #[inline]
 fn rounded_rect_sdf(px: f32, py: f32, width: f32, height: f32, radius: f32) -> f32 {
     let max_r = 0.5 * width.min(height);
-    let r = radius.clamp(0.0, max_r);
+    let r = sanitize_finite(radius, 0.0).clamp(0.0, max_r);
     let cx = width * 0.5;
     let cy = height * 0.5;
     let hx = (cx - r).max(0.0);
@@ -73,7 +78,7 @@ fn rounded_rect_sdf(px: f32, py: f32, width: f32, height: f32, radius: f32) -> f
 
 #[inline]
 fn lerp_premultiplied(c0: Rgba<u8>, c1: Rgba<u8>, t: f32) -> Rgba<u8> {
-    let t = t.clamp(0.0, 1.0);
+    let t = sanitize_finite(t, 0.0).clamp(0.0, 1.0);
     if t <= 0.0 {
         return c0;
     }
@@ -242,8 +247,8 @@ pub fn remove_background_color(
         return DynamicImage::ImageRgba8(rgba);
     }
 
-    let tol = tolerance.max(0.0);
-    let feather = feather.max(0.0);
+    let tol = sanitize_finite(tolerance, 0.0).max(0.0);
+    let feather = sanitize_finite(feather, 0.0).max(0.0);
     let max_dist = tol + feather;
 
     let alpha_scale_for_dist = |dist: f32| -> f32 {
@@ -410,6 +415,7 @@ pub fn auto_trim(image: &DynamicImage, mode: TrimMode) -> (DynamicImage, TrimRes
 pub fn round_corners(image: &DynamicImage, radius: f32) -> DynamicImage {
     let mut rgba = image.to_rgba8();
     let (width, height) = rgba.dimensions();
+    let radius = sanitize_finite(radius, 0.0);
     if width == 0 || height == 0 || radius <= 0.0 {
         return DynamicImage::ImageRgba8(rgba);
     }
@@ -449,7 +455,7 @@ pub fn add_drop_shadow(
         return DynamicImage::ImageRgba8(rgba);
     }
 
-    let sigma = blur_sigma.max(0.0);
+    let sigma = sanitize_finite(blur_sigma, 0.0).max(0.0);
     let blur_margin = if sigma > 0.0 {
         (sigma * 3.0).ceil() as u32
     } else {
@@ -556,7 +562,8 @@ pub fn add_border_frame(image: &DynamicImage, opts: FrameCardOptions) -> Dynamic
         return image.clone();
     }
 
-    let corner_r = opts.corner_radius.max(0.0);
+    let corner_r = sanitize_finite(opts.corner_radius, 0.0).max(0.0);
+    let shadow_sigma = sanitize_finite(opts.shadow_sigma, 0.0).max(0.0);
     let rounded_content = if corner_r > 0.0 {
         round_corners(image, corner_r).to_rgba8()
     } else {
@@ -628,8 +635,7 @@ pub fn add_border_frame(image: &DynamicImage, opts: FrameCardOptions) -> Dynamic
         rounded_content
     };
 
-    let has_shadow =
-        opts.shadow_sigma > 0.0 || opts.shadow_offset_x != 0 || opts.shadow_offset_y != 0;
+    let has_shadow = shadow_sigma > 0.0 || opts.shadow_offset_x != 0 || opts.shadow_offset_y != 0;
     let shadow_color = if has_shadow {
         [0, 0, 0, 110]
     } else {
@@ -640,7 +646,7 @@ pub fn add_border_frame(image: &DynamicImage, opts: FrameCardOptions) -> Dynamic
         &DynamicImage::ImageRgba8(card),
         opts.shadow_offset_x,
         opts.shadow_offset_y,
-        opts.shadow_sigma.max(0.0),
+        shadow_sigma,
         shadow_color,
         opts.padding,
     )
@@ -683,9 +689,9 @@ pub fn tilt_shift(
     band_width: f32,
     blur_sigma: f32,
 ) -> DynamicImage {
-    let focus_y = focus_y.clamp(0.0, 1.0);
-    let band_width = band_width.clamp(0.05, 0.9);
-    let blur_sigma = blur_sigma.max(0.0);
+    let focus_y = sanitize_finite(focus_y, 0.5).clamp(0.0, 1.0);
+    let band_width = sanitize_finite(band_width, 0.2).clamp(0.05, 0.9);
+    let blur_sigma = sanitize_finite(blur_sigma, 0.0).max(0.0);
 
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 || blur_sigma <= f32::EPSILON {
@@ -773,7 +779,7 @@ impl Filter for FilmGrain {
 
 /// Add deterministic XorShift luma film grain (`strength` in `0.0..=1.0`) while preserving alpha.
 pub fn film_grain(image: &DynamicImage, strength: f32) -> DynamicImage {
-    let strength = strength.clamp(0.0, 1.0);
+    let strength = sanitize_finite(strength, 0.0).clamp(0.0, 1.0);
     if strength <= f32::EPSILON {
         return image.clone();
     }
@@ -825,7 +831,7 @@ impl Filter for Emboss {
 
 /// Apply a 3x3 directional emboss kernel (`strength` in `0.0..=2.0`) blended with the original.
 pub fn emboss(image: &DynamicImage, strength: f32) -> DynamicImage {
-    let strength = strength.clamp(0.0, 2.0);
+    let strength = sanitize_finite(strength, 0.0).clamp(0.0, 2.0);
     if strength <= f32::EPSILON {
         return image.clone();
     }
@@ -1059,14 +1065,23 @@ pub fn draw_gradient(
     mask: Option<&GrayImage>,
 ) {
     let (width, height) = img.dimensions();
-    if width == 0 || height == 0 {
+    if width == 0
+        || height == 0
+        || !x0.is_finite()
+        || !y0.is_finite()
+        || !x1.is_finite()
+        || !y1.is_finite()
+    {
         return;
     }
 
     let dx = x1 - x0;
     let dy = y1 - y0;
+    let radius = dx.hypot(dy);
+    if !dx.is_finite() || !dy.is_finite() || !radius.is_finite() {
+        return;
+    }
     let len_sq = dx * dx + dy * dy;
-    let radius = len_sq.sqrt();
 
     for y in 0..height {
         let py = y as f32;
@@ -1089,10 +1104,16 @@ pub fn draw_gradient(
             let px = x as f32;
             let t = match kind {
                 GradientKind::Linear => {
-                    if len_sq <= 1e-6 {
-                        0.0
+                    if len_sq.is_finite() {
+                        if len_sq <= 1e-6 {
+                            0.0
+                        } else {
+                            (((px - x0) * dx + (py - y0) * dy) / len_sq).clamp(0.0, 1.0)
+                        }
                     } else {
-                        (((px - x0) * dx + (py - y0) * dy) / len_sq).clamp(0.0, 1.0)
+                        let ux = dx / radius;
+                        let uy = dy / radius;
+                        (((px - x0) * ux + (py - y0) * uy) / radius).clamp(0.0, 1.0)
                     }
                 }
                 GradientKind::Radial => {
@@ -1130,32 +1151,50 @@ pub fn clone_stamp_dab(
     hardness: f32,
 ) {
     let (width, height) = img.dimensions();
-    if width == 0 || height == 0 || radius <= 0.0 {
+    if width == 0 || height == 0 {
         return;
     }
 
-    let r = radius;
-    let hardness = hardness.clamp(0.0, 1.0);
+    let r = sanitize_finite(radius, 0.0);
+    if r <= 0.0 {
+        return;
+    }
+
+    let hardness = sanitize_finite(hardness, 0.0).clamp(0.0, 1.0);
     let inner_r = r * hardness;
-    let r_ceil = r.ceil() as i32;
-    let w_i = width as i32;
-    let h_i = height as i32;
+    let r_ceil = if r >= 1e18 {
+        i64::MAX / 2
+    } else {
+        r.ceil() as i64
+    };
 
-    let side = (r_ceil * 2 + 1) as usize;
-    let mut patch = Vec::with_capacity(side * side);
+    let w_i = i64::from(width);
+    let h_i = i64::from(height);
+    let sx_i = i64::from(src_x);
+    let sy_i = i64::from(src_y);
+    let dx_i = i64::from(dst_x);
+    let dy_i = i64::from(dst_y);
 
-    for dy in -r_ceil..=r_ceil {
-        let sy = src_y + dy;
-        let ty = dst_y + dy;
-        if sy < 0 || sy >= h_i || ty < 0 || ty >= h_i {
-            continue;
-        }
-        for dx in -r_ceil..=r_ceil {
-            let sx = src_x + dx;
-            let tx = dst_x + dx;
-            if sx < 0 || sx >= w_i || tx < 0 || tx >= w_i {
-                continue;
-            }
+    // Clamp both source and destination coordinates to `0..width` and `0..height`
+    // before allocating the snapshot buffer so huge radii never over-allocate.
+    let min_dx = (-dx_i).max(-sx_i).max(-r_ceil);
+    let max_dx = (w_i - 1 - dx_i).min(w_i - 1 - sx_i).min(r_ceil);
+    let min_dy = (-dy_i).max(-sy_i).max(-r_ceil);
+    let max_dy = (h_i - 1 - dy_i).min(h_i - 1 - sy_i).min(r_ceil);
+    if min_dx > max_dx || min_dy > max_dy {
+        return;
+    }
+
+    let cap_w = (max_dx - min_dx + 1) as usize;
+    let cap_h = (max_dy - min_dy + 1) as usize;
+    let mut patch = Vec::with_capacity(cap_w.saturating_mul(cap_h));
+
+    for dy in min_dy..=max_dy {
+        let sy = (sy_i + dy) as u32;
+        let ty = (dy_i + dy) as u32;
+        for dx in min_dx..=max_dx {
+            let sx = (sx_i + dx) as u32;
+            let tx = (dx_i + dx) as u32;
 
             let dist = (dx as f32).hypot(dy as f32);
             if dist > r {
@@ -1169,8 +1208,8 @@ pub fn clone_stamp_dab(
             };
 
             if weight > 0.0 {
-                let sampled = *img.get_pixel(sx as u32, sy as u32);
-                patch.push((tx as u32, ty as u32, weight, sampled));
+                let sampled = *img.get_pixel(sx, sy);
+                patch.push((tx, ty, weight, sampled));
             }
         }
     }
@@ -1678,5 +1717,124 @@ mod tests {
             let _ = edge_detect(img, false);
             let _ = oil_paint(img, 2, 8);
         }
+    }
+
+    #[test]
+    fn non_finite_f32_params_are_sanitized_cleanly() {
+        let img = solid_rgba(12, 12, [90, 140, 210, 220]);
+        let orig_bytes = img.to_rgba8().into_raw();
+
+        // round_corners with NaN / +/-Inf acts as a no-op (no corner clipping).
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(round_corners(&img, bad).to_rgba8().into_raw(), orig_bytes);
+            assert_eq!(film_grain(&img, bad).to_rgba8().into_raw(), orig_bytes);
+            assert_eq!(emboss(&img, bad).to_rgba8().into_raw(), orig_bytes);
+            assert_eq!(
+                tilt_shift(&img, 0.5, 0.2, bad).to_rgba8().into_raw(),
+                orig_bytes
+            );
+        }
+
+        // tilt_shift with NaN focus_y/band_width still produces valid non-black pixels.
+        let ts_nan_band = tilt_shift(&img, f32::NAN, f32::INFINITY, 2.0).to_rgba8();
+        assert_eq!(ts_nan_band.dimensions(), (12, 12));
+        assert!(ts_nan_band.pixels().all(|p| p.0 == [90, 140, 210, 220]));
+
+        // remove_background_color with NaN/Inf tolerance/feather behaves like 0.0 (no panics, preserves non-target).
+        let bg_nan =
+            remove_background_color(&img, [0, 0, 0], f32::NAN, f32::INFINITY, true).to_rgba8();
+        assert_eq!(bg_nan.into_raw(), orig_bytes);
+
+        // add_drop_shadow & add_border_frame with NaN/Inf sigma/corner_radius match 0.0 without OOM/panic.
+        let shadowed = add_drop_shadow(&img, 2, 2, f32::NAN, [0, 0, 0, 180], 4).to_rgba8();
+        let shadowed_zero = add_drop_shadow(&img, 2, 2, 0.0, [0, 0, 0, 180], 4).to_rgba8();
+        assert_eq!(shadowed.dimensions(), (22, 22));
+        assert_eq!(shadowed, shadowed_zero);
+        let shadowed_inf = add_drop_shadow(&img, 2, 2, f32::INFINITY, [0, 0, 0, 180], 4).to_rgba8();
+        assert_eq!(shadowed_inf, shadowed_zero);
+
+        let bad_opts = FrameCardOptions {
+            padding: 4,
+            corner_radius: f32::NAN,
+            shadow_sigma: f32::INFINITY,
+            shadow_offset_x: 0,
+            shadow_offset_y: 0,
+            background_color: [255, 255, 255, 255],
+            border_width: 2,
+            border_color: [0, 0, 0, 255],
+        };
+        let zero_opts = FrameCardOptions {
+            corner_radius: 0.0,
+            shadow_sigma: 0.0,
+            ..bad_opts
+        };
+        let framed = add_border_frame(&img, bad_opts).to_rgba8();
+        let framed_zero = add_border_frame(&img, zero_opts).to_rgba8();
+        assert_eq!(framed.dimensions(), (24, 24));
+        assert_eq!(framed, framed_zero);
+        assert_eq!(*framed.get_pixel(12, 12), Rgba([112, 155, 216, 255]));
+
+        // draw_gradient with non-finite coordinates is a safe no-op.
+        let mut grad_canvas = RgbaImage::from_pixel(8, 8, Rgba([40, 80, 120, 255]));
+        let before = grad_canvas.clone();
+        draw_gradient(
+            &mut grad_canvas,
+            f32::NAN,
+            0.0,
+            8.0,
+            8.0,
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 0, 255, 255]),
+            GradientKind::Linear,
+            None,
+        );
+        draw_gradient(
+            &mut grad_canvas,
+            0.0,
+            0.0,
+            f32::INFINITY,
+            8.0,
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 0, 255, 255]),
+            GradientKind::Radial,
+            None,
+        );
+        assert_eq!(grad_canvas, before);
+
+        // clone_stamp_dab with NaN/Inf radius or NaN hardness is safe.
+        let mut stamp_canvas = RgbaImage::from_pixel(8, 8, Rgba([10, 20, 30, 255]));
+        let stamp_before = stamp_canvas.clone();
+        clone_stamp_dab(&mut stamp_canvas, 2, 2, 4, 4, f32::NAN, 1.0);
+        clone_stamp_dab(&mut stamp_canvas, 2, 2, 4, 4, f32::INFINITY, 1.0);
+        assert_eq!(stamp_canvas, stamp_before);
+
+        // NaN hardness still clamps safely to 0.0 without producing transparent black.
+        stamp_canvas.put_pixel(2, 2, Rgba([200, 100, 50, 255]));
+        clone_stamp_dab(&mut stamp_canvas, 2, 2, 4, 4, 2.0, f32::NAN);
+        assert_eq!(*stamp_canvas.get_pixel(4, 4), Rgba([200, 100, 50, 255]));
+    }
+
+    #[test]
+    fn clone_stamp_dab_huge_radius_and_out_of_bounds_clamps_without_oom() {
+        let mut img = RgbaImage::from_pixel(16, 16, Rgba([0, 0, 255, 255]));
+        for y in 0..16 {
+            for x in 0..8 {
+                img.put_pixel(x, y, Rgba([255, 0, 0, 255]));
+            }
+        }
+        let baseline = img.clone();
+
+        // Completely out-of-bounds destination with a massive 1e9 radius must exit immediately.
+        clone_stamp_dab(&mut img, 4, 4, 1_000_000, 1_000_000, 1e9, 1.0);
+        assert_eq!(img, baseline);
+
+        // Out-of-bounds center whose huge radius covers the entire 16x16 image must clamp cleanly.
+        clone_stamp_dab(&mut img, -50_000, -50_000, -50_000, -50_000, 1e9, 1.0);
+        assert_eq!(img, baseline);
+
+        // Shifted overlap with huge radius clamps to valid intersection and stamps cleanly.
+        clone_stamp_dab(&mut img, 0, 0, 8, 0, 1e7, 1.0);
+        assert_eq!(*img.get_pixel(8, 0), Rgba([255, 0, 0, 255]));
+        assert_eq!(*img.get_pixel(15, 15), Rgba([255, 0, 0, 255]));
     }
 }

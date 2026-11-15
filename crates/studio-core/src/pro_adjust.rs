@@ -562,7 +562,7 @@ impl ColorLook {
         &ALL_COLOR_LOOKS
     }
 
-    /// Parse a color look from display name, slug, or variant identifier.
+    /// Parse a color look from display name, slug, short alias, or variant identifier.
     pub fn from_name(name: &str) -> Option<ColorLook> {
         let normalized: String = name
             .trim()
@@ -573,13 +573,15 @@ impl ColorLook {
 
         match normalized.as_str() {
             "vivid" => Some(Self::Vivid),
-            "cinematictealorange" | "tealorange" => Some(Self::CinematicTealOrange),
-            "mattefilm" => Some(Self::MatteFilm),
-            "moodybw" => Some(Self::MoodyBw),
-            "warmgolden" => Some(Self::WarmGolden),
-            "crispcool" => Some(Self::CrispCool),
+            "cinematictealorange" | "tealorange" | "cinematic" => Some(Self::CinematicTealOrange),
+            "mattefilm" | "matte" | "film" => Some(Self::MatteFilm),
+            "moodybw" | "moody" | "bw" | "blackandwhite" | "blackwhite" | "moodyblackandwhite" => {
+                Some(Self::MoodyBw)
+            }
+            "warmgolden" | "warm" | "golden" => Some(Self::WarmGolden),
+            "crispcool" | "cool" | "crisp" => Some(Self::CrispCool),
             "highkey" => Some(Self::HighKey),
-            "cyberpunk" => Some(Self::Cyberpunk),
+            "cyberpunk" | "cyber" => Some(Self::Cyberpunk),
             _ => None,
         }
     }
@@ -1276,12 +1278,40 @@ mod tests {
             pipeline.push(Box::new(filter));
         }
 
-        // Slug parsing checks
+        // Slug and short alias parsing checks
         assert_eq!(
             ColorLook::from_name("cinematic_teal_orange"),
             Some(ColorLook::CinematicTealOrange)
         );
+        assert_eq!(
+            ColorLook::from_name("cinematic"),
+            Some(ColorLook::CinematicTealOrange)
+        );
+        assert_eq!(
+            ColorLook::from_name("teal-orange"),
+            Some(ColorLook::CinematicTealOrange)
+        );
+        assert_eq!(ColorLook::from_name("matte"), Some(ColorLook::MatteFilm));
+        assert_eq!(ColorLook::from_name("film"), Some(ColorLook::MatteFilm));
+        assert_eq!(ColorLook::from_name("warm"), Some(ColorLook::WarmGolden));
+        assert_eq!(ColorLook::from_name("golden"), Some(ColorLook::WarmGolden));
+        assert_eq!(ColorLook::from_name("cool"), Some(ColorLook::CrispCool));
+        assert_eq!(ColorLook::from_name("crisp"), Some(ColorLook::CrispCool));
         assert_eq!(ColorLook::from_name("moody-bw"), Some(ColorLook::MoodyBw));
+        assert_eq!(ColorLook::from_name("moody"), Some(ColorLook::MoodyBw));
+        assert_eq!(ColorLook::from_name("bw"), Some(ColorLook::MoodyBw));
+        assert_eq!(ColorLook::from_name("B&W"), Some(ColorLook::MoodyBw));
+        assert_eq!(
+            ColorLook::from_name("blackandwhite"),
+            Some(ColorLook::MoodyBw)
+        );
+        assert_eq!(
+            ColorLook::from_name("black-and-white"),
+            Some(ColorLook::MoodyBw)
+        );
+        assert_eq!(ColorLook::from_name("high-key"), Some(ColorLook::HighKey));
+        assert_eq!(ColorLook::from_name("cyber"), Some(ColorLook::Cyberpunk));
+        assert_eq!(ColorLook::from_name("  ViViD "), Some(ColorLook::Vivid));
         assert_eq!(ColorLook::from_name("nonexistent"), None);
 
         // Every look produces a distinct visual result
