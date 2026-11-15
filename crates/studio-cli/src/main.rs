@@ -1,23 +1,23 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use image::{DynamicImage, Rgba};
 use serde_json::json;
 use studio_core::{
-    AutoContrast, BatchOptions, Blur, BrightnessAdjust, C2paAddOptions, C2paManifestDraft,
-    C2paRemovalOptions, ClarityAdjust, ColorBalance, ColorLook, ContrastAdjust, ConvertOptions,
-    ConvertResult, EdgeDetect, Emboss, ExposureAdjust, FilmGrain, FilterPipeline, FlipHorizontal,
-    FlipVertical, FrameCardOptions, GifOptions, Grayscale, HistogramData, HueAdjust, ImageInfo,
-    Invert, LevelsAdjust, LookFilter, OilPaint, PanoramaMode, PanoramaOptions, Pixelate, Posterize,
-    Rotate180, RotateLeft, RotateRight, SaturationAdjust, Sepia, ShadowsHighlights, Sharpen,
-    SupportedFormat, TemperatureAdjust, Threshold, TiltShift, TintAdjust, TransformPipeline,
-    TrimMode, TrimResult, VibranceAdjust, Vignette, add_border_frame, auto_trim, blur_region,
-    canvas_resize, collect_supported_files, compute_histogram, convert_image_with_options,
-    crop_region, inspect_c2pa, inspect_image, load_dynamic_image, process_batch,
-    process_c2pa_add_batch, process_c2pa_removal_batch, remove_background_color,
-    remove_c2pa_manifest, resize_exact, resize_to_fit, save_dynamic_image, write_animated_gif,
-    write_panorama_jpeg,
+    AutoContrast, BatchOptions, BatchSummary, Blur, BrightnessAdjust, C2paAddOptions,
+    C2paManifestDraft, C2paRemovalOptions, ClarityAdjust, ColorBalance, ColorLook, ContrastAdjust,
+    ConvertOptions, ConvertResult, EdgeDetect, Emboss, ExposureAdjust, FilmGrain, FilterPipeline,
+    FlipHorizontal, FlipVertical, FrameCardOptions, GifOptions, Grayscale, HistogramData,
+    HueAdjust, ImageInfo, Invert, LevelsAdjust, LookFilter, OilPaint, PanoramaMode,
+    PanoramaOptions, Pixelate, Posterize, Rotate180, RotateLeft, RotateRight, SaturationAdjust,
+    Sepia, ShadowsHighlights, Sharpen, SupportedFormat, TemperatureAdjust, Threshold, TiltShift,
+    TintAdjust, TransformPipeline, TrimMode, TrimResult, VibranceAdjust, Vignette,
+    add_border_frame, auto_trim, blur_region, canvas_resize, collect_supported_files,
+    compute_histogram, convert_image_with_options, crop_region, inspect_c2pa, inspect_image,
+    load_dynamic_image, process_batch, process_c2pa_add_batch, process_c2pa_removal_batch,
+    remove_background_color, remove_c2pa_manifest, resize_exact, resize_to_fit, save_dynamic_image,
+    write_animated_gif, write_panorama_jpeg,
 };
 
 #[derive(Debug, Parser)]
@@ -35,27 +35,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Detect text offline and redact sensitive data (solid box by default).
-    Redact {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        /// solid | mosaic | blur
-        #[arg(long, default_value = "solid")]
-        style: String,
-        #[arg(long, default_value_t = 4)]
-        padding: u32,
-        /// Also redact every box containing this keyword.
-        #[arg(long)]
-        keyword: Vec<String>,
-        /// Redact all detected text, not only sensitive matches.
-        #[arg(long)]
-        all: bool,
-        /// Keep EXIF/ICC metadata from the source (stripped by default).
-        #[arg(long)]
-        keep_metadata: bool,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Redact(Box<RedactArgs>),
     /// Inspect image dimensions, format, and file size.
     Info { input: PathBuf },
     /// Compute RGB and BT.709 luminance histogram statistics for an image.
@@ -68,227 +48,19 @@ enum Command {
     /// List all supported image formats and their capabilities.
     Formats,
     /// Convert an image to another format.
-    Convert {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        /// Target output format (inferred from output extension if omitted).
-        #[arg(long)]
-        format: Option<SupportedFormat>,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-        /// Flatten background color in hex (#RRGGBB or #RRGGBBAA) when target lacks alpha.
-        #[arg(long, default_value = "#FFFFFFFF")]
-        background: String,
-        /// Encode lossless WebP when targeting webp.
-        #[arg(long, default_value_t = false)]
-        lossless: bool,
-        /// Keep EXIF/ICC metadata from the source (stripped by default).
-        #[arg(long, default_value_t = false)]
-        keep_metadata: bool,
-    },
+    Convert(Box<ConvertArgs>),
     /// Apply composable transforms and filters in a single pass.
-    Filter {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        /// Rotate clockwise in degrees (90, 180, or 270).
-        #[arg(long)]
-        rotate: Option<u16>,
-        /// Flip horizontally.
-        #[arg(long)]
-        flip_h: bool,
-        /// Flip vertically.
-        #[arg(long)]
-        flip_v: bool,
-        /// Adjust brightness (-255..255).
-        #[arg(long, allow_hyphen_values = true)]
-        brightness: Option<i32>,
-        /// Adjust contrast (-100.0..100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        contrast: Option<f32>,
-        /// Adjust saturation (-100.0..100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        saturation: Option<f32>,
-        /// Adjust exposure in stops (e.g. -2.0..2.0).
-        #[arg(long, allow_hyphen_values = true)]
-        exposure: Option<f32>,
-        /// Shift hue in degrees (-180.0..180.0).
-        #[arg(long, allow_hyphen_values = true)]
-        hue: Option<f32>,
-        /// Apply sepia tone (0.0..1.0).
-        #[arg(long)]
-        sepia: Option<f32>,
-        /// Apply edge vignette (0.0..1.0).
-        #[arg(long)]
-        vignette: Option<f32>,
-        /// Adjust color temperature (-100.0 cooler .. 100.0 warmer).
-        #[arg(long, allow_hyphen_values = true)]
-        temperature: Option<f32>,
-        /// Adjust green/magenta tint (-100.0 green .. 100.0 magenta).
-        #[arg(long, allow_hyphen_values = true)]
-        tint: Option<f32>,
-        /// Stretch histogram per channel (auto levels).
-        #[arg(long)]
-        auto_contrast: bool,
-        /// Posterize to N levels per channel (2..=32).
-        #[arg(long)]
-        posterize: Option<u8>,
-        /// Gaussian blur sigma (> 0).
-        #[arg(long)]
-        blur: Option<f32>,
-        /// Unsharp mask sigma (> 0).
-        #[arg(long)]
-        sharpen: Option<f32>,
-        /// Unsharp mask threshold (used with --sharpen).
-        #[arg(long, default_value_t = 5)]
-        sharpen_threshold: i32,
-        /// Convert to grayscale.
-        #[arg(long)]
-        grayscale: bool,
-        /// Invert RGB channels.
-        #[arg(long)]
-        invert: bool,
-        /// Remap tonal levels (`IN_BLACK,GAMMA,IN_WHITE` or `IN_BLACK,GAMMA,IN_WHITE,OUT_BLACK,OUT_WHITE`).
-        #[arg(long)]
-        levels: Option<String>,
-        /// Adjust shadow tones (-100.0..=100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        shadows: Option<f32>,
-        /// Adjust highlight tones (-100.0..=100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        highlights: Option<f32>,
-        /// Adjust smart saturation / vibrance (-100.0..=100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        vibrance: Option<f32>,
-        /// Adjust midtone local contrast / clarity (-100.0..=100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        clarity: Option<f32>,
-        /// Shift RGB channel balance (`R,G,B`, each in -100.0..=100.0).
-        #[arg(long, allow_hyphen_values = true)]
-        color_balance: Option<String>,
-        /// Convert to binary black & white at BT.709 luminance threshold (0..=255).
-        #[arg(long)]
-        threshold: Option<u8>,
-        /// Apply a curated color look (vivid, cinematic, matte, moody-bw, warm, cool, high-key, cyberpunk).
-        #[arg(long)]
-        look: Option<String>,
-        /// Add deterministic monochrome film grain (0.0..=1.0).
-        #[arg(long)]
-        grain: Option<f32>,
-        /// Pixelate into square blocks (>= 2).
-        #[arg(long)]
-        pixelate: Option<u32>,
-        /// Apply directional 3x3 emboss relief (0.0..=2.0).
-        #[arg(long)]
-        emboss: Option<f32>,
-        /// Detect Sobel luminance edges.
-        #[arg(long)]
-        edge_detect: bool,
-        /// Render dark ink edges on a white background (inverted Sobel edges).
-        #[arg(long)]
-        sketch: bool,
-        /// Apply painterly oil-paint filter (radius 1..=5).
-        #[arg(long)]
-        oil_paint: Option<u32>,
-        /// Apply miniature tilt-shift blur (`FOCUS_Y,BAND,SIGMA`, e.g. `0.5,0.25,6.0`).
-        #[arg(long)]
-        tilt_shift: Option<String>,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Filter(Box<FilterArgs>),
     /// Resize an image (exact, fit within bounds, or canvas resize).
-    Resize {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        #[arg(long)]
-        width: u32,
-        #[arg(long)]
-        height: u32,
-        /// Preserve aspect ratio within width x height.
-        #[arg(long, conflicts_with = "canvas")]
-        fit: bool,
-        /// Resize canvas without scaling existing pixels (top-left anchored).
-        #[arg(long, conflicts_with = "fit")]
-        canvas: bool,
-        /// Canvas fill color in hex (#RRGGBB or #RRGGBBAA) when --canvas is set.
-        #[arg(long, default_value = "#FFFFFFFF")]
-        background: String,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Resize(Box<ResizeArgs>),
     /// Crop a rectangular region.
-    Crop {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        #[arg(long)]
-        x: u32,
-        #[arg(long)]
-        y: u32,
-        #[arg(long)]
-        width: u32,
-        #[arg(long)]
-        height: u32,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Crop(Box<CropArgs>),
     /// Blur a rectangular region while preserving outside pixels.
-    BlurRegion {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        #[arg(long)]
-        x: u32,
-        #[arg(long)]
-        y: u32,
-        #[arg(long)]
-        width: u32,
-        #[arg(long)]
-        height: u32,
-        #[arg(long, default_value_t = 12.0)]
-        sigma: f32,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    BlurRegion(Box<BlurRegionArgs>),
     /// Convert an image to a 2:1 equirectangular JPEG with GPano XMP metadata.
-    Pano360 {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        #[arg(long, default_value = "pad")]
-        mode: PanoramaMode,
-        #[arg(long)]
-        width: Option<u32>,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Pano360(Box<Pano360Args>),
     /// Batch-convert a directory of images with optional resize and watermark.
-    Batch {
-        input_dir: PathBuf,
-        output_dir: PathBuf,
-        #[arg(long)]
-        format: SupportedFormat,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-        /// Flatten background color in hex (#RRGGBB or #RRGGBBAA) when target lacks alpha.
-        #[arg(long, default_value = "#FFFFFFFF")]
-        background: String,
-        /// Encode lossless WebP when targeting webp.
-        #[arg(long, default_value_t = false)]
-        lossless: bool,
-        #[arg(long)]
-        max_width: Option<u32>,
-        #[arg(long)]
-        max_height: Option<u32>,
-        #[arg(long)]
-        watermark_text: Option<String>,
-        #[arg(long, default_value_t = 0.45)]
-        watermark_opacity: f32,
-        #[arg(long, default_value_t = 48.0)]
-        watermark_font_size: f32,
-    },
+    Batch(Box<BatchArgs>),
     /// Inspect C2PA content credentials in an image file.
     C2paInfo { input: PathBuf },
     /// Remove C2PA manifests from all supported images in a directory.
@@ -299,84 +71,351 @@ enum Command {
     /// Remove C2PA manifest from a single image file into a new copy.
     C2paRemoveFile { input: PathBuf, output: PathBuf },
     /// Sign and embed C2PA manifests into all supported images in a directory.
-    C2paAdd {
-        input_dir: PathBuf,
-        output_dir: PathBuf,
-        #[arg(long, default_value = "Pixel Studio Batch")]
-        title: String,
-        #[arg(long, default_value = "Pixel Studio")]
-        creator: String,
-        #[arg(long, default_value = "Batch C2PA manifest added")]
-        action: String,
-    },
+    C2paAdd(Box<C2paAddArgs>),
     /// Assemble a directory of images into an animated GIF.
-    Gif {
-        input_dir: PathBuf,
-        output: PathBuf,
-        #[arg(long, default_value_t = 120)]
-        delay_ms: u32,
-        #[arg(long, default_value_t = true)]
-        repeat: bool,
-        #[arg(long)]
-        max_width: Option<u32>,
-        #[arg(long)]
-        max_height: Option<u32>,
-    },
+    Gif(Box<GifArgs>),
     /// Remove a solid background color by fading matching pixels to transparent.
-    RemoveBg {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.png next to the input).
-        output: Option<PathBuf>,
-        /// Target background color in hex (#RRGGBB or #RRGGBBAA).
-        #[arg(long, default_value = "#FFFFFF")]
-        color: String,
-        /// Color distance tolerance (>= 0.0).
-        #[arg(long, default_value_t = 32.0)]
-        tolerance: f32,
-        /// Smooth edge feather width (>= 0.0).
-        #[arg(long, default_value_t = 8.0)]
-        feather: f32,
-        /// Only remove background regions connected to image edges.
-        #[arg(long)]
-        edge_only: bool,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    RemoveBg(Box<RemoveBgArgs>),
     /// Auto-trim transparent or uniform corner borders from an image.
-    Trim {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        /// Trim outer borders matching top-left corner color within tolerance (0..=255); defaults to transparent trim.
-        #[arg(long)]
-        corner_tolerance: Option<u8>,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Trim(Box<TrimArgs>),
     /// Frame an image on a padded card with rounded corners, border, and drop shadow.
-    Frame {
-        input: PathBuf,
-        /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
-        output: Option<PathBuf>,
-        #[arg(long, default_value_t = 24)]
-        padding: u32,
-        #[arg(long, default_value_t = 16.0)]
-        round_corners: f32,
-        #[arg(long, default_value_t = 12.0)]
-        shadow_sigma: f32,
-        #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
-        shadow_x: i32,
-        #[arg(long, default_value_t = 6, allow_hyphen_values = true)]
-        shadow_y: i32,
-        #[arg(long, default_value = "#F4F6F9FF")]
-        background: String,
-        #[arg(long, default_value_t = 0)]
-        border_width: u32,
-        #[arg(long, default_value = "#D0D7DEFF")]
-        border_color: String,
-        #[arg(long, default_value_t = 92)]
-        quality: u8,
-    },
+    Frame(Box<FrameArgs>),
+}
+
+#[derive(Debug, clap::Args)]
+struct RedactArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    /// solid | mosaic | blur
+    #[arg(long, default_value = "solid")]
+    style: String,
+    #[arg(long, default_value_t = 4)]
+    padding: u32,
+    /// Also redact every box containing this keyword.
+    #[arg(long)]
+    keyword: Vec<String>,
+    /// Redact all detected text, not only sensitive matches.
+    #[arg(long)]
+    all: bool,
+    /// Keep EXIF/ICC metadata from the source (stripped by default).
+    #[arg(long)]
+    keep_metadata: bool,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct ConvertArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    /// Target output format (inferred from output extension if omitted).
+    #[arg(long)]
+    format: Option<SupportedFormat>,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+    /// Flatten background color in hex (#RRGGBB or #RRGGBBAA) when target lacks alpha.
+    #[arg(long, default_value = "#FFFFFFFF")]
+    background: String,
+    /// Encode lossless WebP when targeting webp.
+    #[arg(long, default_value_t = false)]
+    lossless: bool,
+    /// Keep EXIF/ICC metadata from the source (stripped by default).
+    #[arg(long, default_value_t = false)]
+    keep_metadata: bool,
+}
+
+#[derive(Debug, clap::Args)]
+struct FilterArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    /// Rotate clockwise in degrees (90, 180, or 270).
+    #[arg(long)]
+    rotate: Option<u16>,
+    /// Flip horizontally.
+    #[arg(long)]
+    flip_h: bool,
+    /// Flip vertically.
+    #[arg(long)]
+    flip_v: bool,
+    /// Adjust brightness (-255..255).
+    #[arg(long, allow_hyphen_values = true)]
+    brightness: Option<i32>,
+    /// Adjust contrast (-100.0..100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    contrast: Option<f32>,
+    /// Adjust saturation (-100.0..100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    saturation: Option<f32>,
+    /// Adjust exposure in stops (e.g. -2.0..2.0).
+    #[arg(long, allow_hyphen_values = true)]
+    exposure: Option<f32>,
+    /// Shift hue in degrees (-180.0..180.0).
+    #[arg(long, allow_hyphen_values = true)]
+    hue: Option<f32>,
+    /// Apply sepia tone (0.0..1.0).
+    #[arg(long)]
+    sepia: Option<f32>,
+    /// Apply edge vignette (0.0..1.0).
+    #[arg(long)]
+    vignette: Option<f32>,
+    /// Adjust color temperature (-100.0 cooler .. 100.0 warmer).
+    #[arg(long, allow_hyphen_values = true)]
+    temperature: Option<f32>,
+    /// Adjust green/magenta tint (-100.0 green .. 100.0 magenta).
+    #[arg(long, allow_hyphen_values = true)]
+    tint: Option<f32>,
+    /// Stretch histogram per channel (auto levels).
+    #[arg(long)]
+    auto_contrast: bool,
+    /// Posterize to N levels per channel (2..=32).
+    #[arg(long)]
+    posterize: Option<u8>,
+    /// Gaussian blur sigma (> 0).
+    #[arg(long)]
+    blur: Option<f32>,
+    /// Unsharp mask sigma (> 0).
+    #[arg(long)]
+    sharpen: Option<f32>,
+    /// Unsharp mask threshold (used with --sharpen).
+    #[arg(long, default_value_t = 5)]
+    sharpen_threshold: i32,
+    /// Convert to grayscale.
+    #[arg(long)]
+    grayscale: bool,
+    /// Invert RGB channels.
+    #[arg(long)]
+    invert: bool,
+    /// Remap tonal levels (`IN_BLACK,GAMMA,IN_WHITE` or `IN_BLACK,GAMMA,IN_WHITE,OUT_BLACK,OUT_WHITE`).
+    #[arg(long)]
+    levels: Option<String>,
+    /// Adjust shadow tones (-100.0..=100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    shadows: Option<f32>,
+    /// Adjust highlight tones (-100.0..=100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    highlights: Option<f32>,
+    /// Adjust smart saturation / vibrance (-100.0..=100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    vibrance: Option<f32>,
+    /// Adjust midtone local contrast / clarity (-100.0..=100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    clarity: Option<f32>,
+    /// Shift RGB channel balance (`R,G,B`, each in -100.0..=100.0).
+    #[arg(long, allow_hyphen_values = true)]
+    color_balance: Option<String>,
+    /// Convert to binary black & white at BT.709 luminance threshold (0..=255).
+    #[arg(long)]
+    threshold: Option<u8>,
+    /// Apply a curated color look (vivid, cinematic, matte, moody-bw, warm, cool, high-key, cyberpunk).
+    #[arg(long)]
+    look: Option<String>,
+    /// Add deterministic monochrome film grain (0.0..=1.0).
+    #[arg(long)]
+    grain: Option<f32>,
+    /// Pixelate into square blocks (>= 2).
+    #[arg(long)]
+    pixelate: Option<u32>,
+    /// Apply directional 3x3 emboss relief (0.0..=2.0).
+    #[arg(long)]
+    emboss: Option<f32>,
+    /// Detect Sobel luminance edges.
+    #[arg(long)]
+    edge_detect: bool,
+    /// Render dark ink edges on a white background (inverted Sobel edges).
+    #[arg(long)]
+    sketch: bool,
+    /// Apply painterly oil-paint filter (radius 1..=5).
+    #[arg(long)]
+    oil_paint: Option<u32>,
+    /// Apply miniature tilt-shift blur (`FOCUS_Y,BAND,SIGMA`, e.g. `0.5,0.25,6.0`).
+    #[arg(long)]
+    tilt_shift: Option<String>,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct ResizeArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    #[arg(long)]
+    width: u32,
+    #[arg(long)]
+    height: u32,
+    /// Preserve aspect ratio within width x height.
+    #[arg(long, conflicts_with = "canvas")]
+    fit: bool,
+    /// Resize canvas without scaling existing pixels (top-left anchored).
+    #[arg(long, conflicts_with = "fit")]
+    canvas: bool,
+    /// Canvas fill color in hex (#RRGGBB or #RRGGBBAA) when --canvas is set.
+    #[arg(long, default_value = "#FFFFFFFF")]
+    background: String,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct CropArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    #[arg(long)]
+    x: u32,
+    #[arg(long)]
+    y: u32,
+    #[arg(long)]
+    width: u32,
+    #[arg(long)]
+    height: u32,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct BlurRegionArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    #[arg(long)]
+    x: u32,
+    #[arg(long)]
+    y: u32,
+    #[arg(long)]
+    width: u32,
+    #[arg(long)]
+    height: u32,
+    #[arg(long, default_value_t = 12.0)]
+    sigma: f32,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct Pano360Args {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    #[arg(long, default_value = "pad")]
+    mode: PanoramaMode,
+    #[arg(long)]
+    width: Option<u32>,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct BatchArgs {
+    input_dir: PathBuf,
+    output_dir: PathBuf,
+    #[arg(long)]
+    format: SupportedFormat,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+    /// Flatten background color in hex (#RRGGBB or #RRGGBBAA) when target lacks alpha.
+    #[arg(long, default_value = "#FFFFFFFF")]
+    background: String,
+    /// Encode lossless WebP when targeting webp.
+    #[arg(long, default_value_t = false)]
+    lossless: bool,
+    #[arg(long)]
+    max_width: Option<u32>,
+    #[arg(long)]
+    max_height: Option<u32>,
+    #[arg(long)]
+    watermark_text: Option<String>,
+    #[arg(long, default_value_t = 0.45)]
+    watermark_opacity: f32,
+    #[arg(long, default_value_t = 48.0)]
+    watermark_font_size: f32,
+}
+
+#[derive(Debug, clap::Args)]
+struct C2paAddArgs {
+    input_dir: PathBuf,
+    output_dir: PathBuf,
+    #[arg(long, default_value = "Pixel Studio Batch")]
+    title: String,
+    #[arg(long, default_value = "Pixel Studio")]
+    creator: String,
+    #[arg(long, default_value = "Batch C2PA manifest added")]
+    action: String,
+}
+
+#[derive(Debug, clap::Args)]
+struct GifArgs {
+    input_dir: PathBuf,
+    output: PathBuf,
+    #[arg(long, default_value_t = 120)]
+    delay_ms: u32,
+    #[arg(long, default_value_t = true)]
+    repeat: bool,
+    #[arg(long)]
+    max_width: Option<u32>,
+    #[arg(long)]
+    max_height: Option<u32>,
+}
+
+#[derive(Debug, clap::Args)]
+struct RemoveBgArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.png next to the input).
+    output: Option<PathBuf>,
+    /// Target background color in hex (#RRGGBB or #RRGGBBAA).
+    #[arg(long, default_value = "#FFFFFF")]
+    color: String,
+    /// Color distance tolerance (>= 0.0).
+    #[arg(long, default_value_t = 32.0)]
+    tolerance: f32,
+    /// Smooth edge feather width (>= 0.0).
+    #[arg(long, default_value_t = 8.0)]
+    feather: f32,
+    /// Only remove background regions connected to image edges.
+    #[arg(long)]
+    edge_only: bool,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct TrimArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    /// Trim outer borders matching top-left corner color within tolerance (0..=255); defaults to transparent trim.
+    #[arg(long)]
+    corner_tolerance: Option<u8>,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
+}
+
+#[derive(Debug, clap::Args)]
+struct FrameArgs {
+    input: PathBuf,
+    /// Output file (default: pixelstudio_YYYYMMDD_HHMMSS.<ext> next to the input).
+    output: Option<PathBuf>,
+    #[arg(long, default_value_t = 24)]
+    padding: u32,
+    #[arg(long, default_value_t = 16.0)]
+    round_corners: f32,
+    #[arg(long, default_value_t = 12.0)]
+    shadow_sigma: f32,
+    #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
+    shadow_x: i32,
+    #[arg(long, default_value_t = 6, allow_hyphen_values = true)]
+    shadow_y: i32,
+    #[arg(long, default_value = "#F4F6F9FF")]
+    background: String,
+    #[arg(long, default_value_t = 0)]
+    border_width: u32,
+    #[arg(long, default_value = "#D0D7DEFF")]
+    border_color: String,
+    #[arg(long, default_value_t = 92)]
+    quality: u8,
 }
 
 /// Resolve an optional output path to a timestamped default next to the input.
@@ -420,795 +459,667 @@ fn parse_rgba_hex(hex: &str) -> Result<Rgba<u8>> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    run(&cli)
+}
+
+#[inline(never)]
+fn run(cli: &Cli) -> Result<()> {
     let json_out = cli.json;
 
-    match cli.command {
-        Command::Redact {
-            input,
-            output,
-            style,
-            padding,
-            keyword,
-            all,
-            keep_metadata,
-            quality,
-        } => {
-            let output = resolve_output(output, &input, &input_ext(&input));
-            use studio_core::redact::{RedactStyle, apply_redactions, select_by_keyword};
-            let image = load_dynamic_image(&input)?;
-            let dir = studio_core::ocr::ensure_models()?;
-            let detector = studio_core::ocr::TextDetector::load(&dir)?;
-            let mut boxes = detector.detect(&image)?;
-            for k in &keyword {
-                select_by_keyword(&mut boxes, k);
-            }
-            if all {
-                boxes.iter_mut().for_each(|b| b.selected = true);
-            }
-            if !json_out {
-                for b in &boxes {
-                    println!(
-                        "{} {:>4},{:<4} {:>4}x{:<3} {:<8} {}",
-                        if b.selected { "[x]" } else { "[ ]" },
-                        b.x,
-                        b.y,
-                        b.width,
-                        b.height,
-                        b.kind.map(|k| k.label()).unwrap_or("-"),
-                        b.text
-                    );
-                }
-            }
-            let style_enum = match style.as_str() {
-                "mosaic" => RedactStyle::Mosaic(12),
-                "blur" => RedactStyle::Blur(10.0),
-                _ => RedactStyle::default(),
-            };
-            let (out, n) = apply_redactions(&image, &boxes, style_enum, padding);
-            let format = studio_core::convert::require_output_format(&output)?;
-            save_dynamic_image(
-                &out,
-                &output,
-                ConvertOptions {
-                    format,
-                    quality,
-                    ..Default::default()
-                },
-            )?;
-            if keep_metadata {
-                studio_core::metadata::copy_metadata(&input, &output)?;
-            }
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "input": input,
-                        "output": output,
-                        "detected": boxes.len(),
-                        "redacted": n,
-                        "style": style,
-                    }))?
-                );
-            } else {
-                println!("detected {} text lines, redacted {n}", boxes.len());
-            }
-        }
-        Command::Info { input } => {
-            let info = inspect_image(input)?;
-            if json_out {
-                println!("{}", serde_json::to_string_pretty(&info_json_value(&info))?);
-            } else {
-                println!(
-                    "{}: {}x{} {} {} bytes",
-                    info.path.display(),
-                    info.width,
-                    info.height,
-                    info.format,
-                    info.file_size
-                );
-            }
-        }
-        Command::Histogram { input, bins } => {
-            let hist = run_histogram(&input)?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&histogram_json_value(&input, &hist, bins))?
-                );
-            } else {
-                println!(
-                    "{}: pixels={}, mean_luma={:.2}, std_dev_luma={:.2}, shadow_clip={:.2}%, highlight_clip={:.2}%",
-                    input.display(),
-                    hist.pixel_count,
-                    hist.mean_luma,
-                    hist.std_dev_luma,
-                    hist.shadow_clip_pct,
-                    hist.highlight_clip_pct
-                );
-            }
-        }
-        Command::Formats => {
-            if json_out {
-                println!("{}", serde_json::to_string_pretty(&formats_json_value())?);
-            } else {
-                for fmt in SupportedFormat::ALL {
-                    println!(
-                        "{:<5} ext={:<12} mime={:<14} alpha={:<5} quality={:<5} c2pa={:<5} exif_icc={}",
-                        fmt.label(),
-                        fmt.extensions().join(","),
-                        fmt.mime_type(),
-                        fmt.supports_alpha(),
-                        fmt.supports_quality(),
-                        fmt.supports_c2pa(),
-                        fmt.supports_exif_icc(),
-                    );
-                }
-            }
-        }
-        Command::Convert {
-            input,
-            output,
-            format,
-            quality,
-            background,
-            lossless,
-            keep_metadata,
-        } => {
-            let (result, effective_q) = run_convert(
-                input,
-                output,
-                format,
-                quality,
-                &background,
-                lossless,
-                keep_metadata,
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&convert_json_value(&result, effective_q))?
-                );
-            } else {
-                println!(
-                    "converted {} -> {} ({}x{}, {}, {} bytes)",
-                    result.input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format,
-                    result.file_size
-                );
-            }
-        }
-        Command::Filter {
-            input,
-            output,
-            rotate,
-            flip_h,
-            flip_v,
-            brightness,
-            contrast,
-            saturation,
-            exposure,
-            hue,
-            sepia,
-            vignette,
-            temperature,
-            tint,
-            auto_contrast,
-            posterize,
-            blur,
-            sharpen,
-            sharpen_threshold,
-            grayscale,
-            invert,
-            levels,
-            shadows,
-            highlights,
-            vibrance,
-            clarity,
-            color_balance,
-            threshold,
-            look,
-            grain,
-            pixelate,
-            emboss,
-            edge_detect,
-            sketch,
-            oil_paint,
-            tilt_shift,
-            quality,
-        } => {
-            let opts = FilterOptions {
-                input: input.clone(),
-                output,
-                rotate,
-                flip_h,
-                flip_v,
-                brightness,
-                contrast,
-                saturation,
-                exposure,
-                hue,
-                sepia,
-                vignette,
-                temperature,
-                tint,
-                auto_contrast,
-                posterize,
-                blur,
-                sharpen,
-                sharpen_threshold,
-                grayscale,
-                invert,
-                levels,
-                shadows,
-                highlights,
-                vibrance,
-                clarity,
-                color_balance,
-                threshold,
-                look,
-                grain,
-                pixelate,
-                emboss,
-                edge_detect,
-                sketch,
-                oil_paint,
-                tilt_shift,
-                quality,
-            };
-            let (result, step_count) = run_filter(opts)?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&filter_json_value(&input, &result, step_count))?
-                );
-            } else {
-                println!(
-                    "filtered {} -> {} ({}x{}, {}, {} steps)",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format,
-                    step_count
-                );
-            }
-        }
-        Command::Resize {
-            input,
-            output,
-            width,
-            height,
-            fit,
-            canvas,
-            background,
-            quality,
-        } => {
-            if width == 0 || height == 0 {
-                anyhow::bail!("width and height must be greater than zero");
-            }
-            let output = resolve_output(output, &input, &input_ext(&input));
-            let image = load_dynamic_image(&input)?;
-            let mode = if canvas {
-                "canvas"
-            } else if fit {
-                "fit"
-            } else {
-                "exact"
-            };
-            let resized = if canvas {
-                let bg = parse_rgba_hex(&background)?;
-                DynamicImage::ImageRgba8(canvas_resize(&image.to_rgba8(), width, height, bg))
-            } else if fit {
-                resize_to_fit(&image, width, height)
-            } else {
-                resize_exact(&image, width, height)
-            };
-            let format = output_format(&output)?;
-            let result = save_dynamic_image(
-                &resized,
-                &output,
-                ConvertOptions {
-                    format,
-                    quality,
-                    background: [255, 255, 255, 255],
-                },
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "input": input,
-                        "output": result.output,
-                        "width": result.width,
-                        "height": result.height,
-                        "mode": mode,
-                        "format": result.format.to_string(),
-                    }))?
-                );
-            } else {
-                println!(
-                    "resized ({mode}) {} -> {} ({}x{}, {})",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format
-                );
-            }
-        }
-        Command::Crop {
-            input,
-            output,
-            x,
-            y,
-            width,
-            height,
-            quality,
-        } => {
-            let output = resolve_output(output, &input, &input_ext(&input));
-            let image = load_dynamic_image(&input)?;
-            let cropped = crop_region(&image, x, y, width, height)?;
-            let format = output_format(&output)?;
-            let result = save_dynamic_image(
-                &cropped,
-                &output,
-                ConvertOptions {
-                    format,
-                    quality,
-                    background: [255, 255, 255, 255],
-                },
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "input": input,
-                        "output": result.output,
-                        "width": result.width,
-                        "height": result.height,
-                        "format": result.format.to_string(),
-                    }))?
-                );
-            } else {
-                println!(
-                    "cropped {} -> {} ({}x{}, {})",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format
-                );
-            }
-        }
-        Command::BlurRegion {
-            input,
-            output,
-            x,
-            y,
-            width,
-            height,
-            sigma,
-            quality,
-        } => {
-            let output = resolve_output(output, &input, &input_ext(&input));
-            let image = load_dynamic_image(&input)?;
-            let blurred = blur_region(&image, x, y, width, height, sigma)?;
-            let format = output_format(&output)?;
-            let result = save_dynamic_image(
-                &blurred,
-                &output,
-                ConvertOptions {
-                    format,
-                    quality,
-                    background: [255, 255, 255, 255],
-                },
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "input": input,
-                        "output": result.output,
-                        "width": result.width,
-                        "height": result.height,
-                        "format": result.format.to_string(),
-                    }))?
-                );
-            } else {
-                println!(
-                    "blurred region in {} -> {} ({}x{}, {})",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format
-                );
-            }
-        }
-        Command::Pano360 {
-            input,
-            output,
-            mode,
-            width,
-            quality,
-        } => {
-            let output = resolve_output(output, &input, "jpg");
-            let result = write_panorama_jpeg(
-                input,
-                output,
-                PanoramaOptions {
-                    mode,
-                    target_width: width,
-                    quality,
-                    background: [0, 0, 0, 255],
-                },
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "output": result.output,
-                        "width": result.width,
-                        "height": result.height,
-                        "mode": result.mode.to_string(),
-                    }))?
-                );
-            } else {
-                println!(
-                    "wrote 360-compatible JPEG {} ({}x{}, mode={})",
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.mode
-                );
-            }
-        }
-        Command::Batch {
-            input_dir,
-            output_dir,
-            format,
-            quality,
-            background,
-            lossless,
-            max_width,
-            max_height,
-            watermark_text,
-            watermark_opacity,
-            watermark_font_size,
-        } => {
-            std::fs::create_dir_all(&output_dir)?;
-            let bg = parse_rgba_hex(&background)?.0;
-            let effective_q = effective_quality(format, quality, lossless);
-            let files = collect_supported_files(&input_dir);
-            let summary = process_batch(
-                &files,
-                &BatchOptions {
-                    output_dir,
-                    convert: ConvertOptions {
-                        format,
-                        quality: effective_q,
-                        background: bg,
-                    },
-                    max_width,
-                    max_height,
-                    watermark_text: watermark_text.filter(|text| !text.trim().is_empty()),
-                    watermark_opacity,
-                    watermark_font_size,
-                },
-            );
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "total": summary.total,
-                        "succeeded": summary.succeeded,
-                        "failed": summary.failed,
-                    }))?
-                );
-            } else {
-                println!(
-                    "batch complete: {} total, {} succeeded, {} failed",
-                    summary.total, summary.succeeded, summary.failed
-                );
-                for result in summary
-                    .results
-                    .iter()
-                    .filter(|result| result.error.is_some())
-                {
-                    println!(
-                        "failed {}: {}",
-                        result.input.display(),
-                        result.error.as_deref().unwrap_or("unknown error")
-                    );
-                }
-            }
-        }
-        Command::C2paInfo { input } => {
-            let info = inspect_c2pa(&input)?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "path": input,
-                        "present": info.present,
-                        "title": info.title,
-                        "creator": info.creator,
-                        "action": info.action,
-                        "validation_state": info.validation_state,
-                        "manifest_count": info.manifest_count,
-                    }))?
-                );
-            } else if info.present {
-                println!(
-                    "{}: C2PA present (manifests={}, state={}, title={}, creator={}, action={})",
-                    input.display(),
-                    info.manifest_count,
-                    info.validation_state.as_deref().unwrap_or("unknown"),
-                    info.title.as_deref().unwrap_or("-"),
-                    info.creator.as_deref().unwrap_or("-"),
-                    info.action.as_deref().unwrap_or("-"),
-                );
-            } else {
-                println!("{}: no C2PA manifest found", input.display());
-            }
-        }
+    match &cli.command {
+        Command::Redact(args) => cmd_redact(args, json_out),
+        Command::Info { input } => cmd_info(input, json_out),
+        Command::Histogram { input, bins } => cmd_histogram(input, *bins, json_out),
+        Command::Formats => cmd_formats(json_out),
+        Command::Convert(args) => cmd_convert(args, json_out),
+        Command::Filter(args) => cmd_filter(args, json_out),
+        Command::Resize(args) => cmd_resize(args, json_out),
+        Command::Crop(args) => cmd_crop(args, json_out),
+        Command::BlurRegion(args) => cmd_blur_region(args, json_out),
+        Command::Pano360(args) => cmd_pano360(args, json_out),
+        Command::Batch(args) => cmd_batch(args, json_out),
+        Command::C2paInfo { input } => cmd_c2pa_info(input, json_out),
         Command::C2paRemove {
             input_dir,
             output_dir,
-        } => {
-            std::fs::create_dir_all(&output_dir)?;
-            let files = collect_supported_files(&input_dir);
-            let summary = process_c2pa_removal_batch(
-                &files,
-                &C2paRemovalOptions {
-                    output_dir: output_dir.clone(),
-                },
+        } => cmd_c2pa_remove(input_dir, output_dir, json_out),
+        Command::C2paRemoveFile { input, output } => cmd_c2pa_remove_file(input, output, json_out),
+        Command::C2paAdd(args) => cmd_c2pa_add(args, json_out),
+        Command::Gif(args) => cmd_gif(args, json_out),
+        Command::RemoveBg(args) => cmd_remove_bg(args, json_out),
+        Command::Trim(args) => cmd_trim(args, json_out),
+        Command::Frame(args) => cmd_frame(args, json_out),
+    }
+}
+
+#[inline(never)]
+fn cmd_redact(args: &RedactArgs, json_out: bool) -> Result<()> {
+    let output = resolve_output(args.output.clone(), &args.input, &input_ext(&args.input));
+    use studio_core::redact::{RedactStyle, apply_redactions, select_by_keyword};
+    let image = load_dynamic_image(&args.input)?;
+    let dir = studio_core::ocr::ensure_models()?;
+    let detector = studio_core::ocr::TextDetector::load(&dir)?;
+    let mut boxes = detector.detect(&image)?;
+    for k in &args.keyword {
+        select_by_keyword(&mut boxes, k);
+    }
+    if args.all {
+        boxes.iter_mut().for_each(|b| b.selected = true);
+    }
+    if !json_out {
+        for b in &boxes {
+            println!(
+                "{} {:>4},{:<4} {:>4}x{:<3} {:<8} {}",
+                if b.selected { "[x]" } else { "[ ]" },
+                b.x,
+                b.y,
+                b.width,
+                b.height,
+                b.kind.map(|k| k.label()).unwrap_or("-"),
+                b.text
             );
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "total": summary.total,
-                        "succeeded": summary.succeeded,
-                        "failed": summary.failed,
-                    }))?
-                );
-            } else {
-                println!(
-                    "C2PA batch removal complete: {} total, {} succeeded, {} failed",
-                    summary.total, summary.succeeded, summary.failed
-                );
-                for result in summary
-                    .results
-                    .iter()
-                    .filter(|result| result.error.is_some())
-                {
-                    println!(
-                        "failed {}: {}",
-                        result.input.display(),
-                        result.error.as_deref().unwrap_or("unknown error")
-                    );
-                }
-            }
-        }
-        Command::C2paRemoveFile { input, output } => {
-            remove_c2pa_manifest(&input, &output)?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "input": input,
-                        "output": output,
-                    }))?
-                );
-            } else {
-                println!(
-                    "removed C2PA manifest {} -> {}",
-                    input.display(),
-                    output.display()
-                );
-            }
-        }
-        Command::C2paAdd {
-            input_dir,
-            output_dir,
-            title,
-            creator,
-            action,
-        } => {
-            std::fs::create_dir_all(&output_dir)?;
-            let files = collect_supported_files(&input_dir);
-            let summary = process_c2pa_add_batch(
-                &files,
-                &C2paAddOptions {
-                    output_dir: output_dir.clone(),
-                    draft: C2paManifestDraft {
-                        title,
-                        creator,
-                        action,
-                    },
-                },
-            );
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "total": summary.total,
-                        "succeeded": summary.succeeded,
-                        "failed": summary.failed,
-                    }))?
-                );
-            } else {
-                println!(
-                    "C2PA batch add complete: {} total, {} succeeded, {} failed",
-                    summary.total, summary.succeeded, summary.failed
-                );
-                for result in summary
-                    .results
-                    .iter()
-                    .filter(|result| result.error.is_some())
-                {
-                    println!(
-                        "failed {}: {}",
-                        result.input.display(),
-                        result.error.as_deref().unwrap_or("unknown error")
-                    );
-                }
-            }
-        }
-        Command::Gif {
-            input_dir,
-            output,
-            delay_ms,
-            repeat,
-            max_width,
-            max_height,
-        } => {
-            let files = collect_supported_files(&input_dir);
-            let result = write_animated_gif(
-                &files,
-                output,
-                GifOptions {
-                    delay_ms,
-                    repeat,
-                    max_width,
-                    max_height,
-                    background: [255, 255, 255, 255],
-                },
-            )?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "output": result.output,
-                        "frame_count": result.frame_count,
-                        "width": result.width,
-                        "height": result.height,
-                        "delay_ms": result.delay_ms,
-                    }))?
-                );
-            } else {
-                println!(
-                    "wrote animated GIF {} ({} frames, {}x{}, {} ms/frame)",
-                    result.output.display(),
-                    result.frame_count,
-                    result.width,
-                    result.height,
-                    result.delay_ms
-                );
-            }
-        }
-        Command::RemoveBg {
-            input,
-            output,
-            color,
-            tolerance,
-            feather,
-            edge_only,
-            quality,
-        } => {
-            let result = run_remove_bg(&RemoveBgOptions {
-                input: &input,
-                output,
-                color: &color,
-                tolerance,
-                feather,
-                edge_only,
-                quality,
-            })?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&remove_bg_json_value(
-                        &input, &result, &color, tolerance, feather, edge_only,
-                    ))?
-                );
-            } else {
-                println!(
-                    "removed background {} -> {} ({}x{}, {}, alpha={})",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format,
-                    result.format.supports_alpha()
-                );
-            }
-        }
-        Command::Trim {
-            input,
-            output,
-            corner_tolerance,
-            quality,
-        } => {
-            let (result, trim_rect, mode) = run_trim(&input, output, corner_tolerance, quality)?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&trim_json_value(
-                        &input, &result, trim_rect, mode,
-                    ))?
-                );
-            } else {
-                println!(
-                    "trimmed {} -> {} (crop {}x{}+{}+{}, {})",
-                    input.display(),
-                    result.output.display(),
-                    trim_rect.width,
-                    trim_rect.height,
-                    trim_rect.x,
-                    trim_rect.y,
-                    result.format
-                );
-            }
-        }
-        Command::Frame {
-            input,
-            output,
-            padding,
-            round_corners,
-            shadow_sigma,
-            shadow_x,
-            shadow_y,
-            background,
-            border_width,
-            border_color,
-            quality,
-        } => {
-            let (result, card_opts) = run_frame(&FrameCliOptions {
-                input: &input,
-                output,
-                padding,
-                round_corners,
-                shadow_sigma,
-                shadow_x,
-                shadow_y,
-                background: &background,
-                border_width,
-                border_color: &border_color,
-                quality,
-            })?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&frame_json_value(&input, &result, &card_opts))?
-                );
-            } else {
-                println!(
-                    "framed {} -> {} ({}x{}, {})",
-                    input.display(),
-                    result.output.display(),
-                    result.width,
-                    result.height,
-                    result.format
-                );
-            }
         }
     }
+    let style_enum = match args.style.as_str() {
+        "mosaic" => RedactStyle::Mosaic(12),
+        "blur" => RedactStyle::Blur(10.0),
+        _ => RedactStyle::default(),
+    };
+    let (out, n) = apply_redactions(&image, &boxes, style_enum, args.padding);
+    let format = studio_core::convert::require_output_format(&output)?;
+    save_dynamic_image(
+        &out,
+        &output,
+        ConvertOptions {
+            format,
+            quality: args.quality,
+            ..Default::default()
+        },
+    )?;
+    if args.keep_metadata {
+        studio_core::metadata::copy_metadata(&args.input, &output)?;
+    }
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "input": &args.input,
+                "output": output,
+                "detected": boxes.len(),
+                "redacted": n,
+                "style": &args.style,
+            }))?
+        );
+    } else {
+        println!("detected {} text lines, redacted {n}", boxes.len());
+    }
+    Ok(())
+}
 
+#[inline(never)]
+fn cmd_info(input: &Path, json_out: bool) -> Result<()> {
+    let info = inspect_image(input)?;
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&info_json_value(&info))?);
+    } else {
+        println!(
+            "{}: {}x{} {} {} bytes",
+            info.path.display(),
+            info.width,
+            info.height,
+            info.format,
+            info.file_size
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_histogram(input: &Path, bins: bool, json_out: bool) -> Result<()> {
+    let hist = run_histogram(input)?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&histogram_json_value(input, &hist, bins))?
+        );
+    } else {
+        println!(
+            "{}: pixels={}, mean_luma={:.2}, std_dev_luma={:.2}, shadow_clip={:.2}%, highlight_clip={:.2}%",
+            input.display(),
+            hist.pixel_count,
+            hist.mean_luma,
+            hist.std_dev_luma,
+            hist.shadow_clip_pct,
+            hist.highlight_clip_pct
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_formats(json_out: bool) -> Result<()> {
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&formats_json_value())?);
+    } else {
+        for fmt in SupportedFormat::ALL {
+            println!(
+                "{:<5} ext={:<12} mime={:<14} alpha={:<5} quality={:<5} c2pa={:<5} exif_icc={}",
+                fmt.label(),
+                fmt.extensions().join(","),
+                fmt.mime_type(),
+                fmt.supports_alpha(),
+                fmt.supports_quality(),
+                fmt.supports_c2pa(),
+                fmt.supports_exif_icc(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_convert(args: &ConvertArgs, json_out: bool) -> Result<()> {
+    let (result, effective_q) = run_convert(
+        args.input.clone(),
+        args.output.clone(),
+        args.format,
+        args.quality,
+        &args.background,
+        args.lossless,
+        args.keep_metadata,
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&convert_json_value(&result, effective_q))?
+        );
+    } else {
+        println!(
+            "converted {} -> {} ({}x{}, {}, {} bytes)",
+            result.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format,
+            result.file_size
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_filter(args: &FilterArgs, json_out: bool) -> Result<()> {
+    let (result, step_count) = run_filter(args)?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&filter_json_value(&args.input, &result, step_count))?
+        );
+    } else {
+        println!(
+            "filtered {} -> {} ({}x{}, {}, {} steps)",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format,
+            step_count
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_resize(args: &ResizeArgs, json_out: bool) -> Result<()> {
+    if args.width == 0 || args.height == 0 {
+        anyhow::bail!("width and height must be greater than zero");
+    }
+    let output = resolve_output(args.output.clone(), &args.input, &input_ext(&args.input));
+    let image = load_dynamic_image(&args.input)?;
+    let mode = if args.canvas {
+        "canvas"
+    } else if args.fit {
+        "fit"
+    } else {
+        "exact"
+    };
+    let resized = if args.canvas {
+        let bg = parse_rgba_hex(&args.background)?;
+        DynamicImage::ImageRgba8(canvas_resize(
+            &image.to_rgba8(),
+            args.width,
+            args.height,
+            bg,
+        ))
+    } else if args.fit {
+        resize_to_fit(&image, args.width, args.height)
+    } else {
+        resize_exact(&image, args.width, args.height)
+    };
+    let format = output_format(&output)?;
+    let result = save_dynamic_image(
+        &resized,
+        &output,
+        ConvertOptions {
+            format,
+            quality: args.quality,
+            background: [255, 255, 255, 255],
+        },
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "input": &args.input,
+                "output": result.output,
+                "width": result.width,
+                "height": result.height,
+                "mode": mode,
+                "format": result.format.to_string(),
+            }))?
+        );
+    } else {
+        println!(
+            "resized ({mode}) {} -> {} ({}x{}, {})",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_crop(args: &CropArgs, json_out: bool) -> Result<()> {
+    let output = resolve_output(args.output.clone(), &args.input, &input_ext(&args.input));
+    let image = load_dynamic_image(&args.input)?;
+    let cropped = crop_region(&image, args.x, args.y, args.width, args.height)?;
+    let format = output_format(&output)?;
+    let result = save_dynamic_image(
+        &cropped,
+        &output,
+        ConvertOptions {
+            format,
+            quality: args.quality,
+            background: [255, 255, 255, 255],
+        },
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "input": &args.input,
+                "output": result.output,
+                "width": result.width,
+                "height": result.height,
+                "format": result.format.to_string(),
+            }))?
+        );
+    } else {
+        println!(
+            "cropped {} -> {} ({}x{}, {})",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_blur_region(args: &BlurRegionArgs, json_out: bool) -> Result<()> {
+    let output = resolve_output(args.output.clone(), &args.input, &input_ext(&args.input));
+    let image = load_dynamic_image(&args.input)?;
+    let blurred = blur_region(&image, args.x, args.y, args.width, args.height, args.sigma)?;
+    let format = output_format(&output)?;
+    let result = save_dynamic_image(
+        &blurred,
+        &output,
+        ConvertOptions {
+            format,
+            quality: args.quality,
+            background: [255, 255, 255, 255],
+        },
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "input": &args.input,
+                "output": result.output,
+                "width": result.width,
+                "height": result.height,
+                "format": result.format.to_string(),
+            }))?
+        );
+    } else {
+        println!(
+            "blurred region in {} -> {} ({}x{}, {})",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_pano360(args: &Pano360Args, json_out: bool) -> Result<()> {
+    let output = resolve_output(args.output.clone(), &args.input, "jpg");
+    let result = write_panorama_jpeg(
+        &args.input,
+        output,
+        PanoramaOptions {
+            mode: args.mode,
+            target_width: args.width,
+            quality: args.quality,
+            background: [0, 0, 0, 255],
+        },
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "output": result.output,
+                "width": result.width,
+                "height": result.height,
+                "mode": result.mode.to_string(),
+            }))?
+        );
+    } else {
+        println!(
+            "wrote 360-compatible JPEG {} ({}x{}, mode={})",
+            result.output.display(),
+            result.width,
+            result.height,
+            result.mode
+        );
+    }
+    Ok(())
+}
+
+fn print_batch_summary(label: &str, summary: &BatchSummary, json_out: bool) -> Result<()> {
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "total": summary.total,
+                "succeeded": summary.succeeded,
+                "failed": summary.failed,
+            }))?
+        );
+    } else {
+        println!(
+            "{label}: {} total, {} succeeded, {} failed",
+            summary.total, summary.succeeded, summary.failed
+        );
+        for result in summary
+            .results
+            .iter()
+            .filter(|result| result.error.is_some())
+        {
+            println!(
+                "failed {}: {}",
+                result.input.display(),
+                result.error.as_deref().unwrap_or("unknown error")
+            );
+        }
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_batch(args: &BatchArgs, json_out: bool) -> Result<()> {
+    std::fs::create_dir_all(&args.output_dir)?;
+    let bg = parse_rgba_hex(&args.background)?.0;
+    let effective_q = effective_quality(args.format, args.quality, args.lossless);
+    let files = collect_supported_files(&args.input_dir);
+    let summary = process_batch(
+        &files,
+        &BatchOptions {
+            output_dir: args.output_dir.clone(),
+            convert: ConvertOptions {
+                format: args.format,
+                quality: effective_q,
+                background: bg,
+            },
+            max_width: args.max_width,
+            max_height: args.max_height,
+            watermark_text: args
+                .watermark_text
+                .as_deref()
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned),
+            watermark_opacity: args.watermark_opacity,
+            watermark_font_size: args.watermark_font_size,
+        },
+    );
+    print_batch_summary("batch complete", &summary, json_out)
+}
+
+#[inline(never)]
+fn cmd_c2pa_info(input: &Path, json_out: bool) -> Result<()> {
+    let info = inspect_c2pa(input)?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "path": input,
+                "present": info.present,
+                "title": info.title,
+                "creator": info.creator,
+                "action": info.action,
+                "validation_state": info.validation_state,
+                "manifest_count": info.manifest_count,
+            }))?
+        );
+    } else if info.present {
+        println!(
+            "{}: C2PA present (manifests={}, state={}, title={}, creator={}, action={})",
+            input.display(),
+            info.manifest_count,
+            info.validation_state.as_deref().unwrap_or("unknown"),
+            info.title.as_deref().unwrap_or("-"),
+            info.creator.as_deref().unwrap_or("-"),
+            info.action.as_deref().unwrap_or("-"),
+        );
+    } else {
+        println!("{}: no C2PA manifest found", input.display());
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_c2pa_remove(input_dir: &Path, output_dir: &Path, json_out: bool) -> Result<()> {
+    std::fs::create_dir_all(output_dir)?;
+    let files = collect_supported_files(input_dir);
+    let summary = process_c2pa_removal_batch(
+        &files,
+        &C2paRemovalOptions {
+            output_dir: output_dir.to_path_buf(),
+        },
+    );
+    print_batch_summary("C2PA batch removal complete", &summary, json_out)
+}
+
+#[inline(never)]
+fn cmd_c2pa_remove_file(input: &Path, output: &Path, json_out: bool) -> Result<()> {
+    remove_c2pa_manifest(input, output)?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "input": input,
+                "output": output,
+            }))?
+        );
+    } else {
+        println!(
+            "removed C2PA manifest {} -> {}",
+            input.display(),
+            output.display()
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_c2pa_add(args: &C2paAddArgs, json_out: bool) -> Result<()> {
+    std::fs::create_dir_all(&args.output_dir)?;
+    let files = collect_supported_files(&args.input_dir);
+    let summary = process_c2pa_add_batch(
+        &files,
+        &C2paAddOptions {
+            output_dir: args.output_dir.clone(),
+            draft: C2paManifestDraft {
+                title: args.title.clone(),
+                creator: args.creator.clone(),
+                action: args.action.clone(),
+            },
+        },
+    );
+    print_batch_summary("C2PA batch add complete", &summary, json_out)
+}
+
+#[inline(never)]
+fn cmd_gif(args: &GifArgs, json_out: bool) -> Result<()> {
+    let files = collect_supported_files(&args.input_dir);
+    let result = write_animated_gif(
+        &files,
+        &args.output,
+        GifOptions {
+            delay_ms: args.delay_ms,
+            repeat: args.repeat,
+            max_width: args.max_width,
+            max_height: args.max_height,
+            background: [255, 255, 255, 255],
+        },
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "output": result.output,
+                "frame_count": result.frame_count,
+                "width": result.width,
+                "height": result.height,
+                "delay_ms": result.delay_ms,
+            }))?
+        );
+    } else {
+        println!(
+            "wrote animated GIF {} ({} frames, {}x{}, {} ms/frame)",
+            result.output.display(),
+            result.frame_count,
+            result.width,
+            result.height,
+            result.delay_ms
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_remove_bg(args: &RemoveBgArgs, json_out: bool) -> Result<()> {
+    let result = run_remove_bg(&RemoveBgOptions {
+        input: &args.input,
+        output: args.output.clone(),
+        color: &args.color,
+        tolerance: args.tolerance,
+        feather: args.feather,
+        edge_only: args.edge_only,
+        quality: args.quality,
+    })?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&remove_bg_json_value(
+                &args.input,
+                &result,
+                &args.color,
+                args.tolerance,
+                args.feather,
+                args.edge_only,
+            ))?
+        );
+    } else {
+        println!(
+            "removed background {} -> {} ({}x{}, {}, alpha={})",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format,
+            result.format.supports_alpha()
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_trim(args: &TrimArgs, json_out: bool) -> Result<()> {
+    let (result, trim_rect, mode) = run_trim(
+        &args.input,
+        args.output.clone(),
+        args.corner_tolerance,
+        args.quality,
+    )?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&trim_json_value(&args.input, &result, trim_rect, mode))?
+        );
+    } else {
+        println!(
+            "trimmed {} -> {} (crop {}x{}+{}+{}, {})",
+            args.input.display(),
+            result.output.display(),
+            trim_rect.width,
+            trim_rect.height,
+            trim_rect.x,
+            trim_rect.y,
+            result.format
+        );
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn cmd_frame(args: &FrameArgs, json_out: bool) -> Result<()> {
+    let (result, card_opts) = run_frame(&FrameCliOptions {
+        input: &args.input,
+        output: args.output.clone(),
+        padding: args.padding,
+        round_corners: args.round_corners,
+        shadow_sigma: args.shadow_sigma,
+        shadow_x: args.shadow_x,
+        shadow_y: args.shadow_y,
+        background: &args.background,
+        border_width: args.border_width,
+        border_color: &args.border_color,
+        quality: args.quality,
+    })?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&frame_json_value(&args.input, &result, &card_opts))?
+        );
+    } else {
+        println!(
+            "framed {} -> {} ({}x{}, {})",
+            args.input.display(),
+            result.output.display(),
+            result.width,
+            result.height,
+            result.format
+        );
+    }
     Ok(())
 }
 
@@ -1472,48 +1383,9 @@ fn histogram_json_value(
     obj
 }
 
-#[derive(Debug)]
-struct FilterOptions {
-    input: PathBuf,
-    output: Option<PathBuf>,
-    rotate: Option<u16>,
-    flip_h: bool,
-    flip_v: bool,
-    brightness: Option<i32>,
-    contrast: Option<f32>,
-    saturation: Option<f32>,
-    exposure: Option<f32>,
-    hue: Option<f32>,
-    sepia: Option<f32>,
-    vignette: Option<f32>,
-    temperature: Option<f32>,
-    tint: Option<f32>,
-    auto_contrast: bool,
-    posterize: Option<u8>,
-    blur: Option<f32>,
-    sharpen: Option<f32>,
-    sharpen_threshold: i32,
-    grayscale: bool,
-    invert: bool,
-    levels: Option<String>,
-    shadows: Option<f32>,
-    highlights: Option<f32>,
-    vibrance: Option<f32>,
-    clarity: Option<f32>,
-    color_balance: Option<String>,
-    threshold: Option<u8>,
-    look: Option<String>,
-    grain: Option<f32>,
-    pixelate: Option<u32>,
-    emboss: Option<f32>,
-    edge_detect: bool,
-    sketch: bool,
-    oil_paint: Option<u32>,
-    tilt_shift: Option<String>,
-    quality: u8,
-}
+type FilterOptions = FilterArgs;
 
-impl Default for FilterOptions {
+impl Default for FilterArgs {
     fn default() -> Self {
         Self {
             input: PathBuf::new(),
@@ -1557,8 +1429,8 @@ impl Default for FilterOptions {
     }
 }
 
-fn run_filter(opts: FilterOptions) -> Result<(ConvertResult, usize)> {
-    let output = resolve_output(opts.output, &opts.input, &input_ext(&opts.input));
+fn run_filter(opts: &FilterOptions) -> Result<(ConvertResult, usize)> {
+    let output = resolve_output(opts.output.clone(), &opts.input, &input_ext(&opts.input));
     let image = load_dynamic_image(&opts.input)?;
     let mut transforms = TransformPipeline::new();
     let mut filters = FilterPipeline::new();
@@ -1969,6 +1841,17 @@ mod tests {
     }
 
     #[test]
+    fn cli_command_definition_is_valid_and_compact() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+        assert!(
+            std::mem::size_of::<Command>() <= 128,
+            "Command enum grew too large ({} bytes); keep large variants boxed",
+            std::mem::size_of::<Command>()
+        );
+    }
+
+    #[test]
     fn cli_parses_filter_and_resize_subcommands() {
         let cli = Cli::try_parse_from([
             "studio-cli",
@@ -1986,7 +1869,7 @@ mod tests {
         ])
         .unwrap();
         assert!(cli.json);
-        assert!(matches!(cli.command, Command::Filter { .. }));
+        assert!(matches!(cli.command, Command::Filter(_)));
 
         let resize_cli = Cli::try_parse_from([
             "studio-cli",
@@ -1999,7 +1882,7 @@ mod tests {
             "--fit",
         ])
         .unwrap();
-        assert!(matches!(resize_cli.command, Command::Resize { .. }));
+        assert!(matches!(resize_cli.command, Command::Resize(_)));
     }
 
     #[test]
@@ -2007,24 +1890,19 @@ mod tests {
         let c1 = Cli::try_parse_from(["studio-cli", "convert", "in.png", "out.jfif"]).unwrap();
         assert!(matches!(
             c1.command,
-            Command::Convert {
-                format: None,
-                output: Some(_),
-                lossless: false,
-                keep_metadata: false,
-                ..
-            }
+            Command::Convert(ref args)
+                if args.format.is_none()
+                    && args.output.is_some()
+                    && !args.lossless
+                    && !args.keep_metadata
         ));
 
         let c2 =
             Cli::try_parse_from(["studio-cli", "convert", "in.png", "--format", "jfif"]).unwrap();
         assert!(matches!(
             c2.command,
-            Command::Convert {
-                format: Some(SupportedFormat::Jfif),
-                output: None,
-                ..
-            }
+            Command::Convert(ref args)
+                if args.format == Some(SupportedFormat::Jfif) && args.output.is_none()
         ));
 
         let c3 = Cli::try_parse_from([
@@ -2039,18 +1917,14 @@ mod tests {
         .unwrap();
         assert!(matches!(
             c3.command,
-            Command::Convert {
-                format: None,
-                keep_metadata: true,
-                ..
-            }
+            Command::Convert(ref args) if args.format.is_none() && args.keep_metadata
         ));
 
         let c4 = Cli::try_parse_from(["studio-cli", "convert", "in.png", "out.webp", "--lossless"])
             .unwrap();
         assert!(matches!(
             c4.command,
-            Command::Convert { lossless: true, .. }
+            Command::Convert(ref args) if args.lossless
         ));
 
         let f_cli = Cli::try_parse_from(["studio-cli", "--json", "formats"]).unwrap();
@@ -2070,11 +1944,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             b_cli.command,
-            Command::Batch {
-                format: SupportedFormat::Qoi,
-                lossless: true,
-                ..
-            }
+            Command::Batch(ref args)
+                if args.format == SupportedFormat::Qoi && args.lossless
         ));
 
         for ext in [
@@ -2311,21 +2182,16 @@ mod tests {
         .unwrap();
         assert!(matches!(
             filter_cli.command,
-            Command::Filter {
-                shadows: Some(s),
-                highlights: Some(h),
-                vibrance: Some(v),
-                clarity: Some(c),
-                threshold: Some(120),
-                pixelate: Some(4),
-                edge_detect: true,
-                sketch: true,
-                oil_paint: Some(3),
-                ..
-            } if (s + 25.0).abs() < 1e-6
-                && (h + 40.0).abs() < 1e-6
-                && (v + 15.0).abs() < 1e-6
-                && (c + 10.0).abs() < 1e-6
+            Command::Filter(ref args)
+                if args.shadows.is_some_and(|s| (s + 25.0).abs() < 1e-6)
+                    && args.highlights.is_some_and(|h| (h + 40.0).abs() < 1e-6)
+                    && args.vibrance.is_some_and(|v| (v + 15.0).abs() < 1e-6)
+                    && args.clarity.is_some_and(|c| (c + 10.0).abs() < 1e-6)
+                    && args.threshold == Some(120)
+                    && args.pixelate == Some(4)
+                    && args.edge_detect
+                    && args.sketch
+                    && args.oil_paint == Some(3)
         ));
 
         let remove_bg_cli = Cli::try_parse_from([
@@ -2344,11 +2210,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             remove_bg_cli.command,
-            Command::RemoveBg {
-                output: None,
-                edge_only: true,
-                ..
-            }
+            Command::RemoveBg(ref args) if args.output.is_none() && args.edge_only
         ));
 
         let trim_cli = Cli::try_parse_from([
@@ -2362,10 +2224,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             trim_cli.command,
-            Command::Trim {
-                corner_tolerance: Some(12),
-                ..
-            }
+            Command::Trim(ref args) if args.corner_tolerance == Some(12)
         ));
 
         let frame_cli = Cli::try_parse_from([
@@ -2393,13 +2252,11 @@ mod tests {
         .unwrap();
         assert!(matches!(
             frame_cli.command,
-            Command::Frame {
-                padding: 32,
-                shadow_x: -4,
-                shadow_y: -2,
-                border_width: 2,
-                ..
-            }
+            Command::Frame(ref args)
+                if args.padding == 32
+                    && args.shadow_x == -4
+                    && args.shadow_y == -2
+                    && args.border_width == 2
         ));
     }
 
@@ -2511,7 +2368,7 @@ mod tests {
         DynamicImage::ImageRgba8(rgba).save(&src).unwrap();
 
         let tonal_out = dir.path().join("tonal.png");
-        let (tonal_res, tonal_steps) = run_filter(FilterOptions {
+        let (tonal_res, tonal_steps) = run_filter(&FilterOptions {
             input: src.clone(),
             output: Some(tonal_out.clone()),
             levels: Some("10,1.1,245".to_string()),
@@ -2533,7 +2390,7 @@ mod tests {
         assert_eq!(tonal_json["steps_applied"], 6);
 
         let threshold_out = dir.path().join("thresh.png");
-        let (_, thresh_steps) = run_filter(FilterOptions {
+        let (_, thresh_steps) = run_filter(&FilterOptions {
             input: src.clone(),
             output: Some(threshold_out.clone()),
             threshold: Some(128),
@@ -2558,7 +2415,7 @@ mod tests {
         DynamicImage::ImageRgba8(step_img).save(&step_src).unwrap();
 
         let edge_out = dir.path().join("edge.png");
-        run_filter(FilterOptions {
+        run_filter(&FilterOptions {
             input: step_src.clone(),
             output: Some(edge_out.clone()),
             edge_detect: true,
@@ -2570,7 +2427,7 @@ mod tests {
         assert_eq!(edge_rgba.get_pixel(4, 5)[0], 255);
 
         let sketch_out = dir.path().join("sketch.png");
-        run_filter(FilterOptions {
+        run_filter(&FilterOptions {
             input: step_src,
             output: Some(sketch_out.clone()),
             sketch: true,
@@ -2582,7 +2439,7 @@ mod tests {
         assert_eq!(sketch_rgba.get_pixel(4, 5)[0], 0);
 
         let fx_out = dir.path().join("effects.png");
-        let (fx_res, fx_steps) = run_filter(FilterOptions {
+        let (fx_res, fx_steps) = run_filter(&FilterOptions {
             input: src.clone(),
             output: Some(fx_out.clone()),
             grain: Some(0.2),
@@ -2600,7 +2457,7 @@ mod tests {
         assert!(fx_out.exists());
 
         assert!(
-            run_filter(FilterOptions {
+            run_filter(&FilterOptions {
                 input: src.clone(),
                 output: Some(dir.path().join("bad_pix.png")),
                 pixelate: Some(1),
@@ -2609,7 +2466,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            run_filter(FilterOptions {
+            run_filter(&FilterOptions {
                 input: src,
                 output: Some(dir.path().join("bad_oil.png")),
                 oil_paint: Some(6),
