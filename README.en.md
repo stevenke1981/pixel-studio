@@ -21,6 +21,7 @@ Downloads: [Releases](https://github.com/stevenke1981/pixel-studio/releases)
 - **10 Layer Blend Modes & Layer Productivity**: `Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`, `Soft Light`, `Color Dodge`, `Difference`, and `Exclusion`, plus **Merge Down**, **Center on Canvas**, **Flip H/V**, and **Rotate 90°**.
 - **3 New Tools (20 tools total)**:
   - **Gradient (`G`)**: drag linear or radial two-colour gradients between colour 1 and colour 2, clipped to any active selection mask.
+  - **Mosaic selection**: Make a selection, then click the mosaic icon on the floating toolbar or choose **Mosaic selection** from the canvas context menu. Block size is automatic by default. Set a pixel size in **Adjust** for manual control. Layered images prompt before flattening, and Undo restores the layers.
   - **Magic Wand (`W`)**: tolerance-based contiguous or global colour selection producing a smart bitmap mask for local filters or cropping.
   - **Clone Stamp (`O`)**: right-click or `Alt`+click to sample a source point, then brush with adjustable hardness to clone pixels cleanly.
 - **Cutout, Auto Trim & Card Framing**: **Remove Solid Background** (configurable colour, tolerance, feathering, and edge-connected mode), **Auto Trim** (transparent margins or uniform corner borders), **Rounded Corners**, **Drop Shadow**, and **Framed Card** (padded card with rounded corners, border, background, and shadow).
