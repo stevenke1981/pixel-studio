@@ -894,6 +894,72 @@ impl Doc {
         bitmap
     }
 
+    /// Mosaic the visible selection, sampling only covered, visible pixels.
+    /// A zero block size chooses roughly ten blocks across the shorter side.
+    pub fn mosaic_selection(&mut self, block_size: u32) -> bool {
+        if block_size == 1 || (self.selection.is_none() && self.selection_mask.is_none()) {
+            return false;
+        }
+        let mask = self.selection_bitmap();
+        let Some(bounds) = mask_bounding_selection(&mask) else {
+            return false;
+        };
+        let (x, y, w, h) = (
+            bounds.x as u32,
+            bounds.y as u32,
+            bounds.w as u32,
+            bounds.h as u32,
+        );
+        let size = if block_size == 0 {
+            w.min(h).div_ceil(10).clamp(2, 64)
+        } else {
+            block_size.clamp(2, 64)
+        };
+        let mut out = self.flattened().into_rgba8();
+        let mut changed = false;
+        for by in (y..y + h).step_by(size as usize) {
+            for bx in (x..x + w).step_by(size as usize) {
+                let rows = by..by.saturating_add(size).min(y + h);
+                let cols = bx..bx.saturating_add(size).min(x + w);
+                let mut sum = [0u32; 3];
+                let mut weight = 0;
+                for py in rows.clone() {
+                    for px in cols.clone() {
+                        if mask.get_pixel(px, py)[0] != 0 {
+                            let p = out.get_pixel(px, py);
+                            let alpha = u32::from(p[3]);
+                            weight += alpha;
+                            for (total, &channel) in sum.iter_mut().zip(&p.0) {
+                                *total += u32::from(channel) * alpha;
+                            }
+                        }
+                    }
+                }
+                if weight == 0 {
+                    continue;
+                }
+                let rgb = sum.map(|total| ((total + weight / 2) / weight) as u8);
+                for py in rows {
+                    for px in cols.clone() {
+                        let p = out.get_pixel_mut(px, py);
+                        if mask.get_pixel(px, py)[0] != 0 && p[3] != 0 && p.0[..3] != rgb {
+                            p.0[..3].copy_from_slice(&rgb);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
+            self.checkpoint();
+            self.layers.clear();
+            self.selected = None;
+            self.overlay_dirty = true;
+            self.set_image(out);
+        }
+        changed
+    }
+
     /// Keep the selection or remove it from the visible composition. Masked
     /// operations flatten layers so transparent pixels cannot reveal them.
     pub fn crop_selection(&mut self, remove: bool) -> bool {
@@ -1639,7 +1705,7 @@ fn mask_bounding_selection(mask: &image::GrayImage) -> Option<Selection> {
             max_y = max_y.max(py);
         }
     }
-    any.then_some(Selection {
+    any.then(|| Selection {
         x: min_x as f32,
         y: min_y as f32,
         w: (max_x - min_x + 1) as f32,
@@ -2106,6 +2172,57 @@ mod tests {
         assert_eq!(d.image.get_pixel(4, 4).0[3], 255);
         assert!(d.undo());
         assert_eq!(d.image.get_pixel(1, 1).0[3], 255);
+    }
+
+    #[test]
+    fn mosaic_selection_samples_only_selected_colors_and_preserves_alpha_and_history() {
+        let mut d = Doc::new(4, 1);
+        let mut layer = RgbaImage::from_pixel(4, 1, Rgba([0, 255, 0, 255]));
+        layer.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        layer.put_pixel(2, 0, Rgba([0, 0, 255, 128]));
+        layer.put_pixel(3, 0, Rgba([0, 255, 0, 0]));
+        d.image = layer;
+        assert!(!d.mosaic_selection(4));
+        assert!(!d.can_undo());
+        d.selection_mask = Some(image::GrayImage::new(4, 1));
+        assert!(!d.mosaic_selection(4));
+        d.selection_mask = image::GrayImage::from_raw(4, 1, vec![255, 0, 255, 255]);
+        let before = d.image.clone();
+        assert!(!d.mosaic_selection(1));
+        assert!(!d.can_undo());
+        assert!(d.mosaic_selection(4));
+        assert_eq!(d.image.get_pixel(0, 0).0, [170, 0, 85, 255]);
+        assert_eq!(d.image.get_pixel(2, 0).0, [170, 0, 85, 128]);
+        for x in [1, 3] {
+            assert_eq!(d.image.get_pixel(x, 0), before.get_pixel(x, 0));
+        }
+        let after = d.image.clone();
+        assert!(d.undo());
+        assert_eq!(d.image, before);
+        assert!(d.redo());
+        assert_eq!(d.image, after);
+        assert!(!d.mosaic_selection(4));
+    }
+
+    #[test]
+    fn automatic_mosaic_uses_visible_layers_and_selection_aligned_blocks() {
+        let mut d = Doc::new(32, 32);
+        let layer = RgbaImage::from_fn(32, 32, |x, _| Rgba([x as u8 * 6, 0, 0, 255]));
+        let mut layer = ImageLayer::new("layer".into(), DynamicImage::ImageRgba8(layer));
+        layer.x = 0;
+        layer.y = 0;
+        d.push_layer(ComposeLayer::Image(layer));
+        d.selection = Some(Selection::from_points((1., 1.), (31., 31.), false, 32, 32));
+        let before = d.flattened().into_rgba8();
+        assert!(d.mosaic_selection(0));
+        assert_eq!(d.image.get_pixel(0, 1), before.get_pixel(0, 1));
+        assert_eq!(d.image.get_pixel(1, 1), before.get_pixel(2, 1));
+        assert_eq!(d.image.get_pixel(3, 1), before.get_pixel(2, 1));
+        assert_eq!(d.image.get_pixel(4, 1), before.get_pixel(5, 1));
+        assert!(d.layers.is_empty());
+        assert!(d.undo());
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.flattened().into_rgba8(), before);
     }
 
     #[test]

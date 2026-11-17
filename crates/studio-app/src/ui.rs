@@ -3499,6 +3499,24 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             d.clear_selection();
             d.focus_box(None);
         }),
+        "mosaic-selection" => {
+            let block = ui.get_selection_mosaic_block() as u32;
+            if block == 1 || !ui.get_has_selection() {
+                return;
+            }
+            if !st.borrow().doc.layers.is_empty()
+                && rfd::MessageDialog::new()
+                    .set_title("Pixel Studio")
+                    .set_description(tl(zh, "選區馬賽克會合併圖層。復原可還原所有圖層。繼續？", "Mosaicking the selection flattens the layers. Undo restores all layers. Continue?"))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show() != rfd::MessageDialogResult::Yes
+            {
+                return;
+            }
+            with_doc(ui, st, |d| {
+                d.mosaic_selection(block);
+            });
+        }
         "crop" => {
             let remove = ui.get_crop_mode() == 1;
             let needs_flatten = {
@@ -5871,6 +5889,16 @@ mod save_convert_tests {
             st.borrow().doc.image.get_pixel(5, 5).0,
             [255, 255, 255, 255]
         );
+        let before_mosaic = st.borrow().doc.image.clone();
+        ui.invoke_action("mosaic-selection".into());
+        assert_ne!(st.borrow().doc.image, before_mosaic);
+        assert!(ui.get_has_selection());
+        assert_eq!(
+            st.borrow().doc.image.get_pixel(5, 5),
+            before_mosaic.get_pixel(5, 5)
+        );
+        ui.invoke_action("undo".into());
+        assert_eq!(st.borrow().doc.image, before_mosaic);
         ui.invoke_action("deselect".into());
         assert!(!ui.get_has_selection());
         assert!(st.borrow().doc.selection_mask.is_none());

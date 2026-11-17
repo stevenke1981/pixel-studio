@@ -365,6 +365,7 @@ export component AppWindow inherits Window {
     in property <string> grid-path: "";
     in property <bool> show-grid-overlay: false;
     in property <bool> has-selection;
+    in-out property <int> selection-mosaic-block: 0;
     in property <float> sel-x; in property <float> sel-y; in property <float> sel-w; in property <float> sel-h;
     in property <bool> sel-circle;
     in property <string> selection-path;
@@ -1032,6 +1033,7 @@ export component AppWindow inherits Window {
                         IBtn { icon: @image-url("icons/save-as.svg"); size: 28px; tip: T.t("另存新檔 (Ctrl+Shift+S)", "Save as (Ctrl+Shift+S)"); clicked => { root.action("save-as"); } }
                         IBtn { icon: @image-url("icons/copy.svg"); size: 28px; tip: T.t("複製影像或選取區 (Ctrl+C)", "Copy image or selection (Ctrl+C)"); clicked => { root.action("copy"); } }
                         IBtn { icon: @image-url("icons/paste.svg"); size: 28px; tip: T.t("貼上為新影像 (Ctrl+V)", "Paste as new image (Ctrl+V)"); clicked => { root.action("paste"); } }
+                        IBtn { icon: @image-url("icons/tool-mosaic.svg"); size: 28px; tip: T.t("選區馬賽克", "Mosaic selection"); enabled: root.has-selection; clicked => { root.action("mosaic-selection"); } }
                         IBtn { icon: @image-url("icons/crop.svg"); size: 28px; tip: T.t("套用裁切模式 (Enter)", "Apply crop mode (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                         IBtn { icon: @image-url("icons/rot-right.svg"); size: 28px; tip: T.t("順時針旋轉 90°", "Rotate 90° clockwise"); clicked => { root.action("rot-right"); } }
                         IBtn { icon: @image-url("icons/zoom-fit.svg"); size: 28px; tip: T.t("符合視窗 (0)", "Zoom to fit (0)"); clicked => { root.action("zoom-fit"); } }
@@ -1068,6 +1070,7 @@ export component AppWindow inherits Window {
                         Rectangle { height: 1px; background: #e4e8ee; }
                         MenuRow { icon: @image-url("icons/select-all.svg"); label: T.t("全選", "Select all"); shortcut: "Ctrl+A"; clicked => { root.ctx-open = false; root.action("select-all"); } }
                         MenuRow { icon: @image-url("icons/deselect.svg"); label: T.t("取消選取", "Deselect"); shortcut: "Ctrl+D"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("deselect"); } }
+                        MenuRow { icon: @image-url("icons/tool-mosaic.svg"); label: T.t("選區馬賽克", "Mosaic selection"); enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("mosaic-selection"); } }
                         MenuRow { icon: @image-url("icons/crop.svg"); label: T.t("套用裁切模式", "Apply crop mode"); shortcut: "Enter"; enabled: root.has-selection; clicked => { root.ctx-open = false; root.action("crop"); } }
                         MenuRow { icon: @image-url("icons/layer-delete.svg"); label: T.t("刪除圖層", "Delete layer"); shortcut: "Del"; enabled: root.has-layer; clicked => { root.ctx-open = false; root.action("layer-delete"); } }
                         Rectangle { height: 1px; background: #e4e8ee; }
@@ -1320,6 +1323,10 @@ export component AppWindow inherits Window {
                                     IBtn { icon: @image-url("icons/deselect.svg"); tip: T.t("取消選取 (Ctrl+D)", "Deselect (Ctrl+D)"); enabled: root.has-selection; clicked => { root.action("deselect"); } }
                                     IBtn { icon: @image-url("icons/crop.svg"); tip: T.t("套用裁切模式 (Enter)", "Apply crop mode (Enter)"); enabled: root.has-selection; clicked => { root.action("crop"); } }
                                 }
+                                Section { text: T.t("選區馬賽克", "Mosaic selection"); }
+                                Text { text: T.t("格寬（像素，0 為自動）", "Block size (px, 0 for auto)"); }
+                                SpinBox { minimum: 0; maximum: 64; value <=> root.selection-mosaic-block; }
+                                Button { text: T.t("套用選區馬賽克", "Mosaic selection"); enabled: root.has-selection; clicked => { root.action("mosaic-selection"); } }
                                 Section { text: T.t("尺寸", "Size"); }
                                 HorizontalLayout {
                                     spacing: 4px;
