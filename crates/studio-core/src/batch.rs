@@ -253,7 +253,15 @@ fn plan_c2pa_outputs(
     suffix: &str,
 ) -> Vec<(PathBuf, PathBuf)> {
     let mut seen_inputs = HashSet::new();
-    let mut taken = HashSet::new();
+    // Seed with what is already in the output folder so the comparison is
+    // case-insensitive even on case-sensitive filesystems (Linux): `PHOTO.jpg`
+    // blocks `photo.jpg` everywhere, matching Windows/macOS behaviour.
+    let mut taken: HashSet<String> = std::fs::read_dir(output_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| path_key(&output_dir.join(entry.file_name())))
+        .collect();
     let mut plan = Vec::new();
     for input in inputs {
         if !seen_inputs.insert(path_key(input)) {
