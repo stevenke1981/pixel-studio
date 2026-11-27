@@ -1,22 +1,23 @@
 # Pixel Studio — Agent Notes (`AGENTS.md`)
 
-Rust + Slint cross-platform image editor (`D:\pixel-studio`).
+Rust + Slint cross-platform image editor.
 Designed to be **Human-First** (bilingual `zh-TW` / `en` GUI, intuitive Paint-surpassing tools, non-destructive layers, privacy-safe defaults) and **Agent-Friendly** (UI-independent core & document model, full CLI parity, deterministic `--json` output, strict quality gates).
 
 ## Workspace Layout
 
 - `crates/studio-core/` — Pure Rust image processing library (zero UI dependencies):
-  - `atomic_file.rs` — staging-file atomic write helper so failed exports never corrupt existing files.
-  - `batch.rs` — parallel batch conversion, resize, watermark, and C2PA batch sign/remove.
+  - `atomic_file.rs` — staging-file atomic write helpers (`write`, `write_with` with staging callback) so failed exports never corrupt existing files; GIF and panorama outputs use them too.
+  - `batch.rs` — parallel batch conversion, resize, watermark, and C2PA batch sign/remove. C2PA batch accepts arbitrary multi-file lists with dedup and collision-free output names (`_c2pa`, `_c2pa_2`…), never overwriting.
   - `c2pa_metadata.rs` — C2PA content credentials inspection (`inspect_c2pa`), signing (`write_c2pa_manifest`), and removal (`remove_c2pa_manifest`).
   - `compose.rs` — non-destructive layer composition (`TextLayer`, `ImageLayer`, `ShapeLayer` with `Line`, `Arrow`, `Rectangle`, `Ellipse`, `Triangle`), 10 `BlendMode` variants (`Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`, `SoftLight`, `ColorDodge`, `Difference`, `Exclusion`), and layer transforms (`flip_layer_horizontal`, `flip_layer_vertical`, `rotate_layer_90`).
   - `convert.rs` & `formats.rs` — format conversion (`png`, `jpg`, `jfif`, `bmp`, `gif`, `ico`, `webp` lossless/lossy, `tiff`).
   - `drawing.rs` — raster canvas tools (pencil, brush, highlighter, airbrush, calligraphy, eraser, flood fill, color picker, rectangle/circle/ellipse, mosaic).
-  - `filters.rs` — `Filter` trait, `FilterPipeline`, and filter structs/functions (`Rotate180`, `HueAdjust`/`adjust_hue`, `Sepia`/`sepia`, `Vignette`/`vignette`, `TemperatureAdjust`/`adjust_temperature`, `TintAdjust`/`adjust_tint`, `AutoContrast`/`auto_contrast`, `Posterize`/`posterize`).
+  - `filters.rs` — `Filter` trait, `FilterPipeline`, and filter structs/functions (`Rotate180`, `HueAdjust`/`adjust_hue`, `Sepia`/`sepia`, `Vignette`/`vignette`, `TemperatureAdjust`/`adjust_temperature`, `TintAdjust`/`adjust_tint`, `AutoContrast`/`auto_contrast`, `Posterize`/`posterize`). Per-pixel filters are rayon-parallel.
   - `gif.rs` — animated GIF encoder from image sequences.
+  - `image_io.rs` — image file inspection (`inspect_image` → `ImageInfo`: format, dimensions, color type, file size).
   - `gpano_xmp.rs` & `panorama360.rs` — 2:1 equirectangular 360° panorama builder (`pad`, `crop`, `stretch`) and GPano XMP injector.
   - `metadata.rs` — EXIF/ICC/XMP metadata inspection and preservation (exports strip metadata by default unless opted in).
-  - `naming.rs` — local timestamp filename generator (`pixelstudio_YYYYMMDD_HHMMSS.<ext>`).
+  - `naming.rs` — local timestamp filename generator (`pixelstudio_YYYYMMDD_HHMMSS.<ext>`) and `create_unique_output_dir` (creates a `<prefix>_YYYYMMDD_HHMMSS` folder, never reuses an existing one).
   - `ocr.rs` & `redact.rs` — offline text detection (`ocrs` + `rten`) and sensitive data redaction (TW/intl phone, email, TW National ID with checksum, Luhn credit card, URL, address; solid/mosaic/blur styles).
   - `pro_adjust.rs` — histogram analysis & tonal grading: `HistogramData` (`compute_histogram`, `render_histogram_image`), `LevelsAdjust`/`adjust_levels`, `ShadowsHighlights`/`adjust_shadows_highlights`, `VibranceAdjust`/`adjust_vibrance`, `ClarityAdjust`/`adjust_clarity`, `ColorBalance`/`adjust_color_balance`, `Threshold`/`threshold`, and 8 `ColorLook` presets via `LookFilter`/`apply_color_look` (`Vivid`, `CinematicTealOrange`, `MatteFilm`, `MoodyBw`, `WarmGolden`, `CrispCool`, `HighKey`, `Cyberpunk`).
   - `pro_effects.rs` — smart cutout, framing, spatial/stylize filters, and raster tools: `magic_wand_mask`, `remove_background_color`, `auto_trim` (`TrimMode`, `TrimResult`), `round_corners`, `add_drop_shadow`, `add_border_frame` (`FrameCardOptions`), `Filter` structs/functions (`TiltShift`/`tilt_shift`, `Pixelate`/`pixelate`, `FilmGrain`/`film_grain`, `Emboss`/`emboss`, `EdgeDetect`/`edge_detect`, `OilPaint`/`oil_paint`), `draw_gradient` (`GradientKind::Linear`/`Radial`), and `clone_stamp_dab`.
@@ -26,7 +27,7 @@ Designed to be **Human-First** (bilingual `zh-TW` / `en` GUI, intuitive Paint-su
   - `util.rs` — shared channel math (`clamp_channel`, `lerp_channel`, `rgb_to_hsl`, `hsl_to_rgb`).
 - `crates/studio-app/` — Slint desktop GUI application (binary name: `pixel-studio`):
   - `src/doc.rs` — UI-independent document state, 20 tools (including `Crop` with Rect/Circle/Freehand modes, `Tape` sticker brush, `Gradient`, `MagicWand`, and `Clone`), bitmap `selection_mask`, layers with `BlendMode` & productivity ops (`set_selected_blend_mode`, `center_selected_layer`, `flip_selected_layer`, `rotate_selected_layer`, `merge_selected_down`), pro ops (`compute_histogram`, `apply_remove_background`, `apply_auto_trim`, `apply_frame_card`), undo/redo history, redaction box selection/deletion, and `.pixel-project` v2 serialization.
-  - `src/ui.rs` & `ui/app.slint` — Slint UI adapter, 130 original SVG icons (`ui/icons/`; 129 generated via `scripts/gen-icons.py` + `tool-tape.svg`), Windows CJK font fallback (`src/fonts.rs`), and bilingual strings (`zh-TW` default on Chinese locales, `en` elsewhere, override via `PIXEL_STUDIO_LANG=en|zh`).
+  - `src/ui.rs` & `ui/app.slint` — Slint UI adapter, 132 original SVG icons (`ui/icons/`; 131 generated via `scripts/gen-icons.py` + `tool-tape.svg`), collapsible inspector (46px icon rail, F4, persisted), focus mode (Tab hides tool column + inspector, transient), multi-image C2PA add/strip into a new folder from the C2PA dialog, Windows CJK font fallback (`src/fonts.rs`), and bilingual strings (`zh-TW` default on Chinese locales, `en` elsewhere, override via `PIXEL_STUDIO_LANG=en|zh`).
   - `src/tape.rs` — 10 procedural pattern tape sticker brushes.
   - `src/capture.rs` — cross-platform screen capture.
   - `src/shell.rs` — per-user OS context menu and "Open With" registration (`--register-shell` / `--unregister-shell`).
@@ -49,6 +50,8 @@ Build optimized release binaries (`target/release/pixel-studio.exe` and `target/
 ```powershell
 cargo build --release --workspace
 ```
+
+On Windows the Skia backend needs the MSVC toolchain. The default toolchain here is `stable-x86_64-pc-windows-gnu`, so prefix commands with `cargo +stable-x86_64-pc-windows-msvc` if they fail.
 
 ## Agent-Friendly CLI Reference (`studio-cli`)
 
@@ -101,6 +104,10 @@ cargo run -p studio-cli -- --json c2pa-remove-file input.jpg clean.jpg
 cargo run -p studio-cli -- --json c2pa-add ./in_dir ./out_dir --title "Verified" --creator "Pixel Studio"
 cargo run -p studio-cli -- --json c2pa-remove ./in_dir ./out_dir
 
+# Multi-file C2PA: inputs may be files or directories; `--new-folder` creates `pixelstudio_c2pa_added_*`/`pixelstudio_c2pa_removed_*` under `--output-dir` (default: first input's folder)
+cargo run -p studio-cli -- --json c2pa-add-files a/photo.jpg b/photo.jpg --new-folder --output-dir ./out --title "Verified" --creator "Pixel Studio"
+cargo run -p studio-cli -- --json c2pa-remove-files a.jpg b.jpg --output-dir ./clean
+
 # Batch convert & animated GIF
 cargo run -p studio-cli -- --json batch ./in_dir ./out_dir --format webp --max-width 1920
 cargo run -p studio-cli -- --json gif ./frames_dir anim.gif --delay-ms 100
@@ -121,4 +128,4 @@ pixel-studio --help
 - **Keep `studio-core` UI-free**: Never add Slint or windowing dependencies to `studio-core`.
 - **Keep `doc.rs` testable**: New editor tools or layer behaviors belong in `crates/studio-app/src/doc.rs` with unit tests before wiring into `ui.rs` / `ui/app.slint`.
 - **Privacy by default**: Exports strip EXIF/XMP metadata unless `keep_metadata` is explicitly enabled; solid-box redaction is the default over mosaic/blur.
-- **Atomic file writes**: Use `studio_core::atomic_file::write_atomic` when saving outputs so partial writes never clobber existing files.
+- **Atomic file writes**: Use `studio_core::atomic_file::write` (or `write_with` for a staging callback) when saving outputs so partial writes never clobber existing files.

@@ -390,6 +390,9 @@ export component AppWindow inherits Window {
     in property <string> doc-info;
     in property <string> title-file;
     in property <bool> view-mode;
+    // Right inspector collapsed to an icon rail (persisted) / focus mode hiding both side panels (transient).
+    in-out property <bool> inspector-collapsed;
+    in-out property <bool> panels-hidden;
     in property <bool> can-undo;
     in property <bool> can-redo;
     in property <bool> dirty-doc;
@@ -559,6 +562,11 @@ export component AppWindow inherits Window {
     in property <bool> has-source;
     in-out property <string> c2pa-in; in-out property <string> c2pa-out;
     in property <string> c2pa-batch-text;
+    in property <string> c2pa-multi-text;
+    in property <int> c2pa-multi-count: 0;
+    in-out property <string> c2pa-multi-parent;
+    in-out property <bool> c2pa-new-folder: true;
+    in property <string> c2pa-result-dir;
     in property <bool> show-edge-handles;
     // menu bar / view toggles / extra dialogs
     in property <string> ui-font;
@@ -622,6 +630,8 @@ export component AppWindow inherits Window {
         { label: T.t("尺規", "Rulers"), act: "toggle-rulers", enabled: true, key: "Ctrl+R", check: true, checked: root.show-rulers },
         { label: T.t("浮動工具列", "Floating toolbar"), act: "toggle-toolbar", enabled: true, check: true, checked: root.tb-mode != 2 },
         { label: T.t("狀態列", "Status bar"), act: "toggle-status", enabled: true, check: true, checked: root.show-status },
+        { label: T.t("屬性面板", "Inspector panel"), act: "toggle-inspector", enabled: !root.view-mode, key: "F4", check: true, checked: !root.inspector-collapsed && !root.panels-hidden },
+        { label: T.t("專注模式（隱藏面板）", "Focus mode (hide panels)"), act: "toggle-panels", enabled: !root.view-mode, key: "Tab", check: true, checked: root.panels-hidden },
         { sep: true },
         { label: T.t("全螢幕", "Full screen"), act: "fullscreen", enabled: true, key: "F11", check: true, checked: root.full-screen-on },
         { label: T.t("檢視模式", "Viewer mode"), act: "toggle-mode", enabled: true, check: true, checked: root.view-mode }
@@ -730,6 +740,11 @@ export component AppWindow inherits Window {
     callback language-changed(int);
 
     changed canvas-w => { root.canvas-resized(); }
+    // Collapsing can destroy the focused widget; keep keyboard shortcuts alive.
+    changed inspector-collapsed => { fs.focus(); }
+    changed panels-hidden => { fs.focus(); }
+    property <[image]> tab-icons: [@image-url("icons/tab-tools.svg"), @image-url("icons/tab-layers.svg"), @image-url("icons/tab-adjust.svg"), @image-url("icons/tab-stickers.svg"), @image-url("icons/tab-redact.svg"), @image-url("icons/tab-info.svg"), @image-url("icons/tab-batch.svg"), @image-url("icons/tab-settings.svg")];
+    property <[string]> tab-names: [T.t("工具", "Tools"), T.t("圖層", "Layers"), T.t("調整", "Adjust"), T.t("貼圖", "Stickers"), T.t("自動打碼", "Auto redact"), T.t("資訊 / C2PA", "Info / C2PA"), T.t("批次 / GIF / 全景", "Batch / GIF / panorama"), T.t("設定", "Settings")];
 
     fs := FocusScope {
         key-pressed(e) => {
@@ -760,6 +775,7 @@ export component AppWindow inherits Window {
                 root.about-open = false; root.keys-open = false; root.props-open = false; root.rs-open = false; root.c2pa-open = false; root.qs-open = false;
                 return accept;
             }
+            if (e.text == Key.F4 && e.modifiers.alt) { return reject; } // Alt+F4 belongs to the OS
             if (root.key(e.text, e.modifiers.control || e.modifiers.meta, e.modifiers.shift)) { return accept; }
             return reject;
         }
@@ -802,6 +818,7 @@ export component AppWindow inherits Window {
                 IBtn { icon: @image-url("icons/prev.svg"); tip: T.t("上一張 (左方向鍵)", "Previous image (Left)"); clicked => { root.action("prev"); } }
                 IBtn { icon: @image-url("icons/next.svg"); tip: T.t("下一張 (右方向鍵)", "Next image (Right)"); clicked => { root.action("next"); } }
                 Rectangle { horizontal-stretch: 1; }
+                if !root.view-mode: IBtn { icon: root.inspector-collapsed ? @image-url("icons/panel-expand.svg") : @image-url("icons/panel-collapse.svg"); tip: root.inspector-collapsed ? T.t("展開面板 (F4)", "Expand panel (F4)") : T.t("收合面板 (F4)", "Collapse panel (F4)"); active: !root.inspector-collapsed && !root.panels-hidden; clicked => { root.action("toggle-inspector"); } }
                 IBtn { icon: @image-url("icons/toolbar.svg"); tip: root.tb-mode == 2 ? T.t("顯示浮動工具列", "Show floating toolbar") : T.t("隱藏浮動工具列", "Hide floating toolbar"); active: root.tb-mode != 2; clicked => { root.action("toggle-toolbar"); } }
                 IBtn { icon: @image-url("icons/fullscreen.svg"); tip: T.t("全螢幕 (F11)", "Full screen (F11)"); active: root.full-screen-on; clicked => { root.action("fullscreen"); } }
                 IBtn { icon: root.view-mode ? @image-url("icons/mode-view.svg") : @image-url("icons/mode-edit.svg"); tip: root.view-mode ? T.t("檢視模式（按一下切換到編輯）", "Viewer mode (click for editor)") : T.t("編輯模式（按一下切換到檢視）", "Editor mode (click for viewer)"); clicked => { root.action("toggle-mode"); } }
@@ -810,7 +827,7 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             vertical-stretch: 1;
             // -------------------------------------------------------- tool column
-            if !root.view-mode: Rectangle {
+            if !root.view-mode && !root.panels-hidden: Rectangle {
                 width: 112px;
                 background: #f8f9fb;
                 ScrollView {
@@ -1086,10 +1103,25 @@ export component AppWindow inherits Window {
                 }
             }
             // -------------------------------------------------------- inspector
-            if !root.view-mode: Rectangle {
-                width: 372px;
+            // One always-present panel whose width snaps (no animation: every width step would re-sync the canvas).
+            if !root.view-mode && !root.panels-hidden: Rectangle {
+                width: root.inspector-collapsed ? 46px : 372px;
                 background: #ffffff;
-                VerticalLayout {
+                // collapsed: vertical icon rail; a tab icon expands straight to that tab
+                if root.inspector-collapsed: VerticalLayout {
+                    padding: 4px;
+                    spacing: 4px;
+                    alignment: start;
+                    IBtn { icon: @image-url("icons/panel-expand.svg"); size: 38px; icon-size: 20px; tip: T.t("展開面板 (F4)", "Expand panel (F4)"); clicked => { root.action("toggle-inspector"); } }
+                    Rectangle { height: 1px; background: #ddd; }
+                    for ic[i] in root.tab-icons: IBtn {
+                        icon: ic; size: 38px; icon-size: 20px;
+                        active: root.tab == i;
+                        tip: root.tab-names[i];
+                        clicked => { root.action("tab:" + i); }
+                    }
+                }
+                if !root.inspector-collapsed: VerticalLayout {
                     padding: 6px;
                     spacing: 4px;
                     HorizontalLayout {
@@ -1104,7 +1136,11 @@ export component AppWindow inherits Window {
                         IBtn { icon: @image-url("icons/tab-batch.svg"); size: 38px; icon-size: 20px; active: root.tab == 6; tip: T.t("批次 / GIF / 全景", "Batch / GIF / panorama"); clicked => { root.tab = 6;  } }
                         IBtn { icon: @image-url("icons/tab-settings.svg"); size: 38px; icon-size: 20px; active: root.tab == 7; tip: T.t("設定", "Settings"); clicked => { root.tab = 7; root.action("refresh-shell"); } }
                     }
-                    Text { text: [T.t("工具", "Tools"), T.t("圖層", "Layers"), T.t("調整", "Adjust"), T.t("貼圖", "Stickers"), T.t("自動打碼", "Auto redact"), T.t("資訊 / C2PA", "Info / C2PA"), T.t("批次 / GIF / 全景", "Batch / GIF / panorama"), T.t("設定", "Settings")][root.tab]; font-weight: 700; color: #1f3b63; }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Text { text: root.tab-names[root.tab]; font-weight: 700; color: #1f3b63; vertical-alignment: center; horizontal-stretch: 1; }
+                        IBtn { icon: @image-url("icons/panel-collapse.svg"); size: 26px; icon-size: 16px; tip: T.t("收合面板 (F4)", "Collapse panel (F4)"); clicked => { root.action("toggle-inspector"); } }
+                    }
                     Rectangle { height: 1px; background: #ddd; }
                     ScrollView {
                         vertical-stretch: 1;
@@ -1958,6 +1994,21 @@ export component AppWindow inherits Window {
                         Button { text: T.t("批次移除", "Batch remove"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-remove"); } }
                     }
                     Text { text: root.c2pa-batch-text; wrap: word-wrap; font-size: 11px; }
+                    Section { text: T.t("多張圖片 C2PA", "Multiple images C2PA"); }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: T.t("選擇多張圖片…", "Pick images…"); enabled: !root.batch-running; clicked => { root.action("c2pa-multi-pick"); } }
+                        Button { text: T.t("清除", "Clear"); enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-clear"); } }
+                    }
+                    Text { text: root.c2pa-multi-text; wrap: word-wrap; font-size: 11px; color: #444; }
+                    HorizontalLayout { spacing: 3px; LineEdit { accessible-label: T.t("輸出位置", "Save in"); text <=> root.c2pa-multi-parent; placeholder-text: T.t("輸出位置（預設為第一張圖片所在資料夾）", "Save in (defaults to the first image's folder)"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇輸出位置…", "Choose save location…"); clicked => { root.action("c2pa-multi-parent"); } } }
+                    CheckBox { text: T.t("建立新資料夾", "Create a new folder"); checked <=> root.c2pa-new-folder; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: root.c2pa-new-folder ? T.t("加入 C2PA 存到新資料夾", "Add C2PA → new folder") : T.t("加入 C2PA 存到此資料夾", "Add C2PA → this folder"); primary: true; enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-add"); } }
+                        Button { text: root.c2pa-new-folder ? T.t("移除 C2PA 存到新資料夾", "Strip C2PA → new folder") : T.t("移除 C2PA 存到此資料夾", "Strip C2PA → this folder"); enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-remove"); } }
+                    }
+                    if root.c2pa-result-dir != "": Button { text: T.t("開啟資料夾", "Open folder"); clicked => { root.action("c2pa-open-result"); } }
                 }
             }
         }
@@ -2034,6 +2085,7 @@ export component AppWindow inherits Window {
             Text { text: T.t("檢視 / 影像 / 圖層", "View / image / layer"); font-weight: 700; color: #1f3b63; }
             KeyRow { keys: "+ / - / 0 / 1"; what: T.t("放大 / 縮小 / 符合視窗 / 100%（也可加 Ctrl）", "Zoom in / out / fit / 100% (Ctrl optional)"); }
             KeyRow { keys: "Ctrl+G / Ctrl+R / F11"; what: T.t("像素格線 / 尺規 / 全螢幕", "Pixel grid / rulers / full screen"); }
+            KeyRow { keys: "F4 / Tab"; what: T.t("屬性面板 / 專注模式（隱藏面板）", "Inspector panel / focus mode (hide panels)"); }
             KeyRow { keys: "Ctrl+W / Ctrl+Shift+W"; what: T.t("影像大小 / 畫布大小", "Image size / canvas size"); }
             KeyRow { keys: "Enter / Esc"; what: T.t("套用裁切模式 / 取消選取或關閉對話框", "Apply crop mode / clear selection or close dialog"); }
             KeyRow { keys: "Ctrl+J / Ctrl+] / Ctrl+["; what: T.t("複製圖層 / 上移 / 下移", "Duplicate layer / bring forward / send backward"); }

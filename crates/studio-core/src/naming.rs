@@ -1,5 +1,6 @@
 //! Default output file names: `pixelstudio_YYYYMMDD_HHMMSS.<ext>` in local time.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use chrono::{Local, NaiveDateTime};
@@ -33,6 +34,36 @@ pub fn timestamp_path_in(dir: &Path, ext: &str) -> PathBuf {
         n += 1;
     }
     p
+}
+
+/// Create a brand-new folder `<parent>/<prefix>_YYYYMMDD_HHMMSS` (local time).
+/// Appends `_2`, `_3`... when it already exists; never reuses an existing folder.
+/// `parent` is created if missing.
+pub fn create_unique_output_dir(parent: &Path, prefix: &str) -> io::Result<PathBuf> {
+    create_unique_output_dir_at(parent, prefix, Local::now().naive_local())
+}
+
+fn create_unique_output_dir_at(
+    parent: &Path,
+    prefix: &str,
+    at: NaiveDateTime,
+) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(parent)?;
+    let base = format!("{prefix}_{}", at.format("%Y%m%d_%H%M%S"));
+    let mut n = 1;
+    loop {
+        let name = if n == 1 {
+            base.clone()
+        } else {
+            format!("{base}_{n}")
+        };
+        let candidate = parent.join(name);
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Suggest an output filename for saving or converting to `target_format`.
@@ -84,6 +115,33 @@ mod tests {
         let b = timestamp_path_in(&dir, "png");
         assert_ne!(a, b);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unique_output_dir_never_reuses_existing_folder() {
+        let parent = std::env::temp_dir().join(format!("ps-uniqdir-{}", std::process::id()));
+        let at = NaiveDate::from_ymd_opt(2026, 10, 15)
+            .unwrap()
+            .and_hms_opt(16, 43, 5)
+            .unwrap();
+        let a = create_unique_output_dir_at(&parent, "pixelstudio_c2pa_added", at).unwrap();
+        let b = create_unique_output_dir_at(&parent, "pixelstudio_c2pa_added", at).unwrap();
+        let c = create_unique_output_dir_at(&parent, "pixelstudio_c2pa_added", at).unwrap();
+        assert_eq!(
+            a.file_name().unwrap().to_str().unwrap(),
+            "pixelstudio_c2pa_added_20261015_164305"
+        );
+        assert_eq!(
+            b.file_name().unwrap().to_str().unwrap(),
+            "pixelstudio_c2pa_added_20261015_164305_2"
+        );
+        assert_eq!(
+            c.file_name().unwrap().to_str().unwrap(),
+            "pixelstudio_c2pa_added_20261015_164305_3"
+        );
+        let live = create_unique_output_dir(&parent, "x").unwrap();
+        assert!(live.is_dir());
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     #[test]

@@ -72,6 +72,10 @@ enum Command {
     C2paRemoveFile { input: PathBuf, output: PathBuf },
     /// Sign and embed C2PA manifests into all supported images in a directory.
     C2paAdd(Box<C2paAddArgs>),
+    /// Remove C2PA manifests from selected files and/or directories into one output folder.
+    C2paRemoveFiles(Box<C2paFilesArgs>),
+    /// Sign and embed C2PA manifests into selected files and/or directories into one output folder.
+    C2paAddFiles(Box<C2paAddFilesArgs>),
     /// Assemble a directory of images into an animated GIF.
     Gif(Box<GifArgs>),
     /// Remove a solid background color by fading matching pixels to transparent.
@@ -346,6 +350,33 @@ struct C2paAddArgs {
     action: String,
 }
 
+/// Shared selection/output arguments for `c2pa-add-files` and `c2pa-remove-files`.
+#[derive(Debug, clap::Args)]
+struct C2paFilesArgs {
+    /// Image files and/or directories (directories are scanned recursively).
+    #[arg(required = true, num_args = 1..)]
+    files: Vec<PathBuf>,
+    /// Output folder (required unless --new-folder; with --new-folder it is the parent,
+    /// defaulting to the first input's folder).
+    #[arg(long)]
+    output_dir: Option<PathBuf>,
+    /// Create a fresh timestamped subfolder (pixelstudio_c2pa_added_* / pixelstudio_c2pa_removed_*).
+    #[arg(long)]
+    new_folder: bool,
+}
+
+#[derive(Debug, clap::Args)]
+struct C2paAddFilesArgs {
+    #[command(flatten)]
+    target: C2paFilesArgs,
+    #[arg(long, default_value = "Pixel Studio Batch")]
+    title: String,
+    #[arg(long, default_value = "Pixel Studio")]
+    creator: String,
+    #[arg(long, default_value = "Batch C2PA manifest added")]
+    action: String,
+}
+
 #[derive(Debug, clap::Args)]
 struct GifArgs {
     input_dir: PathBuf,
@@ -485,6 +516,8 @@ fn run(cli: &Cli) -> Result<()> {
         } => cmd_c2pa_remove(input_dir, output_dir, json_out),
         Command::C2paRemoveFile { input, output } => cmd_c2pa_remove_file(input, output, json_out),
         Command::C2paAdd(args) => cmd_c2pa_add(args, json_out),
+        Command::C2paRemoveFiles(args) => cmd_c2pa_remove_files(args, json_out),
+        Command::C2paAddFiles(args) => cmd_c2pa_add_files(args, json_out),
         Command::Gif(args) => cmd_gif(args, json_out),
         Command::RemoveBg(args) => cmd_remove_bg(args, json_out),
         Command::Trim(args) => cmd_trim(args, json_out),
@@ -945,7 +978,12 @@ fn cmd_c2pa_remove(input_dir: &Path, output_dir: &Path, json_out: bool) -> Resul
             output_dir: output_dir.to_path_buf(),
         },
     );
-    print_batch_summary("C2PA batch removal complete", &summary, json_out)
+    print_c2pa_summary(
+        "C2PA batch removal complete",
+        output_dir,
+        &summary,
+        json_out,
+    )
 }
 
 #[inline(never)]
@@ -984,7 +1022,112 @@ fn cmd_c2pa_add(args: &C2paAddArgs, json_out: bool) -> Result<()> {
             },
         },
     );
-    print_batch_summary("C2PA batch add complete", &summary, json_out)
+    print_c2pa_summary(
+        "C2PA batch add complete",
+        &args.output_dir,
+        &summary,
+        json_out,
+    )
+}
+
+/// Expand files/directories into a flat list of supported image files.
+fn expand_c2pa_inputs(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            files.extend(collect_supported_files(path));
+        } else {
+            files.push(path.clone());
+        }
+    }
+    files
+}
+
+fn resolve_c2pa_output_dir(args: &C2paFilesArgs, prefix: &str) -> Result<PathBuf> {
+    if args.new_folder {
+        let parent = match &args.output_dir {
+            Some(dir) => dir.clone(),
+            None => args
+                .files
+                .first()
+                .and_then(|p| {
+                    if p.is_dir() {
+                        Some(p.as_path())
+                    } else {
+                        p.parent()
+                    }
+                })
+                .filter(|p| !p.as_os_str().is_empty())
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+        };
+        Ok(studio_core::create_unique_output_dir(&parent, prefix)?)
+    } else {
+        let dir = args.output_dir.clone().ok_or_else(|| {
+            anyhow::anyhow!("--output-dir is required unless --new-folder is set")
+        })?;
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+}
+
+#[inline(never)]
+fn cmd_c2pa_remove_files(args: &C2paFilesArgs, json_out: bool) -> Result<()> {
+    let output_dir = resolve_c2pa_output_dir(args, "pixelstudio_c2pa_removed")?;
+    let files = expand_c2pa_inputs(&args.files);
+    let summary = process_c2pa_removal_batch(
+        &files,
+        &C2paRemovalOptions {
+            output_dir: output_dir.clone(),
+        },
+    );
+    print_c2pa_summary("C2PA removal complete", &output_dir, &summary, json_out)
+}
+
+#[inline(never)]
+fn cmd_c2pa_add_files(args: &C2paAddFilesArgs, json_out: bool) -> Result<()> {
+    let output_dir = resolve_c2pa_output_dir(&args.target, "pixelstudio_c2pa_added")?;
+    let files = expand_c2pa_inputs(&args.target.files);
+    let summary = process_c2pa_add_batch(
+        &files,
+        &C2paAddOptions {
+            output_dir: output_dir.clone(),
+            draft: C2paManifestDraft {
+                title: args.title.clone(),
+                creator: args.creator.clone(),
+                action: args.action.clone(),
+            },
+        },
+    );
+    print_c2pa_summary("C2PA add complete", &output_dir, &summary, json_out)
+}
+
+fn print_c2pa_summary(
+    label: &str,
+    output_dir: &Path,
+    summary: &BatchSummary,
+    json_out: bool,
+) -> Result<()> {
+    if json_out {
+        let results: Vec<_> = summary
+            .results
+            .iter()
+            .map(|r| json!({"input": r.input, "output": r.output, "error": r.error}))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "output_dir": output_dir,
+                "total": summary.total,
+                "succeeded": summary.succeeded,
+                "failed": summary.failed,
+                "results": results,
+            }))?
+        );
+        Ok(())
+    } else {
+        println!("output folder: {}", output_dir.display());
+        print_batch_summary(label, summary, false)
+    }
 }
 
 #[inline(never)]
@@ -1825,6 +1968,95 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn make_jpg(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(16, 16))
+            .save(path)
+            .unwrap();
+    }
+
+    fn files_args(files: Vec<PathBuf>, out: Option<PathBuf>, new_folder: bool) -> C2paFilesArgs {
+        C2paFilesArgs {
+            files,
+            output_dir: out,
+            new_folder,
+        }
+    }
+
+    #[test]
+    fn cli_parses_c2pa_files_subcommands() {
+        let cli = Cli::try_parse_from([
+            "studio-cli",
+            "c2pa-add-files",
+            "a.jpg",
+            "b.jpg",
+            "--new-folder",
+            "--output-dir",
+            "o",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::C2paAddFiles(a) => {
+                assert_eq!(a.target.files.len(), 2);
+                assert!(a.target.new_folder);
+            }
+            _ => panic!("wrong command"),
+        }
+        assert!(Cli::try_parse_from(["studio-cli", "c2pa-remove-files"]).is_err());
+    }
+
+    #[test]
+    fn c2pa_add_files_handles_same_name_in_different_folders() {
+        let dir = TestDir::new("c2pa_add_files");
+        let a = dir.path().join("a/photo.jpg");
+        let b = dir.path().join("b/photo.jpg");
+        make_jpg(&a);
+        make_jpg(&b);
+        let out = dir.path().join("out");
+        let args = C2paAddFilesArgs {
+            target: files_args(vec![a.clone(), b, a], Some(out.clone()), false),
+            title: "t".into(),
+            creator: "c".into(),
+            action: "x".into(),
+        };
+        cmd_c2pa_add_files(&args, true).unwrap();
+        assert!(out.join("photo_c2pa.jpg").exists());
+        assert!(out.join("photo_c2pa_2.jpg").exists());
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2);
+        assert!(inspect_c2pa(out.join("photo_c2pa_2.jpg")).unwrap().present);
+    }
+
+    #[test]
+    fn c2pa_remove_files_new_folder_and_directory_input() {
+        let dir = TestDir::new("c2pa_remove_files");
+        let a = dir.path().join("a/photo.jpg");
+        let b = dir.path().join("b/photo.jpg");
+        make_jpg(&a);
+        make_jpg(&b);
+        let parent = dir.path().join("results");
+        let args = files_args(vec![a, dir.path().join("b")], Some(parent.clone()), true);
+        cmd_c2pa_remove_files(&args, false).unwrap();
+        let made: Vec<_> = std::fs::read_dir(&parent).unwrap().flatten().collect();
+        assert_eq!(made.len(), 1);
+        let folder = made[0].path();
+        assert!(
+            folder
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("pixelstudio_c2pa_removed_")
+        );
+        assert!(folder.join("photo_no_c2pa.jpg").exists());
+        assert!(folder.join("photo_no_c2pa_2.jpg").exists());
+    }
+
+    #[test]
+    fn c2pa_files_requires_output_dir_without_new_folder() {
+        let args = files_args(vec![PathBuf::from("x.jpg")], None, false);
+        assert!(resolve_c2pa_output_dir(&args, "p").is_err());
     }
 
     #[test]

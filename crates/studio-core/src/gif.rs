@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use image::codecs::gif::{GifEncoder, Repeat};
@@ -45,16 +46,22 @@ pub fn write_animated_gif(
         std::fs::create_dir_all(parent)?;
     }
 
-    let file = File::create(output)?;
-    let mut encoder = GifEncoder::new(file);
-    if options.repeat {
-        encoder.set_repeat(Repeat::Infinite)?;
-    }
-
-    let delay = Delay::from_numer_denom_ms(options.delay_ms.max(10), 1);
-    for frame in frames {
-        encoder.encode_frame(Frame::from_parts(frame, 0, 0, delay))?;
-    }
+    crate::atomic_file::write_with(output, |path| -> Result<()> {
+        let mut writer = BufWriter::new(File::create(path)?);
+        {
+            let mut encoder = GifEncoder::new(&mut writer);
+            if options.repeat {
+                encoder.set_repeat(Repeat::Infinite)?;
+            }
+            let delay = Delay::from_numer_denom_ms(options.delay_ms.max(10), 1);
+            for frame in frames {
+                encoder.encode_frame(Frame::from_parts(frame, 0, 0, delay))?;
+            }
+            // Encoder drop writes the GIF trailer into the buffer.
+        }
+        writer.flush()?;
+        Ok(())
+    })?;
 
     Ok(GifResult {
         output: output.to_path_buf(),
@@ -144,6 +151,37 @@ mod tests {
         assert!(output.exists());
         let decoded = image::open(&output).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (16, 12));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_encode_preserves_existing_output() {
+        let dir = temp_dir("failed_encode_preserves_existing_output");
+        fs::create_dir_all(&dir).unwrap();
+        // GIF dimensions are limited to u16; this frame cannot be encoded.
+        let input = dir.join("too_wide.png");
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(70_000, 1, Rgba([1, 2, 3, 255])))
+            .save(&input)
+            .unwrap();
+        let output = dir.join("animation.gif");
+        fs::write(&output, b"original").unwrap();
+
+        let result = write_animated_gif(
+            &[input],
+            &output,
+            GifOptions {
+                delay_ms: 100,
+                repeat: false,
+                max_width: None,
+                max_height: None,
+                background: [0, 0, 0, 0],
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(&output).unwrap(), b"original");
+        let leftovers = fs::read_dir(&dir).unwrap().count();
+        assert_eq!(leftovers, 2, "staging file must be cleaned up");
 
         let _ = fs::remove_dir_all(dir);
     }

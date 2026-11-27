@@ -142,7 +142,7 @@ enum Job {
 
 enum BatchMsg {
     Progress(usize, usize, bool),
-    Done(String, bool),
+    Done(String, bool, Option<PathBuf>),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -177,6 +177,8 @@ struct Settings {
     alpha_bg_mode: i32,
     #[serde(default)]
     last_save_dir: Option<PathBuf>,
+    #[serde(default)]
+    inspector_collapsed: bool,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -214,6 +216,7 @@ pub struct State {
     job: Option<Job>,
     batch_job: Option<Job>,
     gif_frames: Vec<PathBuf>,
+    c2pa_files: Vec<PathBuf>,
     edit_session: Option<(usize, String)>,
     font_paths: Vec<PathBuf>,
     c2pa_info: studio_core::C2paInfo,
@@ -239,6 +242,12 @@ pub struct State {
     batch_alpha_bg: [u8; 4],
     batch_alpha_bg_mode: i32,
     hist_revision: Option<u64>,
+    /// Right inspector shrunk to its icon rail (persisted).
+    inspector_collapsed: bool,
+    /// Focus mode: tool column and inspector hidden (transient, never persisted).
+    panels_hidden: bool,
+    /// The view was at "fit" when the panel layout changed; re-fit on the next canvas resize.
+    refit_pending: bool,
 }
 
 type S = Rc<RefCell<State>>;
@@ -339,6 +348,7 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
         job: None,
         batch_job: None,
         gif_frames: Vec::new(),
+        c2pa_files: Vec::new(),
         edit_session: None,
         font_paths: fonts::list_system_font_paths(),
         c2pa_info: Default::default(),
@@ -376,6 +386,9 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
         batch_alpha_bg: [255, 255, 255, 255],
         batch_alpha_bg_mode: 0,
         hist_revision: None,
+        inspector_collapsed: settings.inspector_collapsed,
+        panels_hidden: false,
+        refit_pending: false,
     }
 }
 
@@ -392,6 +405,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         ui.set_c2pa_action("".into());
         ui.set_show_rulers(s.rulers);
         ui.set_show_status(s.status_bar);
+        ui.set_inspector_collapsed(s.inspector_collapsed);
         set_recent_model(&ui, &s);
     }
     ui.set_ui_font(fonts::ui_font_family().into());
@@ -539,6 +553,7 @@ fn save_settings(s: &State) {
             alpha_bg: Some(s.alpha_bg),
             alpha_bg_mode: s.alpha_bg_mode,
             last_save_dir: s.last_save_dir.clone(),
+            inspector_collapsed: s.inspector_collapsed,
         };
         let _ = std::fs::write(p, serde_json::to_string_pretty(&st).unwrap_or_default());
     }
@@ -668,7 +683,7 @@ fn set_language_models(ui: &AppWindow, s: &State) {
 
 fn maybe_refresh_histogram(ui: &AppWindow, s: &mut State) {
     let rev = s.doc.revision();
-    let visible = matches!(ui.get_tab(), 2 | 5);
+    let visible = matches!(ui.get_tab(), 2 | 5) && !s.inspector_collapsed && !s.panels_hidden;
     let initial = ui.get_histogram_img().size().width == 0;
     if !initial && (!visible || s.hist_revision == Some(rev)) {
         return;
@@ -941,13 +956,46 @@ fn layer_kind(l: &ComposeLayer) -> i32 {
     }
 }
 
+/// Zoom and pan that centre a `w`×`h` image in a `cw`×`ch` canvas with a 20px margin.
+fn fit_for(cw: f32, ch: f32, w: f32, h: f32) -> (f32, (f32, f32)) {
+    let (cw, ch) = (cw.max(100.0), ch.max(100.0));
+    let z = ((cw - 40.0) / w).min((ch - 40.0) / h).clamp(0.02, 16.0);
+    (z, ((cw - w * z) / 2.0, (ch - h * z) / 2.0))
+}
+
+/// Whether `zoom`/`pan` is (still) the fitted view for this canvas size.
+fn is_at_fit(zoom: f32, pan: (f32, f32), cw: f32, ch: f32, w: f32, h: f32) -> bool {
+    let (z, p) = fit_for(cw, ch, w, h);
+    (zoom - z).abs() <= z * 1e-4 && (pan.0 - p.0).abs() < 0.5 && (pan.1 - p.1).abs() < 0.5
+}
+
 fn fit(ui: &AppWindow, st: &S) {
     let mut s = st.borrow_mut();
-    let (cw, ch) = (ui.get_canvas_w().max(100.0), ui.get_canvas_h().max(100.0));
     let (w, h) = (s.doc.width() as f32, s.doc.height() as f32);
-    let z = ((cw - 40.0) / w).min((ch - 40.0) / h).clamp(0.02, 16.0);
-    s.zoom = z;
-    s.pan = ((cw - w * z) / 2.0, (ch - h * z) / 2.0);
+    (s.zoom, s.pan) = fit_for(ui.get_canvas_w(), ui.get_canvas_h(), w, h);
+}
+
+/// Apply a side-panel layout. A fitted view is re-fitted once the canvas reports its new size;
+/// manually zoomed views are left alone.
+fn set_panel_layout(ui: &AppWindow, st: &S, collapsed: bool, hidden: bool) {
+    let mut s = st.borrow_mut();
+    if s.inspector_collapsed == collapsed && s.panels_hidden == hidden {
+        return;
+    }
+    let (w, h) = (s.doc.width() as f32, s.doc.height() as f32);
+    s.refit_pending =
+        !s.view_mode && is_at_fit(s.zoom, s.pan, ui.get_canvas_w(), ui.get_canvas_h(), w, h);
+    let persist = s.inspector_collapsed != collapsed;
+    s.inspector_collapsed = collapsed;
+    s.panels_hidden = hidden;
+    ui.set_inspector_collapsed(collapsed);
+    ui.set_panels_hidden(hidden);
+    if persist {
+        save_settings(&s);
+    }
+    if !collapsed && !hidden {
+        maybe_refresh_histogram(ui, &mut s);
+    }
 }
 
 fn zoom_at(st: &S, factor: f32, at: (f32, f32)) {
@@ -3405,6 +3453,8 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         "toggle-mode" => {
             let mut s = st.borrow_mut();
             s.view_mode = !s.view_mode;
+            s.panels_hidden = false;
+            ui.set_panels_hidden(false);
         }
         "swap-colors" => {
             let mut s = st.borrow_mut();
@@ -3883,6 +3933,27 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             save_settings(&s);
             return;
         }
+        "toggle-inspector" => {
+            let (view, collapsed, hidden) = {
+                let s = st.borrow();
+                (s.view_mode, s.inspector_collapsed, s.panels_hidden)
+            };
+            if !view {
+                // From focus mode, F4 brings the inspector back expanded.
+                set_panel_layout(ui, st, !collapsed && !hidden, false);
+            }
+            return;
+        }
+        "toggle-panels" => {
+            let (view, collapsed, hidden) = {
+                let s = st.borrow();
+                (s.view_mode, s.inspector_collapsed, s.panels_hidden)
+            };
+            if !view {
+                set_panel_layout(ui, st, collapsed, !hidden);
+            }
+            return;
+        }
         "toggle-toolbar" => {
             ui.set_tb_mode(if ui.get_tb_mode() == 2 { 0 } else { 2 });
             ui.invoke_toolbar_moved();
@@ -3920,6 +3991,7 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
                 action(ui, st, "toggle-mode");
             }
             ui.set_tab(n);
+            set_panel_layout(ui, st, false, false);
             match n {
                 2 => {
                     let mut s = st.borrow_mut();
@@ -4032,6 +4104,38 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
         }
         "batch-run" | "batch-c2pa-add" | "batch-c2pa-remove" => {
             start_batch(ui, st, a);
+            return;
+        }
+        "c2pa-multi-pick" => {
+            if let Some(mut f) = open_image_filter(rfd::FileDialog::new(), zh).pick_files() {
+                f.sort();
+                set_c2pa_files(ui, st, f);
+            }
+            return;
+        }
+        "c2pa-multi-clear" => {
+            set_c2pa_files(ui, st, Vec::new());
+            return;
+        }
+        "c2pa-multi-parent" => {
+            if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                ui.set_c2pa_multi_parent(d.display().to_string().into());
+            }
+            return;
+        }
+        "c2pa-multi-add" | "c2pa-multi-remove" => {
+            start_c2pa_multi(ui, st, a == "c2pa-multi-add");
+            return;
+        }
+        "c2pa-open-result" => {
+            let dir: String = ui.get_c2pa_result_dir().into();
+            if !dir.is_empty()
+                && let Err(e) = open_folder(Path::new(&dir))
+            {
+                ui.set_status(
+                    format!("{}: {e}", tl(zh, "無法開啟資料夾", "Cannot open folder")).into(),
+                );
+            }
             return;
         }
         "gif-pick" => {
@@ -4207,6 +4311,126 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
         watermark_font_size: 32.0,
     };
     let draft = c2pa_draft(ui);
+    spawn_batch(ui, st, kind, files, out, opts, draft, None);
+}
+
+/// Pick (or clear) the explicit multi-image C2PA selection and refresh its summary.
+fn set_c2pa_files(ui: &AppWindow, st: &S, files: Vec<PathBuf>) {
+    let zh = st.borrow().zh;
+    let text = if files.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<String> = files
+            .iter()
+            .take(4)
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let more = if files.len() > 4 { "…" } else { "" };
+        if zh {
+            format!("已選 {} 張：{}{more}", files.len(), names.join("、"))
+        } else {
+            format!("{} selected: {}{more}", files.len(), names.join(", "))
+        }
+    };
+    if let Some(parent) = files.first().and_then(|p| p.parent()) {
+        ui.set_c2pa_multi_parent(parent.display().to_string().into());
+    }
+    ui.set_c2pa_multi_count(files.len() as i32);
+    ui.set_c2pa_multi_text(text.into());
+    ui.set_c2pa_result_dir("".into());
+    st.borrow_mut().c2pa_files = files;
+}
+
+/// Add or strip C2PA for the explicitly picked files, saving them together.
+fn start_c2pa_multi(ui: &AppWindow, st: &S, add: bool) {
+    if st.borrow().batch_job.is_some() {
+        return;
+    }
+    let zh = st.borrow().zh;
+    let files = st.borrow().c2pa_files.clone();
+    if files.is_empty() {
+        ui.set_c2pa_batch_text(tl(zh, "請先選擇圖片。", "Pick images first.").into());
+        return;
+    }
+    let typed: String = ui.get_c2pa_multi_parent().into();
+    let parent = if typed.trim().is_empty() {
+        files[0]
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        PathBuf::from(typed.trim())
+    };
+    let created = if ui.get_c2pa_new_folder() {
+        let prefix = if add {
+            "pixelstudio_c2pa_added"
+        } else {
+            "pixelstudio_c2pa_removed"
+        };
+        studio_core::create_unique_output_dir(&parent, prefix)
+    } else {
+        std::fs::create_dir_all(&parent).map(|_| parent.clone())
+    };
+    let out = match created {
+        Ok(d) => d,
+        Err(e) => {
+            ui.set_c2pa_batch_text(
+                format!(
+                    "{} {}: {e}",
+                    tl(zh, "無法建立資料夾", "Cannot create folder"),
+                    parent.display()
+                )
+                .into(),
+            );
+            return;
+        }
+    };
+    let opts = BatchOptions {
+        output_dir: out.clone(),
+        convert: batch_convert_options(ui, &st.borrow()),
+        max_width: None,
+        max_height: None,
+        watermark_text: None,
+        watermark_opacity: 0.5,
+        watermark_font_size: 32.0,
+    };
+    let kind = if add {
+        "batch-c2pa-add"
+    } else {
+        "batch-c2pa-remove"
+    };
+    let draft = c2pa_draft(ui);
+    ui.set_c2pa_result_dir("".into());
+    spawn_batch(ui, st, kind, files, out.clone(), opts, draft, Some(out));
+}
+
+fn open_folder(dir: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(dir).spawn().map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_batch(
+    ui: &AppWindow,
+    st: &S,
+    kind: &str,
+    files: Vec<PathBuf>,
+    out: PathBuf,
+    opts: BatchOptions,
+    draft: C2paManifestDraft,
+    result_dir: Option<PathBuf>,
+) {
+    let zh = st.borrow().zh;
+    let is_c2pa = kind.starts_with("batch-c2pa");
     let kind = kind.to_owned();
     let (tx, rx) = channel();
     std::thread::spawn(move || {
@@ -4236,6 +4460,14 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
             "{} / {} OK, {} failed",
             summary.succeeded, summary.total, summary.failed
         );
+        if let Some(d) = &result_dir {
+            let label = if zh {
+                "輸出資料夾"
+            } else {
+                "Output folder"
+            };
+            msg = format!("{label}: {}\n{msg}", d.display());
+        }
         for r in summary.results.iter().take(8) {
             msg += &match (&r.output, &r.error) {
                 (Some(o), None) => format!("\nOK {}", o.display()),
@@ -4243,7 +4475,8 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
                 _ => format!("\nSkipped {}", r.input.display()),
             };
         }
-        let _ = tx.send(BatchMsg::Done(msg, is_c2pa));
+        let done_dir = result_dir.filter(|_| summary.succeeded > 0);
+        let _ = tx.send(BatchMsg::Done(msg, is_c2pa, done_dir));
     });
     st.borrow_mut().batch_job = Some(Job::Batch(rx));
     ui.set_batch_running(true);
@@ -4336,7 +4569,10 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
                             ui.set_batch_progress(m)
                         }
                     }
-                    BatchMsg::Done(msg, c2) => {
+                    BatchMsg::Done(msg, c2, dir) => {
+                        if let Some(d) = dir {
+                            ui.set_c2pa_result_dir(d.display().to_string().into());
+                        }
                         if c2 {
                             ui.set_c2pa_batch_text(msg.into())
                         } else {
@@ -4475,6 +4711,21 @@ fn key(ui: &AppWindow, st: &S, text: &str, ctrl: bool, shift: bool) -> bool {
         action(ui, st, "fullscreen");
         return true;
     }
+    if is(Key::F4) {
+        if st.borrow().view_mode || ui.get_modal_open() {
+            return false;
+        }
+        action(ui, st, "toggle-inspector");
+        return true;
+    }
+    // Tab reaches here only when no focused widget consumed it; text fields keep focus traversal.
+    if is(Key::Tab) && !shift {
+        if st.borrow().view_mode || !ui.get_editor_key_focus() || ui.get_modal_open() {
+            return false;
+        }
+        action(ui, st, "toggle-panels");
+        return true;
+    }
     if !st.borrow().view_mode {
         if let Some(i) = tool_for_key(&t, shift) {
             ui.set_tool(i);
@@ -4566,7 +4817,13 @@ fn wire(ui: &AppWindow, st: &S) {
         }
         refresh(&ui, &st)
     });
-    cb!(on_canvas_resized, |ui, st| sync_view(&ui, &st.borrow()));
+    cb!(on_canvas_resized, |ui, st| {
+        let refit = std::mem::take(&mut st.borrow_mut().refit_pending);
+        if refit {
+            fit(&ui, &st);
+        }
+        sync_view(&ui, &st.borrow())
+    });
     cb!(on_key, |ui,
                  st,
                  text: SharedString,
@@ -6077,6 +6334,339 @@ mod save_convert_tests {
         let (fw, fh) = (st.borrow().doc.width(), st.borrow().doc.height());
         assert!(fw > sw && fh > sh);
 
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    fn inspector_collapsed_setting_defaults_and_roundtrips() {
+        let empty: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!empty.inspector_collapsed);
+        assert!(!initial_state(&empty, false, false).inspector_collapsed);
+
+        let on = Settings {
+            inspector_collapsed: true,
+            ..Default::default()
+        };
+        let decoded: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert!(decoded.inspector_collapsed);
+        let s = initial_state(&decoded, false, false);
+        assert!(s.inspector_collapsed);
+        assert!(!s.panels_hidden); // focus mode is never restored
+    }
+
+    #[test]
+    fn fit_for_centres_with_margin_and_detects_fit() {
+        // Width-limited: (1040 - 40) / 1000 = 1.0 < (740 - 40) / 500.
+        let (z, pan) = fit_for(1040.0, 740.0, 1000.0, 500.0);
+        assert!((z - 1.0).abs() < 1e-6);
+        assert_eq!(pan, (20.0, 120.0));
+        // Height-limited.
+        let (z, pan) = fit_for(1000.0, 440.0, 400.0, 800.0);
+        assert!((z - 0.5).abs() < 1e-6);
+        assert_eq!(pan, (400.0, 20.0));
+        // Tiny canvases are clamped to 100px before fitting; zoom stays within limits.
+        assert_eq!(
+            fit_for(10.0, 10.0, 60.0, 60.0),
+            fit_for(100.0, 100.0, 60.0, 60.0)
+        );
+        assert_eq!(fit_for(5000.0, 5000.0, 1.0, 1.0).0, 16.0);
+        assert_eq!(fit_for(100.0, 100.0, 100_000.0, 10.0).0, 0.02);
+
+        let (z, pan) = fit_for(1200.0, 800.0, 640.0, 480.0);
+        assert!(is_at_fit(z, pan, 1200.0, 800.0, 640.0, 480.0));
+        assert!(is_at_fit(
+            z,
+            (pan.0 + 0.2, pan.1),
+            1200.0,
+            800.0,
+            640.0,
+            480.0
+        ));
+        assert!(!is_at_fit(z * 1.15, pan, 1200.0, 800.0, 640.0, 480.0));
+        assert!(!is_at_fit(
+            z,
+            (pan.0 + 30.0, pan.1),
+            1200.0,
+            800.0,
+            640.0,
+            480.0
+        ));
+        // A fitted view stops being "at fit" once the canvas grows.
+        assert!(!is_at_fit(z, pan, 1526.0, 800.0, 640.0, 480.0));
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn inspector_collapse_rail_and_refit() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(1400, 860));
+        st.borrow_mut().doc = Doc::new(400, 300);
+        fit(&ui, &st);
+        refresh(&ui, &st);
+        let open_w = ui.get_canvas_w();
+        assert!(!ui.get_inspector_collapsed());
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(&ui, "Collapse panel (F4)").count(),
+            2 // top bar + inspector title row
+        );
+
+        ui.invoke_action("toggle-inspector".into());
+        assert!(ui.get_inspector_collapsed());
+        assert!(st.borrow().inspector_collapsed);
+        assert!(st.borrow().refit_pending); // the view was fitted
+        let rail_w = ui.get_canvas_w();
+        assert!(
+            (rail_w - open_w - 326.0).abs() < 1.0,
+            "{open_w} -> {rail_w}"
+        );
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(&ui, "Expand panel (F4)").count(),
+            2 // top bar + rail chevron
+        );
+        ui.invoke_canvas_resized();
+        assert!(!st.borrow().refit_pending);
+        let (z, pan) = fit_for(rail_w, ui.get_canvas_h(), 400.0, 300.0);
+        assert_eq!((st.borrow().zoom, st.borrow().pan), (z, pan));
+
+        // Picking a tool that switches tabs must not reopen the collapsed panel.
+        ui.invoke_tool_changed(Tool::Crop.index());
+        assert!(ui.get_inspector_collapsed());
+        assert_eq!(ui.get_tab(), 2);
+
+        // A rail icon expands straight to its tab.
+        ElementHandle::find_by_accessible_label(&ui, "Batch / GIF / panorama")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(!ui.get_inspector_collapsed());
+        assert!(!st.borrow().inspector_collapsed);
+        assert_eq!(ui.get_tab(), 6);
+        ui.invoke_canvas_resized();
+        let (z, pan) = fit_for(open_w, ui.get_canvas_h(), 400.0, 300.0);
+        assert_eq!((st.borrow().zoom, st.borrow().pan), (z, pan));
+
+        // tab:N from the menus expands too and runs the tab's side effects.
+        ui.invoke_action("toggle-inspector".into());
+        ui.invoke_action("tab:2".into());
+        assert!(!ui.get_inspector_collapsed());
+        assert_eq!(ui.get_tab(), 2);
+        assert!(ui.get_histogram_img().size().width > 0);
+
+        // Manually zoomed views are not re-fitted.
+        st.borrow_mut().zoom = 3.0;
+        st.borrow_mut().pan = (-50.0, -40.0);
+        let f4 = || char::from(Key::F4).to_string().into();
+        assert!(ui.invoke_key(f4(), false, false));
+        assert!(ui.get_inspector_collapsed());
+        assert!(!st.borrow().refit_pending);
+        ui.invoke_canvas_resized();
+        assert_eq!((st.borrow().zoom, st.borrow().pan), (3.0, (-50.0, -40.0)));
+        assert!(ui.invoke_key(f4(), false, false));
+        assert!(!ui.get_inspector_collapsed());
+
+        // F4 is ignored behind a modal and in viewer mode.
+        ui.set_qs_open(true);
+        assert!(!ui.invoke_key(f4(), false, false));
+        ui.set_qs_open(false);
+        st.borrow_mut().view_mode = true;
+        assert!(!ui.invoke_key(f4(), false, false));
+        assert!(!ui.get_inspector_collapsed());
+        st.borrow_mut().view_mode = false;
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn focus_mode_tab_key_hides_both_panels() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{Key, WindowEvent};
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(1400, 860));
+        {
+            let mut s = st.borrow_mut();
+            s.doc = Doc::new(200, 120);
+            s.doc.boxes = vec![studio_core::redact::RedactBox::manual(100, 20, 30, 20)];
+        }
+        ui.set_tab(4);
+        refresh(&ui, &st);
+        let open_w = ui.get_canvas_w();
+        let press = |key: Key| {
+            let text: SharedString = char::from(key).to_string().into();
+            ui.window()
+                .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        let focus_editor = || {
+            ElementHandle::find_by_accessible_label(&ui, "Select redaction box: (30×20)")
+                .next()
+                .unwrap()
+                .invoke_accessible_default_action();
+            assert!(ui.get_editor_key_focus());
+        };
+
+        // Tab inside a text field keeps normal focus traversal.
+        ElementHandle::find_by_accessible_label(&ui, "Redaction keyword")
+            .next()
+            .unwrap()
+            .mock_single_click(slint::platform::PointerEventButton::Left);
+        assert!(!ui.get_editor_key_focus());
+        press(Key::Tab);
+        assert!(!ui.get_panels_hidden());
+
+        // Tab on the editor (real window dispatch through the FocusScope) toggles focus mode.
+        focus_editor();
+        press(Key::Tab);
+        assert!(ui.get_panels_hidden());
+        assert!(st.borrow().panels_hidden);
+        assert!(ui.get_canvas_w() >= open_w + 372.0 + 112.0 - 1.0);
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(&ui, "Expand panel (F4)").count(),
+            0 // no rail in focus mode
+        );
+        assert!(ui.get_editor_key_focus());
+        press(Key::Tab);
+        assert!(!ui.get_panels_hidden());
+
+        // Ignored behind a modal.
+        focus_editor();
+        ui.set_qs_open(true);
+        let tab: SharedString = char::from(Key::Tab).to_string().into();
+        assert!(!ui.invoke_key(tab, false, false));
+        assert!(!ui.get_panels_hidden());
+        ui.set_qs_open(false);
+
+        // F4 leaves focus mode with the inspector expanded; toggle-mode clears focus mode.
+        ui.invoke_action("toggle-panels".into());
+        assert!(ui.get_panels_hidden());
+        assert!(ui.invoke_key(char::from(Key::F4).to_string().into(), false, false));
+        assert!(!ui.get_panels_hidden());
+        assert!(!ui.get_inspector_collapsed());
+        ui.invoke_action("toggle-panels".into());
+        ui.invoke_action("toggle-mode".into());
+        assert!(!ui.get_panels_hidden());
+        assert!(!st.borrow().panels_hidden);
+        ui.invoke_action("toggle-panels".into()); // no-op in viewer mode
+        assert!(!ui.get_panels_hidden());
+        ui.invoke_action("toggle-mode".into());
+        ui.hide().unwrap();
+    }
+
+    #[cfg(feature = "ui-testing")]
+    fn wait_batch(ui: &AppWindow, st: &S) {
+        for _ in 0..600 {
+            poll_jobs(ui, st);
+            if st.borrow().batch_job.is_none() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("batch did not finish");
+    }
+
+    #[cfg(feature = "ui-testing")]
+    fn write_png(path: &Path, v: u8) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([v, 40, 90])))
+            .save(path)
+            .unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn multi_c2pa_add_and_strip_into_new_folders() {
+        let (ui, st) = make_test_ui(false);
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("one").join("photo.png");
+        let b = dir.path().join("two").join("photo.png");
+        write_png(&a, 10);
+        write_png(&b, 200);
+        let out_parent = dir.path().join("out");
+
+        // Nothing selected: buttons' guard logic reports and spawns nothing.
+        assert_eq!(ui.get_c2pa_multi_count(), 0);
+        ui.invoke_action("c2pa-multi-add".into());
+        assert!(st.borrow().batch_job.is_none());
+        assert!(!ui.get_c2pa_batch_text().is_empty());
+
+        set_c2pa_files(&ui, &st, vec![a.clone(), b.clone()]);
+        assert_eq!(ui.get_c2pa_multi_count(), 2);
+        assert!(ui.get_c2pa_multi_text().contains("2 selected"));
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            a.parent().unwrap().display().to_string()
+        );
+        ui.set_c2pa_multi_parent(out_parent.display().to_string().into());
+        ui.set_c2pa_new_folder(true);
+        ui.set_c2pa_title("T".into());
+        ui.set_c2pa_creator("C".into());
+
+        ui.invoke_action("c2pa-multi-add".into());
+        assert!(ui.get_batch_running());
+        wait_batch(&ui, &st);
+        assert!(!ui.get_batch_running());
+        let added = std::path::PathBuf::from(ui.get_c2pa_result_dir().to_string());
+        assert_eq!(added.parent().unwrap(), out_parent);
+        assert!(
+            added
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("pixelstudio_c2pa_added_")
+        );
+        assert!(
+            ui.get_c2pa_batch_text()
+                .contains(&added.display().to_string())
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&added)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 2, "same-named inputs yield two outputs");
+        for n in &names {
+            assert!(studio_core::inspect_c2pa(n).unwrap().present);
+        }
+        // Inputs untouched.
+        assert!(!studio_core::inspect_c2pa(&a).unwrap().present);
+
+        // Strip from the signed copies into another brand-new folder.
+        set_c2pa_files(&ui, &st, names.clone());
+        ui.set_c2pa_multi_parent(out_parent.display().to_string().into());
+        ui.invoke_action("c2pa-multi-remove".into());
+        wait_batch(&ui, &st);
+        let stripped = std::path::PathBuf::from(ui.get_c2pa_result_dir().to_string());
+        assert_ne!(stripped, added);
+        assert!(
+            stripped
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("pixelstudio_c2pa_removed_")
+        );
+        let outs: Vec<_> = std::fs::read_dir(&stripped)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(outs.len(), 2);
+        for o in &outs {
+            assert!(!studio_core::inspect_c2pa(o).unwrap().present);
+        }
+
+        // New-folder OFF writes straight into the chosen folder; clear resets state.
+        set_c2pa_files(&ui, &st, vec![a.clone()]);
+        let direct = dir.path().join("direct");
+        ui.set_c2pa_multi_parent(direct.display().to_string().into());
+        ui.set_c2pa_new_folder(false);
+        ui.invoke_action("c2pa-multi-add".into());
+        wait_batch(&ui, &st);
+        assert_eq!(std::fs::read_dir(&direct).unwrap().count(), 1);
+        ui.invoke_action("c2pa-multi-clear".into());
+        assert_eq!(ui.get_c2pa_multi_count(), 0);
+        assert!(st.borrow().c2pa_files.is_empty());
+        assert_eq!(ui.get_c2pa_result_dir().as_str(), "");
         ui.hide().unwrap();
     }
 }

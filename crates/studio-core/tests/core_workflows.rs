@@ -271,6 +271,37 @@ fn batch_removes_c2pa_manifest_from_image_copies() {
 }
 
 #[test]
+fn batch_c2pa_dedupes_inputs_and_suffixes_colliding_names() {
+    let dir = temp_dir("batch_c2pa_collisions");
+    let a = dir.join("a").join("photo.jpg");
+    let b = dir.join("b").join("photo.jpg");
+    let out = dir.join("out");
+    for p in [&a, &b] {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        DynamicImage::ImageRgba8(RgbaImage::new(16, 16))
+            .save(p)
+            .unwrap();
+    }
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("PHOTO_c2pa.jpg"), b"existing").unwrap();
+    let options = C2paAddOptions {
+        output_dir: out.clone(),
+        draft: C2paManifestDraft {
+            title: String::new(),
+            creator: String::new(),
+            action: String::new(),
+        },
+    };
+    let summary = process_c2pa_add_batch(&[a.clone(), b, a], &options);
+    assert_eq!(summary.total, 2);
+    assert_eq!(summary.succeeded, 2);
+    assert_eq!(fs::read(out.join("PHOTO_c2pa.jpg")).unwrap(), b"existing");
+    assert!(out.join("photo_c2pa_2.jpg").exists());
+    assert!(out.join("photo_c2pa_3.jpg").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn jfif_round_trips_and_supports_c2pa() {
     let dir = temp_dir("jfif_round_trips_and_supports_c2pa");
     fs::create_dir_all(&dir).unwrap();

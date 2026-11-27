@@ -101,7 +101,7 @@ pub fn write_panorama_dynamic_jpeg(
     let jpeg = encode_jpeg_bytes(&flattened, options.quality)?;
     let xmp = build_gpano_xmp(flattened.width(), flattened.height());
     let injected = inject_xmp_into_jpeg(&jpeg, &xmp)?;
-    std::fs::write(output, injected)?;
+    crate::atomic_file::write(output, &injected)?;
 
     Ok(PanoramaResult {
         input,
