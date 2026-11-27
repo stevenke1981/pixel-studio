@@ -577,6 +577,8 @@ export component AppWindow inherits Window {
     in-out property <string> c2pa-in; in-out property <string> c2pa-out;
     in property <string> c2pa-batch-text;
     in property <string> c2pa-multi-text;
+    // Progress / result of the latest multi-image run (folder batches use c2pa-batch-text).
+    in property <string> c2pa-multi-result;
     in property <int> c2pa-multi-count: 0;
     in-out property <string> c2pa-multi-parent;
     in-out property <bool> c2pa-new-folder: true;
@@ -1681,7 +1683,7 @@ export component AppWindow inherits Window {
                                     IBtn { icon: @image-url("icons/batch-run.svg"); tip: T.t("執行批次", "Run batch"); enabled: !root.batch-running; clicked => { root.action("batch-run"); } }
                                     IBtn { icon: @image-url("icons/c2pa.svg"); tip: T.t("C2PA 批次…", "C2PA batch…"); clicked => { root.c2pa-open = true; root.action("refresh-info"); } }
                                 }
-                                Text { text: root.batch-progress; wrap: word-wrap; font-size: 11px; }
+                                Text { text: root.batch-progress; wrap: char-wrap; font-size: 11px; }
                                 Section { text: T.t("GIF 動畫", "Animated GIF"); }
                                 HorizontalLayout { spacing: 3px; IBtn { icon: @image-url("icons/pick-frames.svg"); tip: T.t("選擇影格…", "Pick frames…"); clicked => { root.action("gif-pick"); } } Text { text: root.gif-frames; vertical-alignment: center; } }
                                 LabeledSlider { label: T.t("間隔 ms", "Delay ms"); minimum: 20; maximum: 3000; value <=> root.gif-delay; has-apply: false; }
@@ -1962,7 +1964,7 @@ export component AppWindow inherits Window {
     if root.c2pa-open: Rectangle {
         background: #0006;
         TouchArea { }
-        Rectangle {
+        c2card := Rectangle {
             width: min(620px, root.width - 40px);
             height: min(c2l.preferred-height, root.height - 40px);
             clip: true;
@@ -1971,6 +1973,9 @@ export component AppWindow inherits Window {
             drop-shadow-blur: 16px;
             drop-shadow-color: #0006;
             ScrollView {
+                // Never scroll sideways: long paths wrap (char-wrap) inside the card width.
+                content-width: self.visible-width;
+                horizontal-scrollbar-policy: always-off;
                 c2l := VerticalLayout {
                     padding: 16px;
                     spacing: 8px;
@@ -2011,14 +2016,15 @@ export component AppWindow inherits Window {
                         Button { text: T.t("批次加入（使用上方資料）", "Batch add (fields above)"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-add"); } }
                         Button { text: T.t("批次移除", "Batch remove"); enabled: !root.batch-running && root.c2pa-in != "" && root.c2pa-out != ""; clicked => { root.action("batch-c2pa-remove"); } }
                     }
-                    Text { text: root.c2pa-batch-text; wrap: word-wrap; font-size: 11px; }
+                    if root.c2pa-batch-text != "": Text { accessible-label: T.t("批次 C2PA 結果", "Batch C2PA result"); text: root.c2pa-batch-text; wrap: char-wrap; font-size: 11px; }
                     Section { text: T.t("多張圖片 C2PA", "Multiple images C2PA"); }
                     HorizontalLayout {
                         spacing: 6px;
                         Button { text: T.t("選擇多張圖片…", "Pick images…"); enabled: !root.batch-running; clicked => { root.action("c2pa-multi-pick"); } }
+                        Button { text: T.t("加入更多…", "Add more…"); enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-append"); } }
                         Button { text: T.t("清除", "Clear"); enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-clear"); } }
                     }
-                    Text { text: root.c2pa-multi-text; wrap: word-wrap; font-size: 11px; color: #444; }
+                    Text { text: root.c2pa-multi-text; wrap: char-wrap; font-size: 11px; color: #444; }
                     HorizontalLayout { spacing: 3px; LineEdit { accessible-label: T.t("輸出位置", "Save in"); text <=> root.c2pa-multi-parent; placeholder-text: T.t("輸出位置（預設為第一張圖片所在資料夾）", "Save in (defaults to the first image's folder)"); } IBtn { icon: @image-url("icons/folder.svg"); tip: T.t("選擇輸出位置…", "Choose save location…"); clicked => { root.action("c2pa-multi-parent"); } } }
                     CheckBox { text: T.t("建立新資料夾", "Create a new folder"); checked <=> root.c2pa-new-folder; }
                     HorizontalLayout {
@@ -2026,6 +2032,7 @@ export component AppWindow inherits Window {
                         Button { text: root.c2pa-new-folder ? T.t("加入 C2PA 存到新資料夾", "Add C2PA → new folder") : T.t("加入 C2PA 存到此資料夾", "Add C2PA → this folder"); primary: true; enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-add"); } }
                         Button { text: root.c2pa-new-folder ? T.t("移除 C2PA 存到新資料夾", "Strip C2PA → new folder") : T.t("移除 C2PA 存到此資料夾", "Strip C2PA → this folder"); enabled: !root.batch-running && root.c2pa-multi-count > 0; clicked => { root.action("c2pa-multi-remove"); } }
                     }
+                    if root.c2pa-multi-result != "": Text { accessible-label: T.t("多張圖片結果", "Multiple images result"); text: root.c2pa-multi-result; wrap: char-wrap; font-size: 11px; }
                     if root.c2pa-result-dir != "": Button { text: T.t("開啟資料夾", "Open folder"); clicked => { root.action("c2pa-open-result"); } }
                 }
             }
