@@ -22,6 +22,9 @@ export global Tip {
     in-out property <string> text;
     in-out property <length> x;
     in-out property <length> y;
+    // false: (x, y) is the tooltip's top-left (below the button).
+    // true: (x, y) is the button's left edge / vertical centre; the tip sits to its left.
+    in-out property <bool> left;
 }
 
 component Section inherits Text {
@@ -57,13 +60,17 @@ component IBtn inherits Rectangle {
     in property <bool> active: false;
     in property <length> size: 30px;
     in property <length> icon-size: 18px;
+    // Show the tooltip to the left of the button (for vertically stacked rails).
+    in property <bool> tip-left: false;
     callback clicked();
+    // Set by a click so the tooltip does not pop up again until the pointer leaves.
+    property <bool> tip-done: false;
     width: root.size;
     height: root.size;
     border-radius: 5px;
     accessible-role: button;
     accessible-label: root.tip;
-    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    accessible-action-default => { Tip.text = ""; if (root.enabled) { root.clicked(); } }
     background: root.active ? (ta.has-hover ? #255fd6 : #2f6fed) : !root.enabled ? transparent : ta.pressed ? #c2d2f3 : ta.has-hover ? #e4ecfb : transparent;
     border-width: ta.has-hover && root.enabled && !root.active ? 1px : 0px;
     border-color: #c3d2ee;
@@ -75,19 +82,26 @@ component IBtn inherits Rectangle {
         y: (parent.height - self.height) / 2 + (ta.pressed && root.enabled ? 1px : 0px);
         colorize: root.active ? #ffffff : root.enabled ? #1d2a3a : #b3bac4;
     }
-    ta := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+    // A click hides the tooltip (the click may also remove this very button).
+    ta := TouchArea { clicked => { Tip.text = ""; root.tip-done = true; if (root.enabled) { root.clicked(); } } }
     // Show the shared tooltip after a short hover delay; hide it on leave.
     Timer {
         interval: 450ms;
-        running: ta.has-hover && root.tip != "" && Tip.text != root.tip;
+        running: ta.has-hover && root.tip != "" && Tip.text != root.tip && !root.tip-done;
         triggered => {
             Tip.text = root.tip;
+            Tip.left = root.tip-left;
             Tip.x = root.absolute-position.x;
-            Tip.y = root.absolute-position.y + root.height + 4px;
+            Tip.y = root.tip-left ? root.absolute-position.y + root.height / 2 : root.absolute-position.y + root.height + 4px;
         }
     }
     property <bool> hov: ta.has-hover;
-    changed hov => { if (!self.hov && Tip.text == root.tip) { Tip.text = ""; } }
+    changed hov => {
+        if (!self.hov) {
+            root.tip-done = false;
+            if (Tip.text == root.tip) { Tip.text = ""; }
+        }
+    }
 }
 
 component MenuRow inherits Rectangle {
@@ -741,8 +755,12 @@ export component AppWindow inherits Window {
 
     changed canvas-w => { root.canvas-resized(); }
     // Collapsing can destroy the focused widget; keep keyboard shortcuts alive.
-    changed inspector-collapsed => { fs.focus(); }
-    changed panels-hidden => { fs.focus(); }
+    // Layout switches can also destroy a hovered button before it sees the pointer
+    // leave, so drop any tooltip it was showing.
+    changed inspector-collapsed => { Tip.text = ""; fs.focus(); }
+    changed panels-hidden => { Tip.text = ""; fs.focus(); }
+    changed view-mode => { Tip.text = ""; }
+    changed tb-mode => { Tip.text = ""; }
     property <[image]> tab-icons: [@image-url("icons/tab-tools.svg"), @image-url("icons/tab-layers.svg"), @image-url("icons/tab-adjust.svg"), @image-url("icons/tab-stickers.svg"), @image-url("icons/tab-redact.svg"), @image-url("icons/tab-info.svg"), @image-url("icons/tab-batch.svg"), @image-url("icons/tab-settings.svg")];
     property <[string]> tab-names: [T.t("工具", "Tools"), T.t("圖層", "Layers"), T.t("調整", "Adjust"), T.t("貼圖", "Stickers"), T.t("自動打碼", "Auto redact"), T.t("資訊 / C2PA", "Info / C2PA"), T.t("批次 / GIF / 全景", "Batch / GIF / panorama"), T.t("設定", "Settings")];
 
@@ -1112,10 +1130,10 @@ export component AppWindow inherits Window {
                     padding: 4px;
                     spacing: 4px;
                     alignment: start;
-                    IBtn { icon: @image-url("icons/panel-expand.svg"); size: 38px; icon-size: 20px; tip: T.t("展開面板 (F4)", "Expand panel (F4)"); clicked => { root.action("toggle-inspector"); } }
+                    IBtn { icon: @image-url("icons/panel-expand.svg"); size: 38px; icon-size: 20px; tip-left: true; tip: T.t("展開面板 (F4)", "Expand panel (F4)"); clicked => { root.action("toggle-inspector"); } }
                     Rectangle { height: 1px; background: #ddd; }
                     for ic[i] in root.tab-icons: IBtn {
-                        icon: ic; size: 38px; icon-size: 20px;
+                        icon: ic; size: 38px; icon-size: 20px; tip-left: true;
                         active: root.tab == i;
                         tip: root.tab-names[i];
                         clicked => { root.action("tab:" + i); }
@@ -2105,8 +2123,8 @@ export component AppWindow inherits Window {
     }
     // ---------------- shared tooltip (always on top)
     if Tip.text != "": Rectangle {
-        x: max(4px, min(Tip.x, root.width - self.width - 4px));
-        y: Tip.y + self.height + 4px > root.height ? Tip.y - self.height - 40px : Tip.y;
+        x: Tip.left ? max(4px, Tip.x - self.width - 6px) : max(4px, min(Tip.x, root.width - self.width - 4px));
+        y: Tip.left ? max(4px, min(Tip.y - self.height / 2, root.height - self.height - 4px)) : Tip.y + self.height + 4px > root.height ? Tip.y - self.height - 40px : Tip.y;
         width: tipt.preferred-width + 14px;
         height: 24px;
         border-radius: 4px;

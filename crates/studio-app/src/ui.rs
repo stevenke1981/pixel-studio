@@ -248,6 +248,9 @@ pub struct State {
     panels_hidden: bool,
     /// The view was at "fit" when the panel layout changed; re-fit on the next canvas resize.
     refit_pending: bool,
+    /// Canvas size the current zoom/pan was last laid out for. A view that was fitted for this
+    /// size stays fitted when the canvas resizes (startup window sizing, maximize, restore).
+    view_canvas: Option<(f32, f32)>,
 }
 
 type S = Rc<RefCell<State>>;
@@ -389,6 +392,7 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
         inspector_collapsed: settings.inspector_collapsed,
         panels_hidden: false,
         refit_pending: false,
+        view_canvas: None,
     }
 }
 
@@ -526,10 +530,136 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             }
         });
     }
+    fit_window_to_screen(&ui);
     ui.run()?;
     sync_state_from_export_ui(&ui, &mut state.borrow_mut());
     save_settings(&state.borrow());
     Ok(())
+}
+
+/// `AppWindow`'s `min-width` / `min-height` (app.slint), in logical pixels.
+const MIN_WINDOW_LOGICAL: (f64, f64) = (900.0, 600.0);
+
+/// Fraction of the work area the window may occupy before it is shrunk.
+const WORK_AREA_FILL: f64 = 0.95;
+
+/// Decides whether a window whose inner size is `preferred` (physical px) fits inside
+/// `WORK_AREA_FILL` of `work` = `(x, y, width, height)` (physical px, already reduced by
+/// the window frame). Returns `None` when it fits, otherwise `(x, y, width, height)`:
+/// the frame's top-left and the new inner size, centred in the work area and never
+/// smaller than `min` (a window that cannot fit even at `min` is pinned to the top-left).
+fn fit_window_to_work_area(
+    preferred: (u32, u32),
+    min: (u32, u32),
+    work: (i32, i32, u32, u32),
+) -> Option<(i32, i32, u32, u32)> {
+    let (wx, wy, ww, wh) = work;
+    if ww == 0 || wh == 0 {
+        return None;
+    }
+    let limit_w = (f64::from(ww) * WORK_AREA_FILL) as u32;
+    let limit_h = (f64::from(wh) * WORK_AREA_FILL) as u32;
+    if preferred.0 <= limit_w && preferred.1 <= limit_h {
+        return None;
+    }
+    let w = preferred.0.min(limit_w).max(min.0);
+    let h = preferred.1.min(limit_h).max(min.1);
+    let x = wx.saturating_add((ww.saturating_sub(w) / 2) as i32);
+    let y = wy.saturating_add((wh.saturating_sub(h) / 2) as i32);
+    Some((x, y, w, h))
+}
+
+/// The preferred 1400×860 logical size is larger than many screens at high scaling
+/// (2100×1290 physical at 150% on a 1920×1080 monitor), so once the native window
+/// exists, shrink and centre it inside its monitor's work area when needed.
+/// No-op without a winit-backed window.
+fn fit_window_to_screen(ui: &AppWindow) {
+    use slint::winit_030::WinitWindowAccessor;
+    let weak = ui.as_weak();
+    let task = slint::spawn_local(async move {
+        let Some(ui) = weak.upgrade() else { return };
+        let Ok(win) = ui.window().winit_window().await else {
+            return;
+        };
+        let Some(monitor) = win.current_monitor().or_else(|| win.primary_monitor()) else {
+            return;
+        };
+        let (x, y, w, h) = monitor_work_area(&monitor);
+        let inner = win.inner_size();
+        let outer = win.outer_size();
+        let frame_w = outer.width.saturating_sub(inner.width);
+        let frame_h = outer.height.saturating_sub(inner.height);
+        let sf = win.scale_factor();
+        let min = (
+            (MIN_WINDOW_LOGICAL.0 * sf).round() as u32,
+            (MIN_WINDOW_LOGICAL.1 * sf).round() as u32,
+        );
+        let work = (x, y, w.saturating_sub(frame_w), h.saturating_sub(frame_h));
+        if let Some((nx, ny, nw, nh)) =
+            fit_window_to_work_area((inner.width, inner.height), min, work)
+        {
+            ui.window().set_size(slint::PhysicalSize::new(nw, nh));
+            ui.window()
+                .set_position(slint::PhysicalPosition::new(nx, ny));
+        }
+    });
+    if let Err(e) = task {
+        eprintln!("window fit skipped: {e}");
+    }
+}
+
+/// The monitor's work area (excluding the taskbar on Windows) in physical pixels;
+/// elsewhere the full monitor bounds.
+fn monitor_work_area(
+    monitor: &slint::winit_030::winit::monitor::MonitorHandle,
+) -> (i32, i32, u32, u32) {
+    #[cfg(windows)]
+    {
+        use slint::winit_030::winit::platform::windows::MonitorHandleExtWindows;
+        if let Some(work) = win32_work_area(monitor.hmonitor()) {
+            return work;
+        }
+    }
+    let pos = monitor.position();
+    let size = monitor.size();
+    (pos.x, pos.y, size.width, size.height)
+}
+
+#[cfg(windows)]
+fn win32_work_area(hmonitor: isize) -> Option<(i32, i32, u32, u32)> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct MonitorInfo {
+        cb_size: u32,
+        _rc_monitor: Rect,
+        rc_work: Rect,
+        _flags: u32,
+    }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetMonitorInfoW(hmonitor: isize, info: *mut MonitorInfo) -> i32;
+    }
+    let mut info = MonitorInfo {
+        cb_size: std::mem::size_of::<MonitorInfo>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `hmonitor` is a live HMONITOR from winit and `info` is a MONITORINFO
+    // whose `cbSize` is set, as GetMonitorInfoW requires.
+    if unsafe { GetMonitorInfoW(hmonitor, &mut info) } == 0 {
+        return None;
+    }
+    let r = &info.rc_work;
+    let w = u32::try_from(r.right - r.left).ok()?;
+    let h = u32::try_from(r.bottom - r.top).ok()?;
+    Some((r.left, r.top, w, h))
 }
 
 fn save_settings(s: &State) {
@@ -972,7 +1102,20 @@ fn is_at_fit(zoom: f32, pan: (f32, f32), cw: f32, ch: f32, w: f32, h: f32) -> bo
 fn fit(ui: &AppWindow, st: &S) {
     let mut s = st.borrow_mut();
     let (w, h) = (s.doc.width() as f32, s.doc.height() as f32);
-    (s.zoom, s.pan) = fit_for(ui.get_canvas_w(), ui.get_canvas_h(), w, h);
+    let canvas = (ui.get_canvas_w(), ui.get_canvas_h());
+    (s.zoom, s.pan) = fit_for(canvas.0, canvas.1, w, h);
+    s.view_canvas = Some(canvas);
+}
+
+/// Whether a canvas resize should re-fit: either a panel toggle asked for it, or the view is
+/// still the fitted view for the canvas size it was last laid out for.
+fn should_refit_on_resize(s: &mut State) -> bool {
+    let pending = std::mem::take(&mut s.refit_pending);
+    let (w, h) = (s.doc.width() as f32, s.doc.height() as f32);
+    let was_fit = s
+        .view_canvas
+        .is_some_and(|(cw, ch)| is_at_fit(s.zoom, s.pan, cw, ch, w, h));
+    pending || was_fit
 }
 
 /// Apply a side-panel layout. A fitted view is re-fitted once the canvas reports its new size;
@@ -4818,10 +4961,11 @@ fn wire(ui: &AppWindow, st: &S) {
         refresh(&ui, &st)
     });
     cb!(on_canvas_resized, |ui, st| {
-        let refit = std::mem::take(&mut st.borrow_mut().refit_pending);
+        let refit = should_refit_on_resize(&mut st.borrow_mut());
         if refit {
             fit(&ui, &st);
         }
+        st.borrow_mut().view_canvas = Some((ui.get_canvas_w(), ui.get_canvas_h()));
         sync_view(&ui, &st.borrow())
     });
     cb!(on_key, |ui,
@@ -6393,6 +6537,175 @@ mod save_convert_tests {
         ));
         // A fitted view stops being "at fit" once the canvas grows.
         assert!(!is_at_fit(z, pan, 1526.0, 800.0, 640.0, 480.0));
+    }
+
+    #[test]
+    fn window_fit_keeps_fitting_windows() {
+        // 1400×860 at 100% on a 1920×1040 work area: untouched.
+        assert_eq!(
+            fit_window_to_work_area((1400, 860), (900, 600), (0, 0, 1920, 1040)),
+            None
+        );
+        // Exactly at the 95% limit still fits.
+        assert_eq!(
+            fit_window_to_work_area((1900, 950), (900, 600), (0, 0, 2000, 1000)),
+            None
+        );
+        // Degenerate work area: leave the window alone.
+        assert_eq!(
+            fit_window_to_work_area((1400, 860), (900, 600), (0, 0, 0, 0)),
+            None
+        );
+    }
+
+    #[test]
+    fn window_fit_clamps_and_centres_at_150_percent() {
+        // 1400×860 @150% = 2100×1290 on 1920×1032 (taskbar) minus a 22×45 frame.
+        let work = (0, 0, 1920 - 22, 1032 - 45);
+        let (x, y, w, h) = fit_window_to_work_area((2100, 1290), (1350, 900), work).unwrap();
+        assert_eq!((w, h), (1803, 937));
+        assert_eq!((x, y), ((1898 - 1803) / 2, (987 - 937) / 2));
+        assert!(x as u32 + w <= work.2 && y as u32 + h <= work.3);
+
+        // Only one axis too big: the other keeps its preferred size; offsets honour
+        // the work area origin (secondary monitor / top taskbar).
+        let (x, y, w, h) =
+            fit_window_to_work_area((1400, 1290), (900, 600), (1920, 40, 1920, 1000)).unwrap();
+        assert_eq!((w, h), (1400, 950));
+        assert_eq!((x, y), (1920 + 260, 40 + 25));
+    }
+
+    #[test]
+    fn window_fit_never_goes_below_min_size() {
+        let (x, y, w, h) =
+            fit_window_to_work_area((2100, 1290), (1350, 900), (10, 20, 1024, 700)).unwrap();
+        assert_eq!((w, h), (1350, 900));
+        assert_eq!((x, y), (10, 20)); // pinned to the work area's top-left
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn tooltip_clears_when_layout_switch_removes_its_button() {
+        use i_slint_backend_testing::ElementHandle;
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(1400, 860));
+        st.borrow_mut().doc = Doc::new(200, 120);
+        refresh(&ui, &st);
+        let tip = Tip::get(&ui);
+        let settle = slint::platform::update_timers_and_animations;
+        let hovered = |text: &str| {
+            settle(); // flush change handlers of the previous step
+            tip.set_text(text.into());
+            settle();
+            assert_eq!(tip.get_text(), text);
+        };
+
+        hovered("Collapse panel (F4)");
+        ui.invoke_action("toggle-inspector".into());
+        settle();
+        assert!(ui.get_inspector_collapsed());
+        assert_eq!(tip.get_text(), "");
+
+        // A rail icon that expands the panel (removing itself) clears its tip.
+        // (looked up first: the visible tooltip's own Text also carries the label)
+        let rail = ElementHandle::find_by_accessible_label(&ui, "Layers")
+            .last()
+            .unwrap();
+        hovered("Layers");
+        rail.invoke_accessible_default_action();
+        settle();
+        assert!(!ui.get_inspector_collapsed());
+        assert_eq!(tip.get_text(), "");
+
+        hovered("Collapse panel (F4)");
+        ui.invoke_action("toggle-panels".into());
+        settle();
+        assert!(ui.get_panels_hidden());
+        assert_eq!(tip.get_text(), "");
+        ui.invoke_action("toggle-panels".into());
+
+        hovered("Hide floating toolbar");
+        ui.invoke_action("toggle-toolbar".into());
+        settle();
+        assert_eq!(tip.get_text(), "");
+
+        hovered("Editor mode (click for viewer)");
+        ui.invoke_action("toggle-mode".into());
+        settle();
+        assert!(ui.get_view_mode());
+        assert_eq!(tip.get_text(), "");
+        ui.invoke_action("toggle-mode".into());
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn rail_tooltip_opens_to_the_left() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::WindowEvent;
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(1400, 860));
+        st.borrow_mut().doc = Doc::new(200, 120);
+        refresh(&ui, &st);
+        ui.invoke_action("toggle-inspector".into());
+        slint::platform::update_timers_and_animations();
+        let tip = Tip::get(&ui);
+        let hover = |e: ElementHandle| {
+            let (p, s) = (e.absolute_position(), e.size());
+            let position = slint::LogicalPosition::new(p.x + s.width / 2.0, p.y + s.height / 2.0);
+            ui.window()
+                .dispatch_event(WindowEvent::PointerMoved { position });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(600));
+            slint::platform::update_timers_and_animations();
+            (p, s)
+        };
+
+        // Rail tab icon: anchored at its left edge, vertically centred.
+        let rail = ElementHandle::find_by_accessible_label(&ui, "Layers")
+            .last()
+            .unwrap();
+        let (p, s) = hover(rail);
+        assert_eq!(tip.get_text(), "Layers");
+        assert!(tip.get_left());
+        assert!((tip.get_x() - p.x).abs() < 0.5);
+        assert!((tip.get_y() - (p.y + s.height / 2.0)).abs() < 0.5);
+
+        // Top-bar buttons keep the tooltip below the button.
+        let top = ElementHandle::find_by_accessible_label(&ui, "Expand panel (F4)")
+            .min_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
+            .unwrap();
+        let (p, s) = hover(top);
+        assert_eq!(tip.get_text(), "Expand panel (F4)");
+        assert!(!tip.get_left());
+        assert!((tip.get_y() - (p.y + s.height + 4.0)).abs() < 0.5);
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn fitted_view_refits_when_window_resizes() {
+        let (ui, st) = make_test_ui(false);
+        ui.window().set_size(slint::PhysicalSize::new(1400, 860));
+        st.borrow_mut().doc = Doc::new(400, 300);
+        // Startup fits before the window reaches its final size…
+        fit(&ui, &st);
+        refresh(&ui, &st);
+        // …then the window is shrunk to the monitor work area.
+        ui.window().set_size(slint::PhysicalSize::new(1100, 700));
+        ui.invoke_canvas_resized();
+        let (cw, ch) = (ui.get_canvas_w(), ui.get_canvas_h());
+        assert_eq!(
+            (st.borrow().zoom, st.borrow().pan),
+            fit_for(cw, ch, 400.0, 300.0)
+        );
+
+        // A manually zoomed view survives a window resize untouched.
+        st.borrow_mut().zoom = 2.5;
+        st.borrow_mut().pan = (-30.0, 12.0);
+        ui.window().set_size(slint::PhysicalSize::new(1300, 800));
+        ui.invoke_canvas_resized();
+        assert_eq!((st.borrow().zoom, st.borrow().pan), (2.5, (-30.0, 12.0)));
+        ui.hide().unwrap();
     }
 
     #[test]
