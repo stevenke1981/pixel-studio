@@ -137,6 +137,8 @@ I = {
  "close": '<path d="M6 6l12 12M18 6L6 18"/>',
  "dock": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
  "float": '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="9" width="10" height="5" rx="1"/>',
+ "panel-collapse": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M7.5 9l3 3-3 3"/>',
+ "panel-expand": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M10.5 9l-3 3 3 3"/>',
  "chevron-down": '<path d="M6 9l6 6 6-6"/>',
  "check": '<path d="M5 12.5l4.5 4.5L19 7"/>',
  "fill-color": '<path d="M5 11l6-6 8 8-6 6z"/><path d="M3 22h18" stroke-width="3"/>',

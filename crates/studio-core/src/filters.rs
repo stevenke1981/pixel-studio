@@ -1,4 +1,5 @@
 use image::DynamicImage;
+use rayon::prelude::*;
 
 use crate::util::{clamp_channel, hsl_to_rgb, lerp_channel, rgb_to_hsl};
 
@@ -193,14 +194,14 @@ pub fn adjust_hue(image: &DynamicImage, degrees: f32) -> DynamicImage {
     let shift = degrees.rem_euclid(360.0) / 360.0;
     let mut rgba = image.to_rgba8();
 
-    for pixel in rgba.pixels_mut() {
+    rgba.par_chunks_mut(4).for_each(|pixel| {
         let (h, s, l) = rgb_to_hsl(pixel[0], pixel[1], pixel[2]);
         let new_h = (h + shift).rem_euclid(1.0);
         let (r, g, b) = hsl_to_rgb(new_h, s, l);
         pixel[0] = r;
         pixel[1] = g;
         pixel[2] = b;
-    }
+    });
 
     DynamicImage::ImageRgba8(rgba)
 }
@@ -213,7 +214,7 @@ pub fn sepia(image: &DynamicImage, strength: f32) -> DynamicImage {
     }
 
     let mut rgba = image.to_rgba8();
-    for pixel in rgba.pixels_mut() {
+    rgba.par_chunks_mut(4).for_each(|pixel| {
         let r = f32::from(pixel[0]);
         let g = f32::from(pixel[1]);
         let b = f32::from(pixel[2]);
@@ -223,7 +224,7 @@ pub fn sepia(image: &DynamicImage, strength: f32) -> DynamicImage {
         pixel[0] = lerp_channel(r, sepia_r, strength);
         pixel[1] = lerp_channel(g, sepia_g, strength);
         pixel[2] = lerp_channel(b, sepia_b, strength);
-    }
+    });
 
     DynamicImage::ImageRgba8(rgba)
 }
@@ -241,18 +242,23 @@ pub fn vignette(image: &DynamicImage, strength: f32) -> DynamicImage {
     let center_y = height as f32 / 2.0;
     let max_dist = (center_x.hypot(center_y)).max(1.0);
 
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as f32 + 0.5 - center_x;
-            let dy = y as f32 + 0.5 - center_y;
-            let dist = dx.hypot(dy) / max_dist;
-            let factor = 1.0 - strength * dist.powf(1.8);
-            let pixel = rgba.get_pixel_mut(x, y);
-            pixel[0] = (f32::from(pixel[0]) * factor).round().clamp(0.0, 255.0) as u8;
-            pixel[1] = (f32::from(pixel[1]) * factor).round().clamp(0.0, 255.0) as u8;
-            pixel[2] = (f32::from(pixel[2]) * factor).round().clamp(0.0, 255.0) as u8;
-        }
+    if width == 0 || height == 0 {
+        return DynamicImage::ImageRgba8(rgba);
     }
+
+    rgba.par_chunks_mut(width as usize * 4)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let dy = y as f32 + 0.5 - center_y;
+            for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let dx = x as f32 + 0.5 - center_x;
+                let dist = dx.hypot(dy) / max_dist;
+                let factor = 1.0 - strength * dist.powf(1.8);
+                pixel[0] = (f32::from(pixel[0]) * factor).round().clamp(0.0, 255.0) as u8;
+                pixel[1] = (f32::from(pixel[1]) * factor).round().clamp(0.0, 255.0) as u8;
+                pixel[2] = (f32::from(pixel[2]) * factor).round().clamp(0.0, 255.0) as u8;
+            }
+        });
 
     DynamicImage::ImageRgba8(rgba)
 }
@@ -266,14 +272,14 @@ pub fn adjust_temperature(image: &DynamicImage, amount: f32) -> DynamicImage {
     let mut rgba = image.to_rgba8();
     let warm = amount.clamp(-100.0, 100.0) / 100.0;
 
-    for pixel in rgba.pixels_mut() {
+    rgba.par_chunks_mut(4).for_each(|pixel| {
         let r = f32::from(pixel[0]);
         let g = f32::from(pixel[1]);
         let b = f32::from(pixel[2]);
         pixel[0] = clamp_channel(r + warm * 40.0);
         pixel[1] = clamp_channel(g + warm * 10.0);
         pixel[2] = clamp_channel(b - warm * 40.0);
-    }
+    });
 
     DynamicImage::ImageRgba8(rgba)
 }
@@ -287,21 +293,21 @@ pub fn adjust_tint(image: &DynamicImage, amount: f32) -> DynamicImage {
     let mut rgba = image.to_rgba8();
     let tint = amount.clamp(-100.0, 100.0) / 100.0;
 
-    for pixel in rgba.pixels_mut() {
+    rgba.par_chunks_mut(4).for_each(|pixel| {
         let r = f32::from(pixel[0]);
         let g = f32::from(pixel[1]);
         let b = f32::from(pixel[2]);
         pixel[0] = clamp_channel(r + tint * 30.0);
         pixel[1] = clamp_channel(g - tint * 20.0);
         pixel[2] = clamp_channel(b + tint * 30.0);
-    }
+    });
 
     DynamicImage::ImageRgba8(rgba)
 }
 
 /// Stretch histogram to full 0-255 range per channel (auto levels).
 pub fn auto_contrast(image: &DynamicImage) -> DynamicImage {
-    let rgba = image.to_rgba8();
+    let mut rgba = image.to_rgba8();
     let mut min = [255u8; 3];
     let mut max = [0u8; 3];
 
@@ -316,19 +322,27 @@ pub fn auto_contrast(image: &DynamicImage) -> DynamicImage {
         return image.clone();
     }
 
-    let mut output = rgba.clone();
-    for pixel in output.pixels_mut() {
-        for channel in 0..3 {
-            let lo = min[channel];
-            let hi = max[channel];
-            if hi > lo {
-                let value = f32::from(pixel[channel] - lo) / f32::from(hi - lo);
-                pixel[channel] = (value * 255.0).round().clamp(0.0, 255.0) as u8;
+    // Per-channel 256-entry lookup tables; identity where the range is flat.
+    let luts: [[u8; 256]; 3] = std::array::from_fn(|channel| {
+        let lo = min[channel];
+        let hi = max[channel];
+        std::array::from_fn(|v| {
+            let v = v as u8;
+            if hi > lo && v >= lo {
+                let value = f32::from(v - lo) / f32::from(hi - lo);
+                (value * 255.0).round().clamp(0.0, 255.0) as u8
+            } else {
+                v
             }
+        })
+    });
+    rgba.par_chunks_mut(4).for_each(|pixel| {
+        for channel in 0..3 {
+            pixel[channel] = luts[channel][usize::from(pixel[channel])];
         }
-    }
+    });
 
-    DynamicImage::ImageRgba8(output)
+    DynamicImage::ImageRgba8(rgba)
 }
 
 /// Posterize to `levels` per channel (2..=32).
@@ -337,12 +351,15 @@ pub fn posterize(image: &DynamicImage, levels: u8) -> DynamicImage {
     let step = 255.0 / f32::from(levels - 1);
     let mut rgba = image.to_rgba8();
 
-    for pixel in rgba.pixels_mut() {
-        for channel in 0..3 {
-            let quantized = (f32::from(pixel[channel]) / step).round() * step;
-            pixel[channel] = quantized.round().clamp(0.0, 255.0) as u8;
+    let lut: [u8; 256] = std::array::from_fn(|v| {
+        let quantized = (v as f32 / step).round() * step;
+        quantized.round().clamp(0.0, 255.0) as u8
+    });
+    rgba.par_chunks_mut(4).for_each(|pixel| {
+        for channel in &mut pixel[..3] {
+            *channel = lut[usize::from(*channel)];
         }
-    }
+    });
 
     DynamicImage::ImageRgba8(rgba)
 }
@@ -392,6 +409,112 @@ mod tests {
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([127, 127, 127, 255])));
         let result = posterize(&image, 2).to_rgba8();
         assert!(result.get_pixel(0, 0)[0] == 0 || result.get_pixel(0, 0)[0] == 255);
+    }
+
+    // ── Serial reference implementations (pre-parallelization behaviour) ──
+
+    fn gradient(w: u32, h: u32) -> DynamicImage {
+        let mut img = RgbaImage::new(w, h);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = Rgba([
+                ((x * 37 + y * 11) % 256) as u8,
+                ((x * 5 + y * 53 + 17) % 256) as u8,
+                ((x * 91 + y * 7 + 40) % 256).min(230) as u8,
+                ((x + y * 3) % 256) as u8,
+            ]);
+        }
+        DynamicImage::ImageRgba8(img)
+    }
+
+    fn serial_map(image: &DynamicImage, f: impl Fn(u32, u32, &mut Rgba<u8>)) -> RgbaImage {
+        let mut rgba = image.to_rgba8();
+        for (x, y, p) in rgba.enumerate_pixels_mut() {
+            f(x, y, p);
+        }
+        rgba
+    }
+
+    #[test]
+    fn parallel_filters_match_serial_reference() {
+        let img = gradient(37, 23);
+
+        let shift = 75.0f32.rem_euclid(360.0) / 360.0;
+        let want = serial_map(&img, |_, _, p| {
+            let (h, s, l) = rgb_to_hsl(p[0], p[1], p[2]);
+            let (r, g, b) = hsl_to_rgb((h + shift).rem_euclid(1.0), s, l);
+            p[0] = r;
+            p[1] = g;
+            p[2] = b;
+        });
+        assert_eq!(adjust_hue(&img, 75.0).to_rgba8(), want);
+
+        let want = serial_map(&img, |_, _, p| {
+            let (r, g, b) = (f32::from(p[0]), f32::from(p[1]), f32::from(p[2]));
+            let sr = (r * 0.393 + g * 0.769 + b * 0.189).clamp(0.0, 255.0);
+            let sg = (r * 0.349 + g * 0.686 + b * 0.168).clamp(0.0, 255.0);
+            let sb = (r * 0.272 + g * 0.534 + b * 0.131).clamp(0.0, 255.0);
+            p[0] = lerp_channel(r, sr, 0.6);
+            p[1] = lerp_channel(g, sg, 0.6);
+            p[2] = lerp_channel(b, sb, 0.6);
+        });
+        assert_eq!(sepia(&img, 0.6).to_rgba8(), want);
+
+        let (cx, cy) = (37.0f32 / 2.0, 23.0f32 / 2.0);
+        let max_dist = cx.hypot(cy).max(1.0);
+        let want = serial_map(&img, |x, y, p| {
+            let dist = (x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy) / max_dist;
+            let factor = 1.0 - 0.7 * dist.powf(1.8);
+            for c in 0..3 {
+                p[c] = (f32::from(p[c]) * factor).round().clamp(0.0, 255.0) as u8;
+            }
+        });
+        assert_eq!(vignette(&img, 0.7).to_rgba8(), want);
+
+        let want = serial_map(&img, |_, _, p| {
+            let warm = 0.35f32;
+            p[0] = clamp_channel(f32::from(p[0]) + warm * 40.0);
+            p[1] = clamp_channel(f32::from(p[1]) + warm * 10.0);
+            p[2] = clamp_channel(f32::from(p[2]) - warm * 40.0);
+        });
+        assert_eq!(adjust_temperature(&img, 35.0).to_rgba8(), want);
+
+        let want = serial_map(&img, |_, _, p| {
+            let t = -0.4f32;
+            p[0] = clamp_channel(f32::from(p[0]) + t * 30.0);
+            p[1] = clamp_channel(f32::from(p[1]) - t * 20.0);
+            p[2] = clamp_channel(f32::from(p[2]) + t * 30.0);
+        });
+        assert_eq!(adjust_tint(&img, -40.0).to_rgba8(), want);
+
+        for levels in [2u8, 3, 5, 32] {
+            let step = 255.0 / f32::from(levels - 1);
+            let want = serial_map(&img, |_, _, p| {
+                for c in 0..3 {
+                    let q = (f32::from(p[c]) / step).round() * step;
+                    p[c] = q.round().clamp(0.0, 255.0) as u8;
+                }
+            });
+            assert_eq!(posterize(&img, levels).to_rgba8(), want, "levels {levels}");
+        }
+
+        let src = img.to_rgba8();
+        let mut lo = [255u8; 3];
+        let mut hi = [0u8; 3];
+        for p in src.pixels() {
+            for c in 0..3 {
+                lo[c] = lo[c].min(p[c]);
+                hi[c] = hi[c].max(p[c]);
+            }
+        }
+        let want = serial_map(&img, |_, _, p| {
+            for c in 0..3 {
+                if hi[c] > lo[c] {
+                    let v = f32::from(p[c] - lo[c]) / f32::from(hi[c] - lo[c]);
+                    p[c] = (v * 255.0).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        });
+        assert_eq!(auto_contrast(&img).to_rgba8(), want);
     }
 
     // ── Filter trait tests ──

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -93,12 +94,13 @@ pub fn process_c2pa_add_batch_with_progress(
     options: &C2paAddOptions,
     progress: impl Fn(usize, usize) + Sync,
 ) -> BatchSummary {
-    let total = inputs.len();
+    let plan = plan_c2pa_outputs(inputs, &options.output_dir, "_c2pa");
+    let total = plan.len();
     let completed = Arc::new(AtomicUsize::new(0));
-    let results: Vec<BatchResult> = inputs
+    let results: Vec<BatchResult> = plan
         .par_iter()
-        .map(|input| {
-            let result = process_c2pa_add_one(input, &options.output_dir, &options.draft);
+        .map(|(input, output)| {
+            let result = process_c2pa_add_one(input, output, &options.draft);
             let completed = completed.fetch_add(1, Ordering::Relaxed) + 1;
             progress(completed, total);
             result
@@ -120,12 +122,13 @@ pub fn process_c2pa_removal_batch_with_progress(
     options: &C2paRemovalOptions,
     progress: impl Fn(usize, usize) + Sync,
 ) -> BatchSummary {
-    let total = inputs.len();
+    let plan = plan_c2pa_outputs(inputs, &options.output_dir, "_no_c2pa");
+    let total = plan.len();
     let completed = Arc::new(AtomicUsize::new(0));
-    let results: Vec<BatchResult> = inputs
+    let results: Vec<BatchResult> = plan
         .par_iter()
-        .map(|input| {
-            let result = process_c2pa_removal_one(input, &options.output_dir);
+        .map(|(input, output)| {
+            let result = process_c2pa_removal_one(input, output);
             let completed = completed.fetch_add(1, Ordering::Relaxed) + 1;
             progress(completed, total);
             result
@@ -201,16 +204,8 @@ fn process_one(input: &Path, options: &BatchOptions) -> BatchResult {
     }
 }
 
-fn process_c2pa_add_one(input: &Path, output_dir: &Path, draft: &C2paManifestDraft) -> BatchResult {
-    let output = c2pa_output_path(input, output_dir, "_c2pa");
-    if output.exists() {
-        return BatchResult {
-            input: input.to_path_buf(),
-            output: None,
-            error: Some(format!("Output already exists: {}", output.display())),
-        };
-    }
-
+fn process_c2pa_add_one(input: &Path, output: &Path, draft: &C2paManifestDraft) -> BatchResult {
+    let output = output.to_path_buf();
     let temp_output = temporary_c2pa_output_path(&output);
     let _ = std::fs::remove_file(&temp_output);
     let normalized_draft = normalized_c2pa_draft(input, draft);
@@ -227,15 +222,8 @@ fn process_c2pa_add_one(input: &Path, output_dir: &Path, draft: &C2paManifestDra
     }
 }
 
-fn process_c2pa_removal_one(input: &Path, output_dir: &Path) -> BatchResult {
-    let output = c2pa_output_path(input, output_dir, "_no_c2pa");
-    if output.exists() {
-        return BatchResult {
-            input: input.to_path_buf(),
-            output: None,
-            error: Some(format!("Output already exists: {}", output.display())),
-        };
-    }
+fn process_c2pa_removal_one(input: &Path, output: &Path) -> BatchResult {
+    let output = output.to_path_buf();
 
     // Stage through a hidden same-extension file so C2PA format detection still works.
     let temp_output = temporary_c2pa_output_path(&output);
@@ -251,6 +239,49 @@ fn process_c2pa_removal_one(input: &Path, output_dir: &Path) -> BatchResult {
             }
         }
     }
+}
+
+/// Resolve a unique output path for every distinct input, sequentially and up front.
+///
+/// Duplicate input paths (case-insensitive) are processed once. Names are
+/// `<stem><suffix>.<ext>`, then `<stem><suffix>_2.<ext>`, `_3`, ... so that
+/// outputs never collide within the batch or with files already in `output_dir`
+/// (compared case-insensitively). Existing files are never overwritten.
+fn plan_c2pa_outputs(
+    inputs: &[PathBuf],
+    output_dir: &Path,
+    suffix: &str,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut seen_inputs = HashSet::new();
+    let mut taken = HashSet::new();
+    let mut plan = Vec::new();
+    for input in inputs {
+        if !seen_inputs.insert(path_key(input)) {
+            continue;
+        }
+        let first = c2pa_output_path(input, output_dir, suffix);
+        let mut candidate = first.clone();
+        let mut n = 2;
+        while taken.contains(&path_key(&candidate)) || candidate.exists() {
+            let stem = first
+                .file_stem()
+                .and_then(|v| v.to_str())
+                .unwrap_or("image");
+            let name = match first.extension().and_then(|v| v.to_str()) {
+                Some(ext) => format!("{stem}_{n}.{ext}"),
+                None => format!("{stem}_{n}"),
+            };
+            candidate = output_dir.join(name);
+            n += 1;
+        }
+        taken.insert(path_key(&candidate));
+        plan.push((input.clone(), candidate));
+    }
+    plan
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().to_lowercase()
 }
 
 fn c2pa_output_path(input: &Path, output_dir: &Path, suffix: &str) -> PathBuf {

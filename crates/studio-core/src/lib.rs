@@ -54,6 +54,7 @@ pub use filters::{
 pub use formats::{SupportedFormat, effective_quality, resolve_save_target};
 pub use gif::{GifOptions, GifResult, write_animated_gif};
 pub use image_io::{ImageInfo, inspect_image, load_dynamic_image, load_dynamic_image_with_format};
+pub use naming::create_unique_output_dir;
 pub use panorama360::{
     PanoramaMode, PanoramaOptions, PanoramaResult, make_equirectangular,
     write_panorama_dynamic_jpeg, write_panorama_jpeg,
