@@ -302,6 +302,68 @@ fn batch_c2pa_dedupes_inputs_and_suffixes_colliding_names() {
 }
 
 #[test]
+fn batch_c2pa_round_trip_does_not_chain_suffixes() {
+    let dir = temp_dir("batch_c2pa_no_chained_suffixes");
+    let input = dir.join("in").join("photo.jpg");
+    fs::create_dir_all(input.parent().unwrap()).unwrap();
+    DynamicImage::ImageRgba8(RgbaImage::new(16, 16))
+        .save(&input)
+        .unwrap();
+    let draft = C2paManifestDraft {
+        title: String::new(),
+        creator: String::new(),
+        action: String::new(),
+    };
+    let only_output = |summary: studio_core::BatchSummary| -> String {
+        assert_eq!(summary.succeeded, 1, "{:?}", summary.results);
+        summary.results[0]
+            .output
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    let signed_dir = dir.join("signed");
+    let stripped_dir = dir.join("stripped");
+    let resigned_dir = dir.join("resigned");
+    for d in [&signed_dir, &stripped_dir, &resigned_dir] {
+        fs::create_dir_all(d).unwrap();
+    }
+    let signed = only_output(process_c2pa_add_batch(
+        std::slice::from_ref(&input),
+        &C2paAddOptions {
+            output_dir: signed_dir.clone(),
+            draft: draft.clone(),
+        },
+    ));
+    assert_eq!(signed, "photo_c2pa.jpg");
+
+    let stripped = only_output(process_c2pa_removal_batch(
+        &[signed_dir.join(&signed)],
+        &C2paRemovalOptions {
+            output_dir: stripped_dir.clone(),
+        },
+    ));
+    assert_eq!(stripped, "photo_no_c2pa.jpg");
+
+    // A collision-numbered strip output still maps back to the plain base name.
+    let numbered = stripped_dir.join("photo_no_c2pa_2.jpg");
+    fs::copy(stripped_dir.join(&stripped), &numbered).unwrap();
+    let resigned = only_output(process_c2pa_add_batch(
+        &[numbered],
+        &C2paAddOptions {
+            output_dir: resigned_dir,
+            draft,
+        },
+    ));
+    assert_eq!(resigned, "photo_c2pa.jpg");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn jfif_round_trips_and_supports_c2pa() {
     let dir = temp_dir("jfif_round_trips_and_supports_c2pa");
     fs::create_dir_all(&dir).unwrap();

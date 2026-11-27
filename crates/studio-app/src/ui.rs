@@ -137,12 +137,31 @@ enum Job {
         Vec<studio_core::redact::RedactBox>,
         Receiver<Result<Vec<studio_core::redact::RedactBox>, String>>,
     ),
-    Batch(Receiver<BatchMsg>),
+    Batch(Receiver<BatchMsg>, BatchTarget),
 }
 
 enum BatchMsg {
-    Progress(usize, usize, bool),
-    Done(String, bool, Option<PathBuf>),
+    Progress(usize, usize),
+    Done(String, Option<PathBuf>),
+}
+
+/// Which dialog section shows a batch run's progress and result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BatchTarget {
+    /// Batch convert panel (atch-progress).
+    Convert,
+    /// C2PA folder batch (c2pa-batch-text).
+    C2paFolder,
+    /// C2PA multi-image selection (c2pa-multi-result).
+    C2paMulti,
+}
+
+fn set_batch_target_text(ui: &AppWindow, target: BatchTarget, text: SharedString) {
+    match target {
+        BatchTarget::Convert => ui.set_batch_progress(text),
+        BatchTarget::C2paFolder => ui.set_c2pa_batch_text(text),
+        BatchTarget::C2paMulti => ui.set_c2pa_multi_result(text),
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -217,6 +236,9 @@ pub struct State {
     batch_job: Option<Job>,
     gif_frames: Vec<PathBuf>,
     c2pa_files: Vec<PathBuf>,
+    /// Last output location auto-filled from the first picked image; a different,
+    /// non-empty c2pa-multi-parent means the user chose the location explicitly.
+    c2pa_auto_parent: String,
     edit_session: Option<(usize, String)>,
     font_paths: Vec<PathBuf>,
     c2pa_info: studio_core::C2paInfo,
@@ -352,6 +374,7 @@ fn initial_state(settings: &Settings, zh: bool, view_mode: bool) -> State {
         batch_job: None,
         gif_frames: Vec::new(),
         c2pa_files: Vec::new(),
+        c2pa_auto_parent: String::new(),
         edit_session: None,
         font_paths: fonts::list_system_font_paths(),
         c2pa_info: Default::default(),
@@ -4249,10 +4272,14 @@ fn action(ui: &AppWindow, st: &S, a: &str) {
             start_batch(ui, st, a);
             return;
         }
-        "c2pa-multi-pick" => {
+        "c2pa-multi-pick" | "c2pa-multi-append" => {
             if let Some(mut f) = open_image_filter(rfd::FileDialog::new(), zh).pick_files() {
                 f.sort();
-                set_c2pa_files(ui, st, f);
+                if a == "c2pa-multi-append" {
+                    append_c2pa_files(ui, st, f);
+                } else {
+                    set_c2pa_files(ui, st, f);
+                }
             }
             return;
         }
@@ -4425,13 +4452,20 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
     }
     let zh = st.borrow().zh;
     let is_c2pa = kind.starts_with("batch-c2pa");
+    let target = if is_c2pa {
+        BatchTarget::C2paFolder
+    } else {
+        BatchTarget::Convert
+    };
     let (input, output): (String, String) = if is_c2pa {
         (ui.get_c2pa_in().into(), ui.get_c2pa_out().into())
     } else {
         (ui.get_batch_in().into(), ui.get_batch_out().into())
     };
     if input.is_empty() || output.is_empty() {
-        ui.set_batch_progress(
+        set_batch_target_text(
+            ui,
+            target,
             tl(
                 zh,
                 "請選擇來源與輸出資料夾。",
@@ -4454,12 +4488,37 @@ fn start_batch(ui: &AppWindow, st: &S, kind: &str) {
         watermark_font_size: 32.0,
     };
     let draft = c2pa_draft(ui);
-    spawn_batch(ui, st, kind, files, out, opts, draft, None);
+    spawn_batch(ui, st, kind, target, files, out, opts, draft, None);
 }
 
-/// Pick (or clear) the explicit multi-image C2PA selection and refresh its summary.
+/// Identity of a picked path for de-duplication (case-insensitive on Windows).
+fn c2pa_pick_key(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s.into_owned()
+    }
+}
+
+/// Replace (or clear, with an empty list) the multi-image C2PA selection.
 fn set_c2pa_files(ui: &AppWindow, st: &S, files: Vec<PathBuf>) {
+    update_c2pa_selection(ui, st, files);
+}
+
+/// Append picked files to the multi-image C2PA selection ("Add more…").
+fn append_c2pa_files(ui: &AppWindow, st: &S, more: Vec<PathBuf>) {
+    let mut files = st.borrow().c2pa_files.clone();
+    files.extend(more);
+    update_c2pa_selection(ui, st, files);
+}
+
+/// Store a de-duplicated selection, refresh its summary and the default output
+/// location (the first image's folder) unless the user chose a location explicitly.
+fn update_c2pa_selection(ui: &AppWindow, st: &S, mut files: Vec<PathBuf>) {
     let zh = st.borrow().zh;
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|p| seen.insert(c2pa_pick_key(p)));
     let text = if files.is_empty() {
         String::new()
     } else {
@@ -4473,18 +4532,38 @@ fn set_c2pa_files(ui: &AppWindow, st: &S, files: Vec<PathBuf>) {
             })
             .collect();
         let more = if files.len() > 4 { "…" } else { "" };
-        if zh {
-            format!("已選 {} 張：{}{more}", files.len(), names.join("、"))
-        } else {
-            format!("{} selected: {}{more}", files.len(), names.join(", "))
+        let folders = files
+            .iter()
+            .filter_map(|p| p.parent())
+            .map(c2pa_pick_key)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        match (zh, folders > 1) {
+            (true, true) => format!(
+                "已選 {} 張（{folders} 個資料夾）：{}{more}",
+                files.len(),
+                names.join("、")
+            ),
+            (true, false) => format!("已選 {} 張：{}{more}", files.len(), names.join("、")),
+            (false, true) => format!(
+                "{} selected ({folders} folders): {}{more}",
+                files.len(),
+                names.join(", ")
+            ),
+            (false, false) => format!("{} selected: {}{more}", files.len(), names.join(", ")),
         }
     };
-    if let Some(parent) = files.first().and_then(|p| p.parent()) {
-        ui.set_c2pa_multi_parent(parent.display().to_string().into());
+    let typed = ui.get_c2pa_multi_parent().trim().to_owned();
+    let user_set = !typed.is_empty() && typed != st.borrow().c2pa_auto_parent;
+    if !user_set && let Some(parent) = files.first().and_then(|p| p.parent()) {
+        let auto = parent.display().to_string();
+        ui.set_c2pa_multi_parent(auto.clone().into());
+        st.borrow_mut().c2pa_auto_parent = auto;
     }
     ui.set_c2pa_multi_count(files.len() as i32);
     ui.set_c2pa_multi_text(text.into());
     ui.set_c2pa_result_dir("".into());
+    ui.set_c2pa_multi_result("".into());
     st.borrow_mut().c2pa_files = files;
 }
 
@@ -4496,7 +4575,7 @@ fn start_c2pa_multi(ui: &AppWindow, st: &S, add: bool) {
     let zh = st.borrow().zh;
     let files = st.borrow().c2pa_files.clone();
     if files.is_empty() {
-        ui.set_c2pa_batch_text(tl(zh, "請先選擇圖片。", "Pick images first.").into());
+        ui.set_c2pa_multi_result(tl(zh, "請先選擇圖片。", "Pick images first.").into());
         return;
     }
     let typed: String = ui.get_c2pa_multi_parent().into();
@@ -4521,7 +4600,7 @@ fn start_c2pa_multi(ui: &AppWindow, st: &S, add: bool) {
     let out = match created {
         Ok(d) => d,
         Err(e) => {
-            ui.set_c2pa_batch_text(
+            ui.set_c2pa_multi_result(
                 format!(
                     "{} {}: {e}",
                     tl(zh, "無法建立資料夾", "Cannot create folder"),
@@ -4548,7 +4627,17 @@ fn start_c2pa_multi(ui: &AppWindow, st: &S, add: bool) {
     };
     let draft = c2pa_draft(ui);
     ui.set_c2pa_result_dir("".into());
-    spawn_batch(ui, st, kind, files, out.clone(), opts, draft, Some(out));
+    spawn_batch(
+        ui,
+        st,
+        kind,
+        BatchTarget::C2paMulti,
+        files,
+        out.clone(),
+        opts,
+        draft,
+        Some(out),
+    );
 }
 
 fn open_folder(dir: &Path) -> std::io::Result<()> {
@@ -4566,6 +4655,7 @@ fn spawn_batch(
     ui: &AppWindow,
     st: &S,
     kind: &str,
+    target: BatchTarget,
     files: Vec<PathBuf>,
     out: PathBuf,
     opts: BatchOptions,
@@ -4573,57 +4663,105 @@ fn spawn_batch(
     result_dir: Option<PathBuf>,
 ) {
     let zh = st.borrow().zh;
-    let is_c2pa = kind.starts_with("batch-c2pa");
     let kind = kind.to_owned();
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let ptx = std::sync::Mutex::new(tx.clone());
         let progress = |c: usize, t: usize| {
             if let Ok(tx) = ptx.lock() {
-                let _ = tx.send(BatchMsg::Progress(c, t, is_c2pa));
+                let _ = tx.send(BatchMsg::Progress(c, t));
             }
         };
         let summary = match kind.as_str() {
             "batch-c2pa-add" => studio_core::process_c2pa_add_batch_with_progress(
                 &files,
                 &C2paAddOptions {
-                    output_dir: out,
+                    output_dir: out.clone(),
                     draft,
                 },
                 progress,
             ),
             "batch-c2pa-remove" => studio_core::process_c2pa_removal_batch_with_progress(
                 &files,
-                &C2paRemovalOptions { output_dir: out },
+                &C2paRemovalOptions {
+                    output_dir: out.clone(),
+                },
                 progress,
             ),
             _ => studio_core::process_batch_with_progress(&files, &opts, progress),
         };
-        let mut msg = format!(
+        let msg = batch_result_text(zh, &out, &summary);
+        let done_dir = result_dir.filter(|_| summary.succeeded > 0);
+        let _ = tx.send(BatchMsg::Done(msg, done_dir));
+    });
+    st.borrow_mut().batch_job = Some(Job::Batch(rx, target));
+    ui.set_batch_running(true);
+    // Replace this section's previous result with a progress line.
+    set_batch_target_text(ui, target, tl(zh, "處理中…", "Working…").into());
+}
+
+/// Compact, path-light batch report: the output folder once, a summary line,
+/// then one line per file showing only file names (failures first).
+fn batch_result_text(zh: bool, out: &Path, summary: &studio_core::BatchSummary) -> String {
+    const MAX_LINES: usize = 8;
+    let name = |p: &Path| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    let mut msg = format!(
+        "{}: {}\n",
+        tl(zh, "輸出資料夾", "Output folder"),
+        out.display()
+    );
+    msg += &if zh {
+        format!(
+            "成功 {} / {}，失敗 {}",
+            summary.succeeded, summary.total, summary.failed
+        )
+    } else {
+        format!(
             "{} / {} OK, {} failed",
             summary.succeeded, summary.total, summary.failed
-        );
-        if let Some(d) = &result_dir {
-            let label = if zh {
-                "輸出資料夾"
-            } else {
-                "Output folder"
-            };
-            msg = format!("{label}: {}\n{msg}", d.display());
-        }
-        for r in summary.results.iter().take(8) {
-            msg += &match (&r.output, &r.error) {
-                (Some(o), None) => format!("\nOK {}", o.display()),
-                (_, Some(e)) => format!("\nFailed {}: {e}", r.input.display()),
-                _ => format!("\nSkipped {}", r.input.display()),
-            };
-        }
-        let done_dir = result_dir.filter(|_| summary.succeeded > 0);
-        let _ = tx.send(BatchMsg::Done(msg, is_c2pa, done_dir));
-    });
-    st.borrow_mut().batch_job = Some(Job::Batch(rx));
-    ui.set_batch_running(true);
-    ui.set_batch_progress(tl(zh, "處理中…", "Working…").into());
+        )
+    };
+    let mut ordered: Vec<&studio_core::BatchResult> = summary.results.iter().collect();
+    ordered.sort_by_key(|r| r.error.is_none());
+    for r in ordered.iter().take(MAX_LINES) {
+        msg += &match (&r.output, &r.error) {
+            (Some(o), None) => format!("\n{} {}", tl(zh, "成功", "OK"), name(o)),
+            (_, Some(e)) => format!(
+                "\n{} {}: {}",
+                tl(zh, "失敗", "Failed"),
+                name(&r.input),
+                short_batch_error(e, &r.input)
+            ),
+            _ => format!("\n{} {}", tl(zh, "略過", "Skipped"), name(&r.input)),
+        };
+    }
+    if ordered.len() > MAX_LINES {
+        let rest = ordered.len() - MAX_LINES;
+        msg += &if zh {
+            format!("\n…另有 {rest} 個")
+        } else {
+            format!("\n…and {rest} more")
+        };
+    }
+    msg
+}
+
+/// First line of an error with the input's full path shortened to its file name,
+/// capped so a single failure cannot flood the dialog.
+fn short_batch_error(error: &str, input: &Path) -> String {
+    const MAX_CHARS: usize = 120;
+    let mut line = error.lines().next().unwrap_or_default().to_owned();
+    if let Some(file) = input.file_name() {
+        line = line.replace(&input.display().to_string(), &file.to_string_lossy());
+    }
+    if line.chars().count() > MAX_CHARS {
+        line = line.chars().take(MAX_CHARS).collect::<String>() + "…";
+    }
+    line
 }
 
 fn poll_jobs(ui: &AppWindow, st: &S) {
@@ -4682,7 +4820,8 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
             }
         }
         let mut batch_done = false;
-        if let Some(Job::Batch(rx)) = &s.batch_job {
+        if let Some(Job::Batch(rx, target)) = &s.batch_job {
+            let target = *target;
             loop {
                 let m = match rx.try_recv() {
                     Ok(m) => m,
@@ -4690,7 +4829,9 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         if !batch_done {
                             ui.set_batch_running(false);
-                            ui.set_batch_progress(
+                            set_batch_target_text(
+                                ui,
+                                target,
                                 tl(
                                     zh,
                                     "批次工作意外中止。",
@@ -4704,23 +4845,15 @@ fn poll_jobs(ui: &AppWindow, st: &S) {
                     }
                 };
                 match m {
-                    BatchMsg::Progress(c, t, c2) => {
-                        let m = SharedString::from(format!("{c} / {t}"));
-                        if c2 {
-                            ui.set_c2pa_batch_text(m)
-                        } else {
-                            ui.set_batch_progress(m)
-                        }
+                    BatchMsg::Progress(c, t) => {
+                        let m = format!("{} {c} / {t}", tl(zh, "處理中…", "Working…"));
+                        set_batch_target_text(ui, target, m.into());
                     }
-                    BatchMsg::Done(msg, c2, dir) => {
+                    BatchMsg::Done(msg, dir) => {
                         if let Some(d) = dir {
                             ui.set_c2pa_result_dir(d.display().to_string().into());
                         }
-                        if c2 {
-                            ui.set_c2pa_batch_text(msg.into())
-                        } else {
-                            ui.set_batch_progress(msg.into())
-                        }
+                        set_batch_target_text(ui, target, msg.into());
                         ui.set_batch_running(false);
                         batch_done = true;
                     }
@@ -6902,7 +7035,8 @@ mod save_convert_tests {
         assert_eq!(ui.get_c2pa_multi_count(), 0);
         ui.invoke_action("c2pa-multi-add".into());
         assert!(st.borrow().batch_job.is_none());
-        assert!(!ui.get_c2pa_batch_text().is_empty());
+        assert!(!ui.get_c2pa_multi_result().is_empty());
+        assert!(ui.get_c2pa_batch_text().is_empty());
 
         set_c2pa_files(&ui, &st, vec![a.clone(), b.clone()]);
         assert_eq!(ui.get_c2pa_multi_count(), 2);
@@ -6930,7 +7064,7 @@ mod save_convert_tests {
                 .starts_with("pixelstudio_c2pa_added_")
         );
         assert!(
-            ui.get_c2pa_batch_text()
+            ui.get_c2pa_multi_result()
                 .contains(&added.display().to_string())
         );
         let mut names: Vec<_> = std::fs::read_dir(&added)
@@ -6980,6 +7114,218 @@ mod save_convert_tests {
         assert_eq!(ui.get_c2pa_multi_count(), 0);
         assert!(st.borrow().c2pa_files.is_empty());
         assert_eq!(ui.get_c2pa_result_dir().as_str(), "");
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn multi_c2pa_results_stay_in_their_section_and_list_file_names_only() {
+        let (ui, st) = make_test_ui(false);
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("one").join("alpha.png");
+        let b = dir.path().join("two").join("beta.png");
+        let bad = dir.path().join("two").join("broken.jpg");
+        write_png(&a, 10);
+        write_png(&b, 200);
+        std::fs::write(&bad, b"not an image").unwrap();
+        let out = dir.path().join("out");
+
+        // A previous folder-batch result is left alone by multi-image runs.
+        ui.set_c2pa_batch_text("folder result".into());
+        set_c2pa_files(&ui, &st, vec![a.clone(), b.clone(), bad.clone()]);
+        ui.set_c2pa_multi_parent(out.display().to_string().into());
+        ui.set_c2pa_new_folder(false);
+        ui.set_c2pa_multi_result("stale".into());
+        ui.invoke_action("c2pa-multi-add".into());
+        assert_eq!(ui.get_c2pa_multi_result().as_str(), "Working…");
+        wait_batch(&ui, &st);
+        assert_eq!(ui.get_c2pa_batch_text().as_str(), "folder result");
+
+        let text = ui.get_c2pa_multi_result().to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], format!("Output folder: {}", out.display()));
+        assert_eq!(lines[1], "2 / 3 OK, 1 failed");
+        assert!(lines[2].starts_with("Failed broken.jpg: "), "{text}");
+        assert!(lines.contains(&"OK alpha_c2pa.png"), "{text}");
+        assert!(lines.contains(&"OK beta_c2pa.png"), "{text}");
+        let root = dir.path().display().to_string();
+        for line in &lines[1..] {
+            assert!(!line.contains(&root), "full path leaked: {line}");
+        }
+        assert_eq!(ui.get_c2pa_result_dir().as_str(), out.display().to_string());
+
+        // Folder batch: compact result in its own section, multi result untouched.
+        let in_dir = dir.path().join("one");
+        let folder_out = dir.path().join("folder_out");
+        std::fs::create_dir_all(&folder_out).unwrap();
+        ui.set_c2pa_in(in_dir.display().to_string().into());
+        ui.set_c2pa_out(folder_out.display().to_string().into());
+        ui.invoke_action("batch-c2pa-add".into());
+        assert_eq!(ui.get_c2pa_batch_text().as_str(), "Working…");
+        wait_batch(&ui, &st);
+        assert_eq!(
+            ui.get_c2pa_batch_text().as_str(),
+            format!(
+                "Output folder: {}\n1 / 1 OK, 0 failed\nOK alpha_c2pa.png",
+                folder_out.display()
+            )
+        );
+        assert_eq!(ui.get_c2pa_multi_result().to_string(), text);
+
+        // Re-processing an output doesn't chain suffixes.
+        set_c2pa_files(&ui, &st, vec![folder_out.join("alpha_c2pa.png")]);
+        assert_eq!(ui.get_c2pa_multi_result().as_str(), "");
+        let strip_out = dir.path().join("strip_out");
+        ui.set_c2pa_multi_parent(strip_out.display().to_string().into());
+        ui.invoke_action("c2pa-multi-remove".into());
+        wait_batch(&ui, &st);
+        assert!(
+            ui.get_c2pa_multi_result()
+                .contains("\nOK alpha_no_c2pa.png")
+        );
+        assert!(strip_out.join("alpha_no_c2pa.png").exists());
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn multi_c2pa_add_more_dedupes_counts_folders_and_respects_explicit_location() {
+        let (ui, st) = make_test_ui(false);
+        let base = std::env::temp_dir().join("pixel-studio-pick-test");
+        let one = base.join("one");
+        let two = base.join("two");
+        let a = one.join("a.jpg");
+        let b = two.join("b.jpg");
+        let c = two.join("c.jpg");
+
+        // Re-pick (replace) without an explicit location follows the first image.
+        set_c2pa_files(&ui, &st, vec![a.clone()]);
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            one.display().to_string()
+        );
+        set_c2pa_files(&ui, &st, vec![b.clone()]);
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            two.display().to_string()
+        );
+        assert_eq!(ui.get_c2pa_multi_text().as_str(), "1 selected: b.jpg");
+
+        // Add more appends, dedupes identical paths and reports the folder count.
+        set_c2pa_files(&ui, &st, vec![a.clone()]);
+        let mut more = vec![b.clone(), a.clone(), c.clone(), b.clone()];
+        if cfg!(windows) {
+            more.push(PathBuf::from(a.display().to_string().to_uppercase()));
+        }
+        append_c2pa_files(&ui, &st, more);
+        assert_eq!(ui.get_c2pa_multi_count(), 3);
+        assert_eq!(
+            st.borrow().c2pa_files,
+            vec![a.clone(), b.clone(), c.clone()]
+        );
+        assert_eq!(
+            ui.get_c2pa_multi_text().as_str(),
+            "3 selected (2 folders): a.jpg, b.jpg, c.jpg"
+        );
+        // Default location stays the first image's folder.
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            one.display().to_string()
+        );
+
+        st.borrow_mut().zh = true;
+        append_c2pa_files(&ui, &st, vec![]);
+        assert_eq!(
+            ui.get_c2pa_multi_text().as_str(),
+            "已選 3 張（2 個資料夾）：a.jpg、b.jpg、c.jpg"
+        );
+        st.borrow_mut().zh = false;
+
+        // An explicit location survives both append and re-pick.
+        let custom = base.join("custom");
+        ui.set_c2pa_multi_parent(custom.display().to_string().into());
+        append_c2pa_files(&ui, &st, vec![base.join("three").join("d.jpg")]);
+        assert_eq!(ui.get_c2pa_multi_count(), 4);
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            custom.display().to_string()
+        );
+        set_c2pa_files(&ui, &st, vec![b.clone()]);
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            custom.display().to_string()
+        );
+
+        // Clearing the field hands control back to the default.
+        ui.set_c2pa_multi_parent("".into());
+        set_c2pa_files(&ui, &st, vec![a.clone()]);
+        assert_eq!(
+            ui.get_c2pa_multi_parent().as_str(),
+            one.display().to_string()
+        );
+        ui.hide().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "ui-testing")]
+    fn c2pa_dialog_long_paths_do_not_widen_the_card() {
+        use i_slint_backend_testing::ElementHandle;
+
+        let (ui, st) = make_test_ui(false);
+        // Tall enough that the whole card is on screen (hidden elements aren't searchable).
+        ui.window().set_size(slint::PhysicalSize::new(960, 2400));
+        let long = format!(
+            "C:\\{}\\{}",
+            "very_long_folder_name_without_any_spaces".repeat(6),
+            "pixelstudio_c2pa_added_20261127_120000"
+        );
+        let picked: Vec<PathBuf> = (0..3)
+            .map(|i| PathBuf::from(format!("{long}\\photo_{i}_{}.jpg", "x".repeat(80))))
+            .collect();
+        set_c2pa_files(&ui, &st, picked);
+        ui.set_c2pa_multi_parent(long.clone().into());
+        ui.set_c2pa_in(long.clone().into());
+        ui.set_c2pa_out(long.clone().into());
+        ui.set_c2pa_multi_result(format!("Output folder: {long}\n1 / 1 OK, 0 failed").into());
+        ui.set_c2pa_batch_text(format!("Output folder: {long}\n{long}").into());
+        ui.set_c2pa_result_dir(long.clone().into());
+        ui.set_c2pa_open(true);
+
+        let one = |id: &str| {
+            ElementHandle::find_by_element_id(&ui, id)
+                .next()
+                .unwrap_or_else(|| panic!("missing element {id}"))
+        };
+        let card = one("AppWindow::c2card");
+        let content = one("AppWindow::c2l");
+        let (cp, cs) = (card.absolute_position(), card.size());
+        assert!(cs.width > 100.0, "card has a width: {cs:?}");
+        let right = cp.x + cs.width + 0.5;
+        assert!(
+            content.size().width <= cs.width + 0.5,
+            "content {} wider than card {}",
+            content.size().width,
+            cs.width
+        );
+        let mut checked = 0;
+        for label in ["Save in", "Multiple images result", "Batch C2PA result"] {
+            for e in ElementHandle::find_by_accessible_label(&ui, label) {
+                let (p, s) = (e.absolute_position(), e.size());
+                assert!(
+                    p.x >= cp.x - 0.5 && p.x + s.width <= right,
+                    "{label} overflows the card: x={} w={} card x={} w={}",
+                    p.x,
+                    s.width,
+                    cp.x,
+                    cs.width
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 3,
+            "expected the labelled elements, found {checked}"
+        );
         ui.hide().unwrap();
     }
 }

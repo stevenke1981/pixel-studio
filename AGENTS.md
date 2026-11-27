@@ -7,7 +7,7 @@ Designed to be **Human-First** (bilingual `zh-TW` / `en` GUI, intuitive Paint-su
 
 - `crates/studio-core/` — Pure Rust image processing library (zero UI dependencies):
   - `atomic_file.rs` — staging-file atomic write helpers (`write`, `write_with` with staging callback) so failed exports never corrupt existing files; GIF and panorama outputs use them too.
-  - `batch.rs` — parallel batch conversion, resize, watermark, and C2PA batch sign/remove. C2PA batch accepts arbitrary multi-file lists with dedup and collision-free output names (`_c2pa`, `_c2pa_2`…), never overwriting.
+  - `batch.rs` — parallel batch conversion, resize, watermark, and C2PA batch sign/remove (outputs replace an existing `_c2pa`/`_no_c2pa`[`_<n>`] stem suffix instead of chaining it). C2PA batch accepts arbitrary multi-file lists with dedup and collision-free output names (`_c2pa`, `_c2pa_2`…), never overwriting.
   - `c2pa_metadata.rs` — C2PA content credentials inspection (`inspect_c2pa`), signing (`write_c2pa_manifest`), and removal (`remove_c2pa_manifest`).
   - `compose.rs` — non-destructive layer composition (`TextLayer`, `ImageLayer`, `ShapeLayer` with `Line`, `Arrow`, `Rectangle`, `Ellipse`, `Triangle`), 10 `BlendMode` variants (`Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`, `SoftLight`, `ColorDodge`, `Difference`, `Exclusion`), and layer transforms (`flip_layer_horizontal`, `flip_layer_vertical`, `rotate_layer_90`).
   - `convert.rs` & `formats.rs` — format conversion (`png`, `jpg`, `jfif`, `bmp`, `gif`, `ico`, `webp` lossless/lossy, `tiff`).

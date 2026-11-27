@@ -292,11 +292,46 @@ fn path_key(path: &Path) -> String {
     path.to_string_lossy().to_lowercase()
 }
 
+/// Suffixes appended by the C2PA batches, longest first: `_no_c2pa` ends with `_c2pa`.
+const C2PA_SUFFIXES: [&str; 2] = ["_no_c2pa", "_c2pa"];
+
+/// Strip trailing C2PA batch suffixes (each optionally followed by a numeric
+/// `_<n>` collision suffix) so re-processing an output does not chain names:
+/// `photo_c2pa` → `photo`, `photo_no_c2pa_2` → `photo`. Matching is ASCII
+/// case-insensitive; a stem that would become empty is returned unchanged.
+fn c2pa_base_stem(stem: &str) -> &str {
+    fn strip_known(s: &str) -> Option<&str> {
+        C2PA_SUFFIXES.iter().find_map(|suffix| {
+            let cut = s.len().checked_sub(suffix.len())?;
+            (s.is_char_boundary(cut) && s[cut..].eq_ignore_ascii_case(suffix)).then(|| &s[..cut])
+        })
+    }
+    fn strip_once(s: &str) -> Option<&str> {
+        if let Some((head, tail)) = s.rsplit_once('_')
+            && !tail.is_empty()
+            && tail.bytes().all(|b| b.is_ascii_digit())
+            && let Some(base) = strip_known(head)
+        {
+            return Some(base);
+        }
+        strip_known(s)
+    }
+    let mut base = stem;
+    while let Some(next) = strip_once(base) {
+        if next.is_empty() {
+            break;
+        }
+        base = next;
+    }
+    base
+}
+
 fn c2pa_output_path(input: &Path, output_dir: &Path, suffix: &str) -> PathBuf {
     let stem = input
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("image");
+    let stem = c2pa_base_stem(stem);
     let ext = input
         .extension()
         .and_then(|value| value.to_str())
@@ -409,4 +444,72 @@ fn add_watermark_to_image(
         },
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn c2pa_base_stem_strips_known_suffixes() {
+        assert_eq!(c2pa_base_stem("photo"), "photo");
+        assert_eq!(c2pa_base_stem("photo_c2pa"), "photo");
+        assert_eq!(c2pa_base_stem("photo_no_c2pa"), "photo");
+        assert_eq!(c2pa_base_stem("photo_no_c2pa_2"), "photo");
+        assert_eq!(c2pa_base_stem("photo_c2pa_12"), "photo");
+        assert_eq!(c2pa_base_stem("PHOTO_C2PA"), "PHOTO");
+        // Legacy chained names collapse fully.
+        assert_eq!(c2pa_base_stem("photo_c2pa_no_c2pa"), "photo");
+        assert_eq!(c2pa_base_stem("photo_no_c2pa_c2pa_3"), "photo");
+        // Numeric suffix alone, or unrelated endings, are kept.
+        assert_eq!(c2pa_base_stem("photo_2"), "photo_2");
+        assert_eq!(c2pa_base_stem("photoc2pa"), "photoc2pa");
+        assert_eq!(c2pa_base_stem("my_no"), "my_no");
+        assert_eq!(c2pa_base_stem("照片_c2pa"), "照片");
+        // Never strip down to an empty stem.
+        assert_eq!(c2pa_base_stem("_c2pa"), "_c2pa");
+        assert_eq!(c2pa_base_stem("_no_c2pa"), "_no_c2pa");
+    }
+
+    #[test]
+    fn c2pa_output_path_does_not_chain_suffixes() {
+        let out = Path::new("out");
+        let name = |input: &str, suffix: &str| {
+            c2pa_output_path(Path::new(input), out, suffix)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(name("photo.jpg", "_c2pa"), "photo_c2pa.jpg");
+        assert_eq!(name("photo_c2pa.jpg", "_no_c2pa"), "photo_no_c2pa.jpg");
+        assert_eq!(name("photo_no_c2pa.jpg", "_c2pa"), "photo_c2pa.jpg");
+        assert_eq!(name("photo_no_c2pa_2.jpg", "_c2pa"), "photo_c2pa.jpg");
+        assert_eq!(name("photo_c2pa_3.png", "_c2pa"), "photo_c2pa.png");
+    }
+
+    #[test]
+    fn plan_resolves_collisions_after_stripping() {
+        let dir = std::env::temp_dir().join(format!(
+            "studio-core-plan-strip-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // `photo.jpg` and `photo_c2pa.jpg` both map to `photo_c2pa.jpg`.
+        let inputs = vec![
+            PathBuf::from("a/photo.jpg"),
+            PathBuf::from("b/photo_c2pa.jpg"),
+        ];
+        let plan = plan_c2pa_outputs(&inputs, &dir, "_c2pa");
+        let names: Vec<String> = plan
+            .iter()
+            .map(|(_, o)| o.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["photo_c2pa.jpg", "photo_c2pa_2.jpg"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
